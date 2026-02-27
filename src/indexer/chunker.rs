@@ -12,18 +12,29 @@ pub struct RawChunk {
     pub end_line: u32,
 }
 
+/// Chunker output with file-level context.
+///
+/// Data flow: source code → `FileChunks` (chunker) → `PendingFile` (indexer) → DB.
+#[derive(Debug, Clone)]
+pub struct FileChunks {
+    /// Raw import statement text (JS/TS only; empty for CSS/HTML/fallback).
+    pub imports: Vec<String>,
+    pub chunks: Vec<RawChunk>,
+}
+
 /// Split source code into semantic chunks using AST parsing.
 ///
 /// Supported extensions: `tsx`, `jsx`, `ts`, `js`, `mjs`, `css`, `html`.
 /// Unknown extensions fall back to character-based splitting.
-/// Returns an empty `Vec` if `source` is empty/whitespace-only.
-pub fn chunk_file(source: &str, extension: &str) -> Vec<RawChunk> {
+/// Returns empty chunks if `source` is empty/whitespace-only.
+/// For JS/TS files, also extracts import statements as file-level context.
+pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
     match extension {
         "tsx" | "jsx" => chunk_tsx(source),
         "ts" | "js" | "mjs" => chunk_ts(source),
-        "css" => chunk_css(source),
-        "html" => chunk_html(source),
-        _ => chunk_fallback(source),
+        "css" => FileChunks { imports: vec![], chunks: chunk_css(source) },
+        "html" => FileChunks { imports: vec![], chunks: chunk_html(source) },
+        _ => FileChunks { imports: vec![], chunks: chunk_fallback(source) },
     }
 }
 
@@ -36,18 +47,18 @@ fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
     Some(parser)
 }
 
-fn chunk_tsx(source: &str) -> Vec<RawChunk> {
+fn chunk_tsx(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TSX.into()) else {
-        return chunk_fallback(source);
+        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
     };
-    chunk_js_like(source, &mut parser)
+    chunk_js_like_with_imports(source, &mut parser)
 }
 
-fn chunk_ts(source: &str) -> Vec<RawChunk> {
+fn chunk_ts(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) else {
-        return chunk_fallback(source);
+        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
     };
-    chunk_js_like(source, &mut parser)
+    chunk_js_like_with_imports(source, &mut parser)
 }
 
 fn chunk_with_ast(
@@ -56,7 +67,7 @@ fn chunk_with_ast(
     classify: impl Fn(&tree_sitter::Node, &str) -> Option<RawChunk>,
 ) -> Vec<RawChunk> {
     let Some(tree) = parser.parse(source, None) else {
-        tracing::debug!("AST parse failed, using fallback chunker");
+        tracing::warn!("AST parse failed, using fallback chunker");
         return chunk_fallback(source);
     };
     let root = tree.root_node();
@@ -71,8 +82,30 @@ fn chunk_with_ast(
     chunks
 }
 
-fn chunk_js_like(source: &str, parser: &mut tree_sitter::Parser) -> Vec<RawChunk> {
-    chunk_with_ast(source, parser, classify_js_node)
+fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) -> FileChunks {
+    let Some(tree) = parser.parse(source, None) else {
+        tracing::warn!("AST parse failed, using fallback chunker");
+        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
+    };
+    let root = tree.root_node();
+    let imports = extract_imports_from_ast(&root, source);
+    let mut cursor = root.walk();
+    let chunks: Vec<RawChunk> = root
+        .children(&mut cursor)
+        .filter_map(|node| classify_js_node(&node, source))
+        .collect();
+    if chunks.is_empty() {
+        return FileChunks { imports, chunks: chunk_fallback(source) };
+    }
+    FileChunks { imports, chunks }
+}
+
+fn extract_imports_from_ast(root: &tree_sitter::Node, source: &str) -> Vec<String> {
+    let mut cursor = root.walk();
+    root.children(&mut cursor)
+        .filter(|node| node.kind() == "import_statement")
+        .map(|node| source[node.byte_range()].to_string())
+        .collect()
 }
 
 fn classify_js_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk> {
@@ -305,53 +338,55 @@ mod tests {
     #[test]
     fn chunk_tsx_component_function() {
         let source = "function Button() { return <div/>; }";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(chunks[0].name.as_deref(), Some("Button"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Button"));
     }
 
     #[test]
     fn chunk_tsx_hook() {
         let source = "function useAuth() { return { user: null }; }";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Hook);
-        assert_eq!(chunks[0].name.as_deref(), Some("useAuth"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Hook);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("useAuth"));
     }
 
     #[test]
     fn chunk_tsx_interface() {
         let source = "interface Props { label: string; }";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::TypeDef);
-        assert_eq!(chunks[0].name.as_deref(), Some("Props"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Props"));
     }
 
     #[test]
     fn chunk_tsx_exported_arrow_component() {
         let source = "export const Card = () => { return <div/>; };";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(chunks[0].name.as_deref(), Some("Card"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Card"));
     }
 
     #[test]
     fn chunk_css_rule_set() {
         let source = ".container { color: red; }";
-        let chunks = chunk_file(source, "css");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::CssRule);
+        let result = chunk_file(source, "css");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
+        assert!(result.imports.is_empty());
     }
 
     #[test]
     fn chunk_html_element() {
         let source = "<html><body>Hello</body></html>";
-        let chunks = chunk_file(source, "html");
-        assert!(!chunks.is_empty());
-        assert_eq!(chunks[0].chunk_type, ChunkType::HtmlElement);
+        let result = chunk_file(source, "html");
+        assert!(!result.chunks.is_empty());
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::HtmlElement);
+        assert!(result.imports.is_empty());
     }
 
     #[test]
@@ -361,48 +396,46 @@ mod tests {
         expect(true).toBe(true);
     });
 });"#;
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(chunks[0].name.as_deref(), Some("Auth"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Auth"));
     }
 
     #[test]
     fn chunk_fallback_for_unknown_extension() {
         let source = "line1\nline2\nline3\nline4\nline5";
-        let chunks = chunk_file(source, "toml");
-        assert!(!chunks.is_empty());
-        assert_eq!(chunks[0].chunk_type, ChunkType::Other);
+        let result = chunk_file(source, "toml");
+        assert!(!result.chunks.is_empty());
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
+        assert!(result.imports.is_empty());
     }
 
-    // type_alias_declaration
     #[test]
     fn chunk_tsx_type_alias() {
         let source = "type Theme = 'light' | 'dark';";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::TypeDef);
-        assert_eq!(chunks[0].name.as_deref(), Some("Theme"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Theme"));
     }
 
-    // JS file uses TS parser
     #[test]
     fn chunk_js_file() {
         let source = "function App() { return 'hello'; }";
-        let chunks = chunk_file(source, "js");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(chunks[0].name.as_deref(), Some("App"));
+        let result = chunk_file(source, "js");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("App"));
     }
 
-    // Line numbers are correct
     #[test]
     fn chunk_line_numbers() {
         let source = "\nfunction Foo() {\n  return 42;\n}\n";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].start_line, 2);
-        assert_eq!(chunks[0].end_line, 4);
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].start_line, 2);
+        assert_eq!(result.chunks[0].end_line, 4);
     }
 
     #[test]
@@ -410,10 +443,10 @@ mod tests {
         let source = r#"it('should work', () => {
     expect(1).toBe(1);
 });"#;
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(chunks[0].name.as_deref(), Some("should work"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("should work"));
     }
 
     #[test]
@@ -421,43 +454,43 @@ mod tests {
         let source = r#"test('adds numbers', () => {
     expect(1 + 2).toBe(3);
 });"#;
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(chunks[0].name.as_deref(), Some("adds numbers"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("adds numbers"));
     }
 
     #[test]
     fn chunk_css_media_statement() {
         let source = "@media (max-width: 768px) { .container { display: none; } }";
-        let chunks = chunk_file(source, "css");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::CssRule);
+        let result = chunk_file(source, "css");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
     }
 
     #[test]
     fn chunk_css_keyframes() {
         let source = "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }";
-        let chunks = chunk_file(source, "css");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::CssRule);
+        let result = chunk_file(source, "css");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
     }
 
     #[test]
     fn classify_non_hook_use_function() {
         let source = "function username() { return 'alice'; }";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Other);
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
     }
 
     #[test]
     fn classify_utility_function_as_other() {
         let source = "function formatDate() { return '2024-01-01'; }";
-        let chunks = chunk_file(source, "tsx");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_type, ChunkType::Other);
-        assert_eq!(chunks[0].name.as_deref(), Some("formatDate"));
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
+        assert_eq!(result.chunks[0].name.as_deref(), Some("formatDate"));
     }
 
     #[test]
@@ -475,5 +508,32 @@ mod tests {
             chunks[1].start_line,
             chunks[0].end_line
         );
+    }
+
+    #[test]
+    fn extract_single_import() {
+        let source = "import { useState } from 'react';\nfunction App() { return <div/>; }";
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.imports.len(), 1);
+        assert_eq!(result.imports[0], "import { useState } from 'react';");
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
+    }
+
+    #[test]
+    fn extract_multiple_imports() {
+        let source = "import { useState } from 'react';\nimport { useAuth } from './useAuth';\nimport type { Props } from './types';\nfunction App() { return <div/>; }";
+        let result = chunk_file(source, "tsx");
+        assert_eq!(result.imports.len(), 3);
+        assert!(result.imports[0].contains("useState"));
+        assert!(result.imports[1].contains("useAuth"));
+        assert!(result.imports[2].contains("Props"));
+    }
+
+    #[test]
+    fn no_imports_returns_empty_vec() {
+        let source = "function App() { return <div/>; }";
+        let result = chunk_file(source, "tsx");
+        assert!(result.imports.is_empty());
     }
 }

@@ -176,6 +176,11 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         CREATE TABLE IF NOT EXISTS index_meta (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS file_context (
+            file_path TEXT PRIMARY KEY,
+            imports_text TEXT NOT NULL
         );",
     )?;
 
@@ -244,13 +249,15 @@ pub fn insert_chunk(
 }
 
 /// Atomically replace all chunks for a file. Deletes old data and inserts new
-/// chunks + embeddings in a single transaction.
+/// chunks + embeddings in a single transaction. Also stores file-level context
+/// (import statements) in the `file_context` table.
 pub fn replace_file_chunks(
     conn: &Connection,
     file_path: &str,
     chunks: &[NewChunk],
     embeddings: &[Vec<f32>],
     file_hash: &str,
+    imports_text: &str,
 ) -> Result<(), StorageError> {
     if chunks.len() != embeddings.len() {
         return Err(StorageError::LengthMismatch {
@@ -263,15 +270,16 @@ pub fn replace_file_chunks(
     // parking_lot::Mutex. The Mutex guarantees single-writer access.
     let tx = conn.unchecked_transaction()?;
 
-    tx.execute(
-        "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1)",
-        [file_path],
-    )?;
-    tx.execute("DELETE FROM chunks WHERE file_path = ?1", [file_path])?;
+    delete_file_chunks_in(&tx, file_path)?;
 
     for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
         insert_chunk(&tx, file_path, chunk, file_hash, embedding)?;
     }
+
+    tx.execute(
+        "INSERT OR REPLACE INTO file_context (file_path, imports_text) VALUES (?1, ?2)",
+        rusqlite::params![file_path, imports_text],
+    )?;
 
     tx.execute(
         "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('last_indexed_at', datetime('now'))",
@@ -339,22 +347,101 @@ pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageE
     paths.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
-/// Delete a file's chunks and embeddings (no transaction -- caller manages).
+/// Delete a file's chunks, embeddings, and context (no transaction -- caller manages).
 pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), StorageError> {
     conn.execute(
         "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1)",
         [file_path],
     )?;
     conn.execute("DELETE FROM chunks WHERE file_path = ?1", [file_path])?;
+    conn.execute("DELETE FROM file_context WHERE file_path = ?1", [file_path])?;
     Ok(())
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn delete_file_chunks(conn: &Connection, file_path: &str) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
     delete_file_chunks_in(&tx, file_path)?;
     tx.commit()?;
     Ok(())
+}
+
+/// Summary of a sibling chunk (same file, not in search results).
+/// Display-only: name + type, no full code.
+#[derive(Debug, Clone)]
+pub struct SiblingInfo {
+    pub name: Option<String>,
+    pub chunk_type: ChunkType,
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// Retrieve import statements for the given file paths.
+///
+/// Returns a map from file_path to its imports_text. Files without
+/// file_context entries (e.g. old indexes) are simply absent from the result.
+pub fn get_file_contexts(
+    conn: &Connection,
+    file_paths: &[&str],
+) -> Result<std::collections::HashMap<String, String>, StorageError> {
+    if file_paths.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders: String = file_paths.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
+/// Retrieve all chunk summaries (name + type) for the given file paths.
+///
+/// Used to show "siblings" — other chunks in the same file as search results.
+pub fn get_file_siblings(
+    conn: &Connection,
+    file_paths: &[&str],
+) -> Result<std::collections::HashMap<String, Vec<SiblingInfo>>, StorageError> {
+    if file_paths.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders: String = file_paths.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT file_path, name, chunk_type, start_line, end_line \
+         FROM chunks WHERE file_path IN ({placeholders}) \
+         ORDER BY file_path, start_line"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            SiblingInfo {
+                name: row.get(1)?,
+                chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
+                start_line: row.get(3)?,
+                end_line: row.get(4)?,
+            },
+        ))
+    })?;
+    let mut map: std::collections::HashMap<String, Vec<SiblingInfo>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let (path, info) = row?;
+        map.entry(path).or_default().push(info);
+    }
+    Ok(map)
 }
 
 /// Find chunks whose embeddings are nearest to `query_embedding`.
@@ -590,7 +677,7 @@ mod tests {
         ];
         let embeddings = vec![embedding.clone(), embedding.clone()];
 
-        replace_file_chunks(&conn, "src/A.tsx", &new_chunks, &embeddings, "h2").unwrap();
+        replace_file_chunks(&conn, "src/A.tsx", &new_chunks, &embeddings, "h2", "import { x } from 'y'").unwrap();
 
         let stats = get_stats(&conn).unwrap();
         assert_eq!(stats.total_chunks, 2);
@@ -636,5 +723,76 @@ mod tests {
     #[test]
     fn chunk_type_from_db_unknown_defaults_to_other() {
         assert_eq!(ChunkType::from_db("nonexistent"), ChunkType::Other);
+    }
+
+    #[test]
+    fn delete_file_chunks_also_removes_file_context() {
+        let (conn, _dir) = test_db();
+        let embedding = vec![0.0_f32; 768];
+        let chunks = vec![
+            NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 5 },
+        ];
+        let embeddings = vec![embedding];
+        replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "import React from 'react'").unwrap();
+
+        let contexts = get_file_contexts(&conn, &["src/A.tsx"]).unwrap();
+        assert_eq!(contexts.len(), 1, "pre-condition: file_context should exist");
+
+        delete_file_chunks(&conn, "src/A.tsx").unwrap();
+
+        let contexts = get_file_contexts(&conn, &["src/A.tsx"]).unwrap();
+        assert!(contexts.is_empty(), "file_context should be removed after delete: {contexts:?}");
+    }
+
+    #[test]
+    fn replace_file_chunks_stores_file_context() {
+        let (conn, _dir) = test_db();
+        let embedding = vec![0.0_f32; 768];
+        let chunks = vec![
+            NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "code", start_line: 1, end_line: 5 },
+        ];
+        let embeddings = vec![embedding];
+        replace_file_chunks(&conn, "src/App.tsx", &chunks, &embeddings, "h1", "import { useState } from 'react'").unwrap();
+
+        let contexts = get_file_contexts(&conn, &["src/App.tsx"]).unwrap();
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts["src/App.tsx"], "import { useState } from 'react'");
+    }
+
+    #[test]
+    fn get_file_contexts_returns_empty_for_missing_files() {
+        let (conn, _dir) = test_db();
+        let contexts = get_file_contexts(&conn, &["src/Missing.tsx"]).unwrap();
+        assert!(contexts.is_empty());
+    }
+
+    #[test]
+    fn get_file_contexts_returns_empty_for_empty_input() {
+        let (conn, _dir) = test_db();
+        let contexts = get_file_contexts(&conn, &[]).unwrap();
+        assert!(contexts.is_empty());
+    }
+
+    #[test]
+    fn get_file_siblings_returns_all_chunks_for_file() {
+        let (conn, _dir) = test_db();
+        let embedding = vec![0.0_f32; 768];
+        insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "code", start_line: 1, end_line: 5 }, "h1", &embedding).unwrap();
+        insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "code", start_line: 6, end_line: 10 }, "h1", &embedding).unwrap();
+        insert_chunk(&conn, "src/B.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("Button"), content: "code", start_line: 1, end_line: 3 }, "h2", &embedding).unwrap();
+
+        let siblings = get_file_siblings(&conn, &["src/A.tsx"]).unwrap();
+        assert_eq!(siblings.len(), 1);
+        let a_siblings = &siblings["src/A.tsx"];
+        assert_eq!(a_siblings.len(), 2);
+        assert_eq!(a_siblings[0].name.as_deref(), Some("App"));
+        assert_eq!(a_siblings[1].name.as_deref(), Some("useAuth"));
+    }
+
+    #[test]
+    fn get_file_siblings_returns_empty_for_empty_input() {
+        let (conn, _dir) = test_db();
+        let siblings = get_file_siblings(&conn, &[]).unwrap();
+        assert!(siblings.is_empty());
     }
 }

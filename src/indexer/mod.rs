@@ -41,10 +41,10 @@ pub struct IndexResult {
 struct PendingFile {
     rel_path: String,
     raw_chunks: Vec<chunker::RawChunk>,
+    imports_text: String,
     hash: String,
 }
 
-/// Maximum file size in bytes (~1 MB).
 const MAX_FILE_SIZE: u64 = 1_000_000;
 
 enum FileAction {
@@ -108,16 +108,21 @@ fn process_file(
     }
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let raw_chunks = chunker::chunk_file(&source, ext);
-    if raw_chunks.is_empty() {
+    let file_chunks = chunker::chunk_file(&source, ext);
+    if file_chunks.chunks.is_empty() {
         tracing::debug!(file = %rel_path, "Skipped (no chunks)");
         return Ok(FileAction::Skip);
     }
 
-    Ok(FileAction::Process(PendingFile { rel_path, raw_chunks, hash }))
+    let imports_text = file_chunks.imports.join("\n");
+    Ok(FileAction::Process(PendingFile {
+        rel_path,
+        raw_chunks: file_chunks.chunks,
+        imports_text,
+        hash,
+    }))
 }
 
-/// Read and chunk files, filtering out unchanged/oversized/empty files.
 fn collect_pending_files(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
@@ -140,7 +145,6 @@ fn collect_pending_files(
     Ok((pending, files_skipped, files_errored))
 }
 
-/// Remove chunks for files that no longer exist on disk.
 async fn remove_orphans(
     conn: &Arc<Mutex<Db>>,
     current_rel_paths: std::collections::HashSet<String>,
@@ -217,7 +221,7 @@ async fn embed_and_store(
                 })
                 .collect();
             let conn = conn_clone.lock();
-            storage::replace_file_chunks(&conn, &pf.rel_path, &new_chunks, &embeddings, &pf.hash)
+            storage::replace_file_chunks(&conn, &pf.rel_path, &new_chunks, &embeddings, &pf.hash, &pf.imports_text)
         })
         .await
         ?;
@@ -400,5 +404,28 @@ mod tests {
         run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
         let stats = storage::get_stats(&conn.lock()).unwrap();
         assert_eq!(stats.total_files, 1, "orphaned file should be removed");
+    }
+
+    #[tokio::test]
+    async fn run_index_stores_imports_in_file_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("App.tsx"),
+            "import { useState } from 'react';\nimport { useAuth } from './useAuth';\nfunction App() { return <div/>; }",
+        ).unwrap();
+
+        let db_path = dir.path().join(".yomu").join("index.db");
+        let conn = storage::open_db(&db_path).unwrap();
+        let conn = Arc::new(Mutex::new(conn));
+
+        run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+
+        let contexts = storage::get_file_contexts(&conn.lock(), &["src/App.tsx"]).unwrap();
+        assert_eq!(contexts.len(), 1);
+        let imports = &contexts["src/App.tsx"];
+        assert!(imports.contains("import { useState } from 'react'"), "expected useState import, got: {imports}");
+        assert!(imports.contains("import { useAuth } from './useAuth'"), "expected useAuth import, got: {imports}");
     }
 }

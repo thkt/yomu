@@ -145,7 +145,8 @@ impl Yomu {
             )]));
         }
 
-        let text = format_results(&results);
+        let (imports_map, siblings_map) = self.fetch_enrichment_context(&results).await?;
+        let text = format_results_grouped(&results, &imports_map, &siblings_map);
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
@@ -198,6 +199,37 @@ impl Yomu {
         })
     }
 
+    async fn fetch_enrichment_context(
+        &self,
+        results: &[storage::SearchResult],
+    ) -> Result<
+        (
+            std::collections::HashMap<String, String>,
+            std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
+        ),
+        McpError,
+    > {
+        let conn = Arc::clone(&self.conn);
+        let unique_paths: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            results
+                .iter()
+                .filter(|r| seen.insert(&r.chunk.file_path))
+                .map(|r| r.chunk.file_path.clone())
+                .collect()
+        };
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock();
+            let path_refs: Vec<&str> = unique_paths.iter().map(|s| s.as_str()).collect();
+            let imports = storage::get_file_contexts(&conn, &path_refs)?;
+            let siblings = storage::get_file_siblings(&conn, &path_refs)?;
+            Ok::<_, storage::StorageError>((imports, siblings))
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("internal task failed: {e}"), None))?
+        .map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
     /// Run a blocking storage operation on the connection.
     async fn with_db<T, F>(&self, f: F) -> Result<T, McpError>
     where
@@ -215,18 +247,85 @@ impl Yomu {
     }
 }
 
-fn format_results(results: &[storage::SearchResult]) -> String {
-    let mut output = String::new();
+fn format_results_grouped(
+    results: &[storage::SearchResult],
+    imports_map: &std::collections::HashMap<String, String>,
+    siblings_map: &std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
+) -> String {
+    let mut groups: std::collections::HashMap<&str, Vec<(usize, &storage::SearchResult)>> =
+        std::collections::HashMap::new();
     for (i, result) in results.iter().enumerate() {
+        groups
+            .entry(&result.chunk.file_path)
+            .or_default()
+            .push((i, result));
+    }
+
+    let mut sorted: Vec<_> = groups.into_iter().collect();
+    sorted.sort_by(|a, b| {
+        let best = |items: &[(usize, &storage::SearchResult)]| {
+            items
+                .iter()
+                .map(|(_, r)| r.distance)
+                .fold(f32::INFINITY, f32::min)
+        };
+        best(&a.1)
+            .partial_cmp(&best(&b.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut output = String::new();
+    for (file_path, chunks) in &sorted {
+        format_file_group(&mut output, file_path, chunks, imports_map, siblings_map);
+    }
+    output
+}
+
+fn format_file_group(
+    output: &mut String,
+    file_path: &str,
+    chunks: &[(usize, &storage::SearchResult)],
+    imports_map: &std::collections::HashMap<String, String>,
+    siblings_map: &std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
+) {
+    output.push_str(&format!("## {}\n", file_path));
+
+    if let Some(imports_text) = imports_map.get(file_path) {
+        let items: Vec<&str> = imports_text.split('\n').filter(|s| !s.is_empty()).collect();
+        if !items.is_empty() {
+            output.push_str(&format!("Imports: {}\n", items.join(", ")));
+        }
+    }
+
+    if let Some(siblings) = siblings_map.get(file_path) {
+        let result_ranges: std::collections::HashSet<(u32, u32)> = chunks
+            .iter()
+            .map(|(_, r)| (r.chunk.start_line, r.chunk.end_line))
+            .collect();
+        let filtered: Vec<String> = siblings
+            .iter()
+            .filter(|s| !result_ranges.contains(&(s.start_line, s.end_line)))
+            .map(|s| {
+                let name = s.name.as_deref().unwrap_or("(unnamed)");
+                format!("{} [{}]", name, s.chunk_type.as_str())
+            })
+            .collect();
+        if !filtered.is_empty() {
+            output.push_str(&format!("Siblings: {}\n", filtered.join(", ")));
+        }
+    }
+
+    output.push('\n');
+
+    for (rank, result) in chunks {
         let chunk = &result.chunk;
         let name = chunk.name.as_deref().unwrap_or("(unnamed)");
         let similarity = 1.0 / (1.0 + result.distance);
         output.push_str(&format!(
-            "{}. {} [{}] — {}:{}-{} (similarity: {:.2})\n",
-            i + 1,
+            "{}. {} [{}] — {}:{} (similarity: {:.2})\n",
+            rank + 1,
             name,
             chunk.chunk_type.as_str(),
-            chunk.file_path,
             chunk.start_line,
             chunk.end_line,
             similarity,
@@ -234,7 +333,6 @@ fn format_results(results: &[storage::SearchResult]) -> String {
         output.push_str(&chunk.content);
         output.push_str("\n\n");
     }
-    output
 }
 
 #[tool_handler]
@@ -260,6 +358,7 @@ impl ServerHandler for Yomu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn test_db() -> (storage::Db, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -348,23 +447,202 @@ mod tests {
     }
 
     #[test]
-    fn format_results_renders_chunks() {
+    fn format_results_grouped_renders_file_header_and_context() {
         let results = vec![storage::SearchResult {
             chunk: storage::Chunk {
                 file_path: "src/Button.tsx".to_string(),
                 chunk_type: storage::ChunkType::Component,
                 name: Some("Button".to_string()),
                 content: "function Button() { return <div/>; }".to_string(),
-                start_line: 1,
-                end_line: 3,
+                start_line: 5,
+                end_line: 7,
             },
             distance: 0.15,
         }];
-        let text = format_results(&results);
-        assert!(text.contains("Button"), "missing name: {text}");
-        assert!(text.contains("component"), "missing type: {text}");
-        assert!(text.contains("src/Button.tsx"), "missing path: {text}");
+        let imports_map = HashMap::from([(
+            "src/Button.tsx".to_string(),
+            "import React from 'react'".to_string(),
+        )]);
+        let siblings_map = HashMap::from([(
+            "src/Button.tsx".to_string(),
+            vec![storage::SiblingInfo {
+                name: Some("ButtonProps".to_string()),
+                chunk_type: storage::ChunkType::TypeDef,
+                start_line: 1,
+                end_line: 3,
+            }],
+        )]);
+        let text = format_results_grouped(&results, &imports_map, &siblings_map);
+        assert!(text.contains("## src/Button.tsx"), "missing file header: {text}");
+        assert!(
+            text.contains("Imports: import React from 'react'"),
+            "missing imports: {text}"
+        );
+        assert!(
+            text.contains("Siblings: ButtonProps [type_def]"),
+            "missing siblings: {text}"
+        );
+        assert!(text.contains("Button"), "missing chunk name: {text}");
         assert!(text.contains("0.87"), "missing similarity: {text}");
+    }
+
+    #[test]
+    fn format_results_grouped_groups_same_file_chunks() {
+        let results = vec![
+            storage::SearchResult {
+                chunk: storage::Chunk {
+                    file_path: "src/Form.tsx".to_string(),
+                    chunk_type: storage::ChunkType::Component,
+                    name: Some("Form".to_string()),
+                    content: "function Form() {}".to_string(),
+                    start_line: 1,
+                    end_line: 5,
+                },
+                distance: 0.1,
+            },
+            storage::SearchResult {
+                chunk: storage::Chunk {
+                    file_path: "src/Form.tsx".to_string(),
+                    chunk_type: storage::ChunkType::Hook,
+                    name: Some("useForm".to_string()),
+                    content: "function useForm() {}".to_string(),
+                    start_line: 7,
+                    end_line: 10,
+                },
+                distance: 0.2,
+            },
+        ];
+        let empty_imports: HashMap<String, String> = HashMap::new();
+        let empty_siblings: HashMap<String, Vec<storage::SiblingInfo>> = HashMap::new();
+        let text = format_results_grouped(&results, &empty_imports, &empty_siblings);
+        assert_eq!(
+            text.matches("## src/Form.tsx").count(),
+            1,
+            "expected one file header: {text}"
+        );
+        assert!(text.contains("Form"), "missing Form: {text}");
+        assert!(text.contains("useForm"), "missing useForm: {text}");
+    }
+
+    #[test]
+    fn format_results_grouped_deduplicates_siblings() {
+        let results = vec![storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/A.tsx".to_string(),
+                chunk_type: storage::ChunkType::Component,
+                name: Some("A".to_string()),
+                content: "function A() {}".to_string(),
+                start_line: 5,
+                end_line: 7,
+            },
+            distance: 0.1,
+        }];
+        let empty_imports = HashMap::new();
+        let siblings_map = HashMap::from([(
+            "src/A.tsx".to_string(),
+            vec![
+                storage::SiblingInfo {
+                    name: Some("A".to_string()),
+                    chunk_type: storage::ChunkType::Component,
+                    start_line: 5,
+                    end_line: 7,
+                },
+                storage::SiblingInfo {
+                    name: Some("AProps".to_string()),
+                    chunk_type: storage::ChunkType::TypeDef,
+                    start_line: 1,
+                    end_line: 3,
+                },
+            ],
+        )]);
+        let text = format_results_grouped(&results, &empty_imports, &siblings_map);
+        assert!(
+            text.contains("AProps [type_def]"),
+            "sibling should be included: {text}"
+        );
+        let siblings_line = text.lines().find(|l| l.starts_with("Siblings:")).unwrap();
+        assert!(
+            !siblings_line.contains("A [component]"),
+            "search result should be excluded from siblings: {siblings_line}"
+        );
+    }
+
+    #[test]
+    fn format_results_grouped_omits_empty_imports() {
+        let results = vec![storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/A.tsx".to_string(),
+                chunk_type: storage::ChunkType::Component,
+                name: Some("A".to_string()),
+                content: "code".to_string(),
+                start_line: 1,
+                end_line: 3,
+            },
+            distance: 0.1,
+        }];
+        let imports_map = HashMap::from([("src/A.tsx".to_string(), String::new())]);
+        let empty: HashMap<String, Vec<storage::SiblingInfo>> = HashMap::new();
+        let text = format_results_grouped(&results, &imports_map, &empty);
+        assert!(!text.contains("Imports:"), "empty imports should be omitted: {text}");
+    }
+
+    #[test]
+    fn format_results_grouped_omits_empty_siblings() {
+        let results = vec![storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/A.tsx".to_string(),
+                chunk_type: storage::ChunkType::Component,
+                name: Some("A".to_string()),
+                content: "code".to_string(),
+                start_line: 1,
+                end_line: 3,
+            },
+            distance: 0.1,
+        }];
+        let empty_imports: HashMap<String, String> = HashMap::new();
+        let siblings_map = HashMap::from([("src/A.tsx".to_string(), vec![])]);
+        let text = format_results_grouped(&results, &empty_imports, &siblings_map);
+        assert!(
+            !text.contains("Siblings:"),
+            "empty siblings should be omitted: {text}"
+        );
+    }
+
+    #[test]
+    fn format_results_grouped_sorts_files_by_best_similarity() {
+        let results = vec![
+            storage::SearchResult {
+                chunk: storage::Chunk {
+                    file_path: "src/B.tsx".to_string(),
+                    chunk_type: storage::ChunkType::Component,
+                    name: Some("B".to_string()),
+                    content: "code B".to_string(),
+                    start_line: 1,
+                    end_line: 3,
+                },
+                distance: 0.5,
+            },
+            storage::SearchResult {
+                chunk: storage::Chunk {
+                    file_path: "src/A.tsx".to_string(),
+                    chunk_type: storage::ChunkType::Component,
+                    name: Some("A".to_string()),
+                    content: "code A".to_string(),
+                    start_line: 1,
+                    end_line: 3,
+                },
+                distance: 0.1,
+            },
+        ];
+        let empty: HashMap<String, String> = HashMap::new();
+        let empty_siblings: HashMap<String, Vec<storage::SiblingInfo>> = HashMap::new();
+        let text = format_results_grouped(&results, &empty, &empty_siblings);
+        let a_pos = text.find("## src/A.tsx").unwrap();
+        let b_pos = text.find("## src/B.tsx").unwrap();
+        assert!(
+            a_pos < b_pos,
+            "A (better similarity) should come before B: {text}"
+        );
     }
 
     #[tokio::test]
