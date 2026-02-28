@@ -99,6 +99,9 @@ pub struct ExplorerParams {
 pub struct IndexParams {
     /// Force full rebuild (default: false, uses incremental update)
     pub force: Option<bool>,
+    /// Maximum number of chunks to embed in this call (default: 500, 0 = unlimited).
+    /// Use to avoid hitting Gemini API rate limits on large projects.
+    pub budget: Option<u32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -198,7 +201,7 @@ impl Yomu {
 
     #[tool(
         name = "index",
-        description = "Build or update the search index for the current project. Scans frontend files (TS, TSX, JS, JSX, CSS, HTML), splits them into semantic chunks using AST parsing, and embeds them incrementally. With force=true, does a full rebuild with re-embedding."
+        description = "Build or update the search index. Chunks all frontend files (TS, TSX, JS, CSS, HTML) then embeds up to `budget` chunks (default 500). Call repeatedly to embed more. With force=true, does a full rebuild. Set budget=0 for unlimited."
     )]
     async fn index(
         &self,
@@ -224,15 +227,22 @@ impl Yomu {
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
+        let max_chunks = match params.budget {
+            Some(0) => u32::MAX,
+            Some(b) => b,
+            None => 500,
+        };
         let embed_result =
-            indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, u32::MAX, None)
+            indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, max_chunks, None)
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         self.auto_index_failures.store(0, Ordering::SeqCst);
         self.auto_indexed.store(false, Ordering::SeqCst);
 
-        let text = format!(
+        let stats = self.with_db(storage::get_stats).await?;
+        let remaining = stats.total_chunks.saturating_sub(stats.embedded_chunks);
+        let mut text = format!(
             "Indexing complete: {} files chunked, {} chunks created, {} files skipped, {} chunks embedded, {} files embedded",
             chunk_result.files_processed,
             chunk_result.chunks_created,
@@ -240,6 +250,12 @@ impl Yomu {
             embed_result.chunks_embedded,
             embed_result.files_completed,
         );
+        if remaining > 0 {
+            text.push_str(&format!(
+                "\n\nEmbedding progress: {}/{} chunks ({}%). {} remaining. Call index again to continue.",
+                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage(), remaining
+            ));
+        }
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
@@ -615,8 +631,8 @@ impl ServerHandler for Yomu {
                  the blast radius before modifying code. Pass target=\"src/hooks/useAuth.ts\" for file-level \
                  analysis, or add symbol=\"useAuth\" to filter to a specific export. \
                  'index' rebuilds the search index (usually not needed — explorer auto-indexes on first use). \
-                 Without force, it chunks all files then embeds incrementally. With force=true, it does a \
-                 full rebuild. \
+                 It chunks all files then embeds up to `budget` chunks (default 500, set 0 for unlimited). \
+                 Call repeatedly to embed more. With force=true, it does a full rebuild. \
                  'status' shows index statistics."
                     .into(),
             ),

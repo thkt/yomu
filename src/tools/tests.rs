@@ -68,7 +68,7 @@ async fn status_returns_empty_stats() {
 #[tokio::test]
 async fn index_requires_api_key() {
     let (y, _dir) = test_yomu();
-    let params = Parameters(IndexParams { force: None });
+    let params = Parameters(IndexParams { force: None, budget: None });
     let err = y.index(params).await.unwrap_err();
     assert!(
         err.message.contains("GEMINI_API_KEY"),
@@ -726,7 +726,7 @@ async fn index_embeds_chunk_only_files() {
         tool_router: Yomu::tool_router(),
     };
 
-    let params = Parameters(IndexParams { force: None });
+    let params = Parameters(IndexParams { force: None, budget: None });
     let result = y.index(params).await.unwrap();
     let text = &result.content[0].as_text().unwrap().text;
     assert!(

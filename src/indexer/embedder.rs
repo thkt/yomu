@@ -8,7 +8,7 @@ const EMBED_PATH: &str = "/models/gemini-embedding-001:embedContent";
 const BATCH_PATH: &str = "/models/gemini-embedding-001:batchEmbedContents";
 
 pub use crate::storage::EMBEDDING_DIMS;
-const MAX_RETRIES: u32 = 3;
+const MAX_RETRIES: u32 = 5;
 const BATCH_SIZE: usize = 100;
 
 fn is_retryable(status: u16) -> bool {
@@ -90,7 +90,7 @@ impl Embedder {
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, EmbedError> {
         const PER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-        const TOTAL_RETRY_TIMEOUT: Duration = Duration::from_secs(90);
+        const TOTAL_RETRY_TIMEOUT: Duration = Duration::from_secs(180);
 
         let result = tokio::time::timeout(TOTAL_RETRY_TIMEOUT, async {
             let api_key_header = {
@@ -102,9 +102,13 @@ impl Embedder {
             let mut last_status = 0;
             for attempt in 0..=MAX_RETRIES {
                 if attempt > 0 {
-                    let base = 500 * 2u64.pow(attempt - 1);
-                    // Simple jitter: use current time nanos to avoid adding `rand` dependency.
-                    // Known-weak for concurrent clients; acceptable for single-process MCP server.
+                    // 429 (rate limit): start at 2s to wait for RPM window reset.
+                    // Other retryable errors (500/503): start at 500ms.
+                    let base = if last_status == 429 {
+                        2000 * 2u64.pow(attempt - 1)
+                    } else {
+                        500 * 2u64.pow(attempt - 1)
+                    };
                     let jitter = (std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -159,7 +163,7 @@ impl Embedder {
             Ok(inner) => inner,
             Err(_) => Err(EmbedError::Api {
                 status: 0,
-                message: "Gemini API did not respond within retry window (90s). Check network connectivity.".into(),
+                message: "Gemini API did not respond within retry window (180s). Check network connectivity.".into(),
             }),
         }
     }
