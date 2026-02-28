@@ -151,14 +151,17 @@ fn collect_pending_files(
     files: &[std::path::PathBuf],
     force: bool,
 ) -> Result<(Vec<PendingFile>, u32, u32), IndexError> {
-    let conn = conn.lock();
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
     let mut files_errored = 0u32;
 
     for file_path in files {
-        match process_file(&conn, root, file_path, force)? {
-            FileAction::Process(pf) => pending.push(pf),
+        let conn_guard = conn.lock();
+        match process_file(&conn_guard, root, file_path, force)? {
+            FileAction::Process(pf) => {
+                drop(conn_guard);
+                pending.push(pf);
+            }
             FileAction::Skip => files_skipped += 1,
             FileAction::Error => files_errored += 1,
         }
@@ -465,6 +468,16 @@ pub async fn run_incremental_embed(
             }
         };
 
+        if embeddings.len() != chunk_ids.len() {
+            tracing::warn!(
+                file = %file_path,
+                expected = chunk_ids.len(),
+                actual = embeddings.len(),
+                "Embedding count mismatch, skipping file"
+            );
+            continue;
+        }
+
         tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
 
         let pairs: Vec<(i64, Vec<f32>)> = chunk_ids
@@ -567,6 +580,13 @@ mod tests {
     }
 
     use crate::indexer::embedder::MockEmbedder;
+
+    fn test_db() -> (storage::Db, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(".yomu").join("index.db");
+        let conn = storage::open_db(&db_path).unwrap();
+        (conn, dir)
+    }
 
     #[tokio::test]
     async fn run_index_with_mock_embedder() {
@@ -1007,5 +1027,93 @@ mod tests {
         let result = run_index(Arc::clone(&conn), dir.path(), &FailingEmbedder, false).await;
 
         assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
+    }
+
+    #[test]
+    fn order_files_for_embedding_most_imported_first() {
+        let (conn, _dir) = test_db();
+
+        // B is imported by A, so B should come first
+        storage::replace_file_chunks_only(
+            &conn, "src/A.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some("A"),
+                content: "function A() {}",
+                start_line: 1, end_line: 1,
+            }],
+            "h1", "", &[storage::Reference {
+                source_file: "src/A.tsx".to_string(),
+                target_file: "src/B.tsx".to_string(),
+                symbol_name: Some("B".to_string()),
+                ref_kind: storage::RefKind::Named,
+            }],
+        ).unwrap();
+        storage::replace_file_chunks_only(
+            &conn, "src/B.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some("B"),
+                content: "function B() {}",
+                start_line: 1, end_line: 1,
+            }],
+            "h2", "", &[],
+        ).unwrap();
+
+        let ordered = order_files_for_embedding(&conn, None).unwrap();
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0], "src/B.tsx", "most-imported file should come first");
+        assert_eq!(ordered[1], "src/A.tsx");
+    }
+
+    #[test]
+    fn order_files_for_embedding_type_hints_prioritize() {
+        let (conn, _dir) = test_db();
+
+        storage::replace_file_chunks_only(
+            &conn, "src/types.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::TypeDef,
+                name: Some("Config"),
+                content: "interface Config {}",
+                start_line: 1, end_line: 1,
+            }],
+            "h1", "", &[],
+        ).unwrap();
+        storage::replace_file_chunks_only(
+            &conn, "src/App.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some("App"),
+                content: "function App() {}",
+                start_line: 1, end_line: 1,
+            }],
+            "h2", "", &[],
+        ).unwrap();
+
+        let ordered = order_files_for_embedding(
+            &conn, Some(&[storage::ChunkType::TypeDef]),
+        ).unwrap();
+        assert_eq!(ordered[0], "src/types.tsx", "type hint file should be prioritized");
+    }
+
+    #[test]
+    fn order_files_for_embedding_empty_hints_no_reorder() {
+        let (conn, _dir) = test_db();
+
+        storage::replace_file_chunks_only(
+            &conn, "src/A.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some("A"),
+                content: "function A() {}",
+                start_line: 1, end_line: 1,
+            }],
+            "h1", "", &[],
+        ).unwrap();
+
+        let ordered = order_files_for_embedding(&conn, Some(&[])).unwrap();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0], "src/A.tsx");
     }
 }

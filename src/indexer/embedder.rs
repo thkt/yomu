@@ -3,10 +3,9 @@ use std::time::Duration;
 
 use reqwest::Client;
 
-const EMBED_URL: &str =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
-const BATCH_URL: &str =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents";
+const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+const EMBED_PATH: &str = "/models/gemini-embedding-001:embedContent";
+const BATCH_PATH: &str = "/models/gemini-embedding-001:batchEmbedContents";
 
 pub use crate::storage::EMBEDDING_DIMS;
 const MAX_RETRIES: u32 = 3;
@@ -48,6 +47,8 @@ pub trait Embed: Send + Sync {
 pub struct Embedder {
     http: Client,
     api_key: String,
+    embed_url: String,
+    batch_url: String,
 }
 
 impl std::fmt::Debug for Embedder {
@@ -71,7 +72,16 @@ impl Embedder {
         if api_key.is_empty() {
             return Err(EmbedError::ApiKeyNotSet);
         }
-        Ok(Self { http, api_key })
+        let embed_url = format!("{DEFAULT_BASE_URL}{EMBED_PATH}");
+        let batch_url = format!("{DEFAULT_BASE_URL}{BATCH_PATH}");
+        Ok(Self { http, api_key, embed_url, batch_url })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_base_url(http: Client, api_key: String, base_url: String) -> Self {
+        let embed_url = format!("{base_url}{EMBED_PATH}");
+        let batch_url = format!("{base_url}{BATCH_PATH}");
+        Self { http, api_key, embed_url, batch_url }
     }
 
     async fn post_with_retry(
@@ -89,7 +99,7 @@ impl Embedder {
                 v.set_sensitive(true);
                 v
             };
-            let mut last_status: u16 = 0;
+            let mut last_status = 0;
             for attempt in 0..=MAX_RETRIES {
                 if attempt > 0 {
                     let base = 500 * 2u64.pow(attempt - 1);
@@ -165,7 +175,7 @@ impl Embed for Embedder {
                 "outputDimensionality": EMBEDDING_DIMS
             });
 
-            let json = self.post_with_retry(EMBED_URL, &body).await?;
+            let json = self.post_with_retry(&self.embed_url, &body).await?;
             parse_single_embedding(&json)
         })
     }
@@ -192,7 +202,7 @@ impl Embed for Embedder {
                     .collect();
 
                 let body = serde_json::json!({ "requests": requests });
-                let json = self.post_with_retry(BATCH_URL, &body).await?;
+                let json = self.post_with_retry(&self.batch_url, &body).await?;
                 let embeddings = parse_batch_embeddings(&json)?;
                 all_embeddings.extend(embeddings);
             }
@@ -277,9 +287,6 @@ fn parse_batch_embeddings(json: &serde_json::Value) -> Result<Vec<Vec<f32>>, Emb
 /// - `embed_query` returns a unit vector (v[0] = 1.0) for meaningful distance tests.
 /// - `embed_documents` returns index-based unit vectors so different documents
 ///   produce distinct embeddings, enabling search ordering verification.
-///
-/// Available in unit tests (`cfg(test)`) and via the `test-support` feature for
-/// integration tests in the `tests/` directory.
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) struct MockEmbedder;
 
@@ -311,6 +318,8 @@ impl Embed for MockEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::matchers::method;
 
     #[test]
     fn from_env_returns_error_without_api_key() {
@@ -422,6 +431,66 @@ mod tests {
         assert!(!is_retryable(400));
         assert!(!is_retryable(401));
         assert!(!is_retryable(404));
+    }
+
+    fn mock_embedding_response() -> serde_json::Value {
+        let values = vec![0.0_f64; EMBEDDING_DIMS as usize];
+        serde_json::json!({ "embedding": { "values": values } })
+    }
+
+    #[tokio::test]
+    async fn post_with_retry_succeeds_on_first_try() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_embedding_response()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let embedder = Embedder::with_base_url(Client::new(), "test-key".into(), server.uri());
+        let result = embedder.embed_query("test").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), EMBEDDING_DIMS as usize);
+    }
+
+    #[tokio::test]
+    async fn post_with_retry_retries_on_429() {
+        let server = MockServer::start().await;
+
+        // First call: 429, second call: 200
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_string("rate limited"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_embedding_response()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let embedder = Embedder::with_base_url(Client::new(), "test-key".into(), server.uri());
+        let result = embedder.embed_query("test").await;
+        assert!(result.is_ok(), "should succeed after retry: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn post_with_retry_aborts_on_non_retryable_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let embedder = Embedder::with_base_url(Client::new(), "test-key".into(), server.uri());
+        let result = embedder.embed_query("test").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EmbedError::Api { status, .. } => assert_eq!(status, 400),
+            other => panic!("expected Api error, got: {other}"),
+        }
     }
 
     #[tokio::test]

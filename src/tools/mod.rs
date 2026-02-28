@@ -358,7 +358,15 @@ impl Yomu {
                     false
                 }
             }
-            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => true,
+            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
+                // Re-chunk to pick up new/changed files before embedding
+                if let Err(e) =
+                    indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
+                {
+                    tracing::warn!(error = %e, "Re-chunking failed, proceeding with existing chunks");
+                }
+                true
+            }
             IndexState::FullyEmbedded => false,
         };
 
