@@ -9,32 +9,23 @@ use sqlite_vec::sqlite3_vec_init;
 
 pub type Db = Connection;
 
-/// Dimensionality of embedding vectors (Gemini gemini-embedding-001).
 pub const EMBEDDING_DIMS: u32 = 768;
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("yomu requires a little-endian target for f32↔u8 embedding storage");
 
-/// Reinterpret `&[f32]` as `&[u8]` for sqlite-vec's BLOB format (little-endian).
 fn f32_as_bytes(slice: &[f32]) -> &[u8] {
     bytemuck::cast_slice(slice)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkType {
-    /// React/framework component (PascalCase function or arrow function)
     Component,
-    /// React hook (`use` + PascalCase suffix, e.g. `useAuth`)
     Hook,
-    /// TypeScript `interface` or `type` alias
     TypeDef,
-    /// CSS rule set, `@media`, or `@keyframes`
     CssRule,
-    /// HTML top-level element
     HtmlElement,
-    /// Test case (`describe`, `it`, or `test` call)
     TestCase,
-    /// Anything not matching the above patterns
     Other,
 }
 
@@ -68,7 +59,6 @@ impl ChunkType {
     }
 }
 
-/// `file_path` is relative to the project root.
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub file_path: String,
@@ -79,7 +69,7 @@ pub struct Chunk {
     pub end_line: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IndexStatus {
     pub total_files: u32,
     pub total_chunks: u32,
@@ -87,23 +77,19 @@ pub struct IndexStatus {
     pub last_indexed_at: Option<String>,
 }
 
-/// Source of a search result match.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatchSource {
-    /// Vector similarity search result.
     Semantic,
-    /// Name/type fallback search result.
     NameMatch,
 }
 
-/// Smaller `distance` = more similar. Display uses `similarity = 1.0 / (1.0 + distance)`.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub chunk: Chunk,
+    pub chunk_id: Option<i64>,
     pub distance: f32,
     pub match_source: MatchSource,
-    /// Reranked score (higher = better). Initialized from distance/match_source,
-    /// then adjusted by rerank signals (type hints, import count, test path).
+    /// Reranked score (higher = better).
     pub score: f32,
 }
 
@@ -115,35 +101,36 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("chunks/embeddings length mismatch: {chunks} chunks vs {embeddings} embeddings")]
     LengthMismatch { chunks: usize, embeddings: usize },
+    #[error("embedding dimension mismatch: expected {expected}, got {actual}")]
+    DimensionMismatch { expected: usize, actual: usize },
 }
 
-/// Registers the sqlite-vec extension on first call.
-/// Creates parent directories if they don't exist.
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
-    // sqlite3_auto_extension is process-global; OnceLock ensures we register exactly
-    // once even when open_db() is called multiple times (e.g., in tests).
     static INIT: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
     let init_result = INIT.get_or_init(|| {
         // SAFETY: sqlite3_vec_init is the auto-extension entry point exported by sqlite-vec.
-        // Typed local `ext` ensures a compile-time error if sqlite3_vec_init's signature
-        // changes. transmute converts into the `unsafe extern "C" fn()` expected by
-        // sqlite3_auto_extension. This is the documented usage pattern for sqlite-vec.
+        // sqlite-vec exports it as `unsafe extern "C" fn()`, while rusqlite's
+        // sqlite3_auto_extension expects the full init signature. Both are C fn pointers
+        // with compatible calling conventions; SQLite calls it with the correct arguments.
+        // Explicit source type ensures compile error if sqlite-vec changes its export type.
         let rc = unsafe {
-            let ext = std::mem::transmute::<
-                *const (),
+            sqlite3_auto_extension(Some(std::mem::transmute::<
+                unsafe extern "C" fn(),
                 unsafe extern "C" fn(
                     *mut rusqlite::ffi::sqlite3,
                     *mut *mut std::os::raw::c_char,
                     *const rusqlite::ffi::sqlite3_api_routines,
                 ) -> std::os::raw::c_int,
-            >(sqlite3_vec_init as *const ());
-            sqlite3_auto_extension(Some(ext))
+            >(sqlite3_vec_init)))
         };
         if rc == 0 { Ok(()) } else { Err(rc) }
     });
     if let Err(rc) = init_result {
         return Err(StorageError::Io(std::io::Error::other(
-            format!("sqlite-vec extension failed to register (rc={rc})"),
+            format!(
+                "sqlite-vec extension failed to register (sqlite3 rc={rc}). \
+                 This is a process-level initialization error that cannot be retried."
+            ),
         )));
     }
 
@@ -164,43 +151,44 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
 
 const SCHEMA_VERSION: &str = "2";
 
+const DDL: &str = "
+    CREATE TABLE IF NOT EXISTS chunks (
+        id INTEGER PRIMARY KEY,
+        file_path TEXT NOT NULL,
+        chunk_type TEXT NOT NULL,
+        name TEXT,
+        content TEXT NOT NULL,
+        start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL,
+        file_hash TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);
+    CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(file_hash);
+
+    CREATE TABLE IF NOT EXISTS index_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS file_context (
+        file_path TEXT PRIMARY KEY,
+        imports_text TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS file_references (
+        id INTEGER PRIMARY KEY,
+        source_file TEXT NOT NULL,
+        target_file TEXT NOT NULL,
+        symbol_name TEXT,
+        ref_kind TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_refs_source ON file_references(source_file);
+    CREATE INDEX IF NOT EXISTS idx_refs_target ON file_references(target_file);
+    CREATE INDEX IF NOT EXISTS idx_refs_target_symbol ON file_references(target_file, symbol_name);
+";
+
 fn init_schema(conn: &Connection) -> Result<(), StorageError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS chunks (
-            id INTEGER PRIMARY KEY,
-            file_path TEXT NOT NULL,
-            chunk_type TEXT NOT NULL,
-            name TEXT,
-            content TEXT NOT NULL,
-            start_line INTEGER NOT NULL,
-            end_line INTEGER NOT NULL,
-            file_hash TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);
-        CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(file_hash);
-
-        CREATE TABLE IF NOT EXISTS index_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS file_context (
-            file_path TEXT PRIMARY KEY,
-            imports_text TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS file_references (
-            id INTEGER PRIMARY KEY,
-            source_file TEXT NOT NULL,
-            target_file TEXT NOT NULL,
-            symbol_name TEXT,
-            ref_kind TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_refs_source ON file_references(source_file);
-        CREATE INDEX IF NOT EXISTS idx_refs_target ON file_references(target_file);
-        CREATE INDEX IF NOT EXISTS idx_refs_target_symbol ON file_references(target_file, symbol_name);",
-    )?;
+    conn.execute_batch(DDL)?;
 
     conn.execute_batch(&format!(
         "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
@@ -209,7 +197,6 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         )"
     ))?;
 
-    // Read stored version and update if needed (INSERT OR REPLACE, not INSERT OR IGNORE)
     let stored: String = conn
         .query_row(
             "SELECT value FROM index_meta WHERE key = 'schema_version'",
@@ -217,13 +204,25 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
             |row| row.get(0),
         )
         .unwrap_or_else(|_| "0".to_string());
+
     if stored != SCHEMA_VERSION {
+        migrate(conn, &stored)?;
         conn.execute(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('schema_version', ?1)",
             [SCHEMA_VERSION],
         )?;
     }
 
+    Ok(())
+}
+
+fn migrate(_conn: &Connection, from_version: &str) -> Result<(), StorageError> {
+    let from: u32 = from_version.parse().unwrap_or(0);
+    let to: u32 = SCHEMA_VERSION.parse().unwrap_or(0);
+    if from >= to {
+        return Ok(());
+    }
+    tracing::info!(from, to, "Migrating schema from v{from} to v{to}");
     Ok(())
 }
 
@@ -235,20 +234,24 @@ pub struct NewChunk<'a> {
     pub end_line: u32,
 }
 
-pub fn insert_chunk(
+fn check_embedding_dims(embedding: &[f32]) -> Result<(), StorageError> {
+    if embedding.len() != EMBEDDING_DIMS as usize {
+        return Err(StorageError::DimensionMismatch {
+            expected: EMBEDDING_DIMS as usize,
+            actual: embedding.len(),
+        });
+    }
+    Ok(())
+}
+
+fn insert_chunk_row(
     conn: &Connection,
     file_path: &str,
     chunk: &NewChunk,
     file_hash: &str,
-    embedding: &[f32],
 ) -> Result<i64, StorageError> {
-    assert_eq!(
-        embedding.len(),
-        EMBEDDING_DIMS as usize,
-        "embedding dimension mismatch: expected {}, got {}",
-        EMBEDDING_DIMS,
-        embedding.len()
-    );
+    debug_assert!(chunk.start_line <= chunk.end_line, "start_line > end_line");
+    debug_assert!(!chunk.content.is_empty(), "empty chunk content");
     conn.execute(
         "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -262,10 +265,20 @@ pub fn insert_chunk(
             file_hash,
         ],
     )?;
-    let chunk_id = conn.last_insert_rowid();
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn insert_chunk(
+    conn: &Connection,
+    file_path: &str,
+    chunk: &NewChunk,
+    file_hash: &str,
+    embedding: &[f32],
+) -> Result<i64, StorageError> {
+    check_embedding_dims(embedding)?;
+    let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash)?;
 
     let embedding_bytes = f32_as_bytes(embedding);
-
     conn.execute(
         "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
         rusqlite::params![chunk_id, embedding_bytes],
@@ -274,9 +287,33 @@ pub fn insert_chunk(
     Ok(chunk_id)
 }
 
-/// Deletes old data and inserts new chunks + embeddings + references in a
-/// single transaction. Also stores file-level context (import statements)
-/// in the `file_context` table.
+fn write_file_metadata(
+    tx: &Connection,
+    file_path: &str,
+    imports_text: &str,
+    refs: &[Reference],
+) -> Result<(), StorageError> {
+    tx.execute(
+        "INSERT OR REPLACE INTO file_context (file_path, imports_text) VALUES (?1, ?2)",
+        rusqlite::params![file_path, imports_text],
+    )?;
+
+    for r in refs {
+        tx.execute(
+            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
+        )?;
+    }
+
+    tx.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('last_indexed_at', datetime('now'))",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Replaces all chunks + embeddings + references for a file in a single transaction.
 pub fn replace_file_chunks(
     conn: &Connection,
     file_path: &str,
@@ -293,41 +330,19 @@ pub fn replace_file_chunks(
         });
     }
 
-    // unchecked_transaction: conn is &Connection (not &mut) because it's behind
-    // parking_lot::Mutex. The Mutex guarantees single-writer access.
     let tx = conn.unchecked_transaction()?;
-
     delete_file_chunks_in(&tx, file_path)?;
 
     for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
         insert_chunk(&tx, file_path, chunk, file_hash, embedding)?;
     }
 
-    tx.execute(
-        "INSERT OR REPLACE INTO file_context (file_path, imports_text) VALUES (?1, ?2)",
-        rusqlite::params![file_path, imports_text],
-    )?;
-
-    for r in refs {
-        tx.execute(
-            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
-        )?;
-    }
-
-    tx.execute(
-        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('last_indexed_at', datetime('now'))",
-        [],
-    )?;
-
+    write_file_metadata(&tx, file_path, imports_text, refs)?;
     tx.commit()?;
     Ok(())
 }
 
-/// Stores chunks without embeddings. Deletes old data (including vec_chunks)
-/// and inserts new chunks + file_context + file_references.
-/// Used by chunk-only indexing (no Gemini API calls).
+/// Stores chunks without embeddings (no API calls).
 pub fn replace_file_chunks_only(
     conn: &Connection,
     file_path: &str,
@@ -337,48 +352,17 @@ pub fn replace_file_chunks_only(
     refs: &[Reference],
 ) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
-
     delete_file_chunks_in(&tx, file_path)?;
 
     for chunk in chunks {
-        tx.execute(
-            "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                file_path,
-                chunk.chunk_type.as_str(),
-                chunk.name,
-                chunk.content,
-                chunk.start_line,
-                chunk.end_line,
-                file_hash,
-            ],
-        )?;
+        insert_chunk_row(&tx, file_path, chunk, file_hash)?;
     }
 
-    tx.execute(
-        "INSERT OR REPLACE INTO file_context (file_path, imports_text) VALUES (?1, ?2)",
-        rusqlite::params![file_path, imports_text],
-    )?;
-
-    for r in refs {
-        tx.execute(
-            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
-        )?;
-    }
-
-    tx.execute(
-        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('last_indexed_at', datetime('now'))",
-        [],
-    )?;
-
+    write_file_metadata(&tx, file_path, imports_text, refs)?;
     tx.commit()?;
     Ok(())
 }
 
-/// Add embeddings to existing chunks (INSERT OR IGNORE into vec_chunks).
 /// Returns the number of newly inserted embeddings.
 pub fn add_embeddings(
     conn: &Connection,
@@ -388,14 +372,7 @@ pub fn add_embeddings(
     let mut inserted = 0u32;
 
     for (chunk_id, embedding) in embeddings {
-        assert_eq!(
-            embedding.len(),
-            EMBEDDING_DIMS as usize,
-            "embedding dimension mismatch: expected {}, got {}",
-            EMBEDDING_DIMS,
-            embedding.len()
-        );
-        // vec0 virtual tables don't support INSERT OR IGNORE, so check first.
+        check_embedding_dims(embedding)?;
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM vec_chunks WHERE chunk_id = ?1)",
             [chunk_id],
@@ -416,7 +393,6 @@ pub fn add_embeddings(
     Ok(inserted)
 }
 
-/// Returns file paths that have chunks but no embeddings, with chunk counts.
 pub fn get_unembedded_file_paths(
     conn: &Connection,
 ) -> Result<Vec<(String, u32)>, StorageError> {
@@ -433,11 +409,51 @@ pub fn get_unembedded_file_paths(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
+pub fn get_unembedded_chunks_for_file(
+    conn: &Connection,
+    file_path: &str,
+) -> Result<Vec<(i64, String)>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.content FROM chunks c
+         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
+         WHERE c.file_path = ?1 AND v.chunk_id IS NULL",
+    )?;
+    let rows = stmt.query_map([file_path], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn get_files_with_chunk_types(
+    conn: &Connection,
+    files: &[String],
+    types: &[ChunkType],
+) -> Result<HashSet<String>, StorageError> {
+    if files.is_empty() || types.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let type_ph = sql_placeholders(types.len());
+    let file_ph = sql_placeholders(files.len());
+    let sql = format!(
+        "SELECT DISTINCT file_path FROM chunks WHERE chunk_type IN ({type_ph}) AND file_path IN ({file_ph})"
+    );
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(types.len() + files.len());
+    for t in types {
+        params.push(Box::new(t.as_str().to_string()));
+    }
+    for f in files {
+        params.push(Box::new(f.clone()));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
+    rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
+}
+
 /// Returns true if the file needs embedding:
-/// - file not in DB → true (new file)
-/// - hash changed → true (re-chunk + re-embed)
-/// - hash same but has un-embedded chunks → true (embed only)
-/// - hash same and all chunks embedded → false (skip)
+/// new file → true, hash changed → true, has un-embedded chunks → true, else false.
 pub fn needs_embedding(
     conn: &Connection,
     file_path: &str,
@@ -471,7 +487,6 @@ pub fn needs_embedding(
     }
 }
 
-/// Returns `true` if the file is new or its hash has changed.
 pub fn should_reindex(
     conn: &Connection,
     file_path: &str,
@@ -546,9 +561,6 @@ pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), S
     Ok(())
 }
 
-/// Search chunks by name using SQL LIKE.
-/// Returns chunks whose `name` contains any of the keywords (case-insensitive).
-/// Empty keywords returns empty results.
 pub fn search_by_name(
     conn: &Connection,
     keywords: &[&str],
@@ -560,12 +572,7 @@ pub fn search_by_name(
         return Ok(Vec::new());
     }
 
-    let keyword_conditions: Vec<String> = keywords
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("name LIKE ?{}", i + 1))
-        .collect();
-    let keyword_clause = keyword_conditions.join(" OR ");
+    let keyword_clause = vec!["name LIKE ?"; keywords.len()].join(" OR ");
 
     let mut sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line \
@@ -573,25 +580,34 @@ pub fn search_by_name(
         keyword_clause
     );
 
-    if let Some(types) = type_filter {
-        if !types.is_empty() {
-            let type_list: Vec<String> = types.iter().map(|t| format!("'{}'", t.as_str())).collect();
-            sql.push_str(&format!(" AND chunk_type IN ({})", type_list.join(",")));
+    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
+        .iter()
+        .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+
+    if let Some(types) = type_filter
+        && !types.is_empty()
+    {
+        sql.push_str(&format!(" AND chunk_type IN ({})", sql_placeholders(types.len())));
+        for t in types {
+            all_params.push(Box::new(t.as_str().to_string()));
         }
     }
 
     if !exclude_ids.is_empty() {
-        let id_list: Vec<String> = exclude_ids.iter().map(|id| id.to_string()).collect();
-        sql.push_str(&format!(" AND id NOT IN ({})", id_list.join(",")));
+        sql.push_str(&format!(" AND id NOT IN ({})", sql_placeholders(exclude_ids.len())));
+        for id in exclude_ids {
+            all_params.push(Box::new(*id));
+        }
     }
 
-    sql.push_str(&format!(" LIMIT {}", limit));
+    sql.push_str(" LIMIT ?");
+    all_params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<String> = keywords.iter().map(|k| format!("%{k}%")).collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params
         .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .map(|b| b.as_ref())
         .collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
@@ -604,6 +620,7 @@ pub fn search_by_name(
                 start_line: row.get(5)?,
                 end_line: row.get(6)?,
             },
+            chunk_id: Some(row.get(0)?),
             distance: f32::INFINITY,
             match_source: MatchSource::NameMatch,
             score: 0.5,
@@ -621,9 +638,6 @@ pub fn delete_file_chunks(conn: &Connection, file_path: &str) -> Result<(), Stor
     Ok(())
 }
 
-// ── Reference types (FR-005, FR-006) ──
-
-/// Kind of import reference (named, default, namespace, type_only, or side_effect).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefKind {
     Named,
@@ -643,10 +657,8 @@ impl RefKind {
             Self::SideEffect => "side_effect",
         }
     }
-
 }
 
-/// A resolved file-to-file reference stored in DB.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reference {
     pub source_file: String,
@@ -655,20 +667,12 @@ pub struct Reference {
     pub ref_kind: RefKind,
 }
 
-/// A dependent file returned by impact queries.
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct Dependent {
     pub file_path: String,
     pub depth: u32,
 }
 
-/// Atomically replace all references for a source file.
-/// Deletes old references and inserts new ones.
-///
-/// Production code uses [`replace_file_chunks`] which handles references
-/// atomically within the same transaction. This function is kept for tests
-/// that need to set up references independently.
 #[cfg(test)]
 pub fn replace_file_references(
     conn: &Connection,
@@ -691,8 +695,7 @@ pub fn replace_file_references(
     Ok(())
 }
 
-/// Get direct dependents of a target file (files that import it).
-#[allow(dead_code)] // public API, used in tests
+#[cfg(test)]
 pub fn get_dependents(
     conn: &Connection,
     target_file: &str,
@@ -709,9 +712,7 @@ pub fn get_dependents(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Get transitive dependents using recursive CTE.
-/// Returns all files that directly or transitively depend on target_file,
-/// with depth clamped to max_depth (max 10).
+/// Recursive CTE traversal; depth clamped to max_depth (max 10).
 pub fn get_transitive_dependents(
     conn: &Connection,
     target_file: &str,
@@ -744,7 +745,6 @@ pub fn get_transitive_dependents(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Get direct dependents that reference a specific symbol from a target file.
 pub fn get_symbol_dependents(
     conn: &Connection,
     target_file: &str,
@@ -760,7 +760,6 @@ pub fn get_symbol_dependents(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Get the total number of references in the database.
 pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
     let count: u32 = conn.query_row(
         "SELECT COUNT(*) FROM file_references",
@@ -771,7 +770,6 @@ pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
 }
 
 /// Returns un-embedded file paths ordered by import count (most-imported first).
-/// Files with the same import count are ordered alphabetically.
 pub fn get_files_by_import_count(
     conn: &Connection,
 ) -> Result<Vec<String>, StorageError> {
@@ -796,8 +794,6 @@ pub fn get_files_by_import_count(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Returns import counts for the given file paths.
-/// Each count is the number of files that import the target file.
 pub fn get_import_counts(
     conn: &Connection,
     file_paths: &[&str],
@@ -838,12 +834,10 @@ pub struct SiblingInfo {
     pub end_line: u32,
 }
 
-/// Build a comma-separated list of `?` placeholders for SQL IN clauses.
-fn sql_placeholders(count: usize) -> String {
+pub fn sql_placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count).collect::<Vec<_>>().join(",")
 }
 
-/// Files without file_context entries (e.g. old indexes) are absent from the result.
 pub fn get_file_contexts(
     conn: &Connection,
     file_paths: &[&str],
@@ -867,7 +861,6 @@ pub fn get_file_contexts(
         .map_err(Into::into)
 }
 
-/// Returns other chunks in the same file as search results ("siblings").
 pub fn get_file_siblings(
     conn: &Connection,
     file_paths: &[&str],
@@ -906,11 +899,6 @@ pub fn get_file_siblings(
     Ok(map)
 }
 
-/// Find chunks whose embeddings are nearest to `query_embedding`.
-///
-/// sqlite-vec requires `k` (the ANN retrieval window) as a query parameter.
-/// We set `k = limit + offset` so that after SQL OFFSET, enough candidates
-/// remain to fill the requested `limit`.
 pub fn search_similar(
     conn: &Connection,
     query_embedding: &[f32],
@@ -923,7 +911,7 @@ pub fn search_similar(
 
     let mut stmt = conn.prepare(
         "SELECT c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, v.distance
+                c.start_line, c.end_line, v.distance, c.id
          FROM vec_chunks v
          INNER JOIN chunks c ON c.id = v.chunk_id
          WHERE v.embedding MATCH ?1 AND k = ?2
@@ -943,6 +931,7 @@ pub fn search_similar(
                 start_line: row.get(4)?,
                 end_line: row.get(5)?,
             },
+            chunk_id: Some(row.get(7)?),
             distance,
             match_source: MatchSource::Semantic,
             score: 1.0 / (1.0 + distance),

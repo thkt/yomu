@@ -60,7 +60,7 @@ Add to your MCP client config (e.g. Claude Code `~/.claude/settings.json`):
 }
 ```
 
-yomu auto-detects the project root from `.yomu/`, `.git/`, or `package.json` upward from the working directory. Index is stored at `{project_root}/.yomu/index.db`. No manual indexing step — `explorer` auto-indexes on first call.
+yomu auto-detects the project root from `.yomu/` or `.git/` upward from the working directory. Index is stored at `{project_root}/.yomu/index.db`. No manual indexing step — `explorer` auto-indexes on first call.
 
 ## How it works
 
@@ -172,6 +172,7 @@ Other files fall back to character-based chunking with overlap.
 - **SCSS/Sass not supported** — Only plain CSS via tree-sitter.
 - **Embedding quality depends on Gemini** — Highly project-specific abbreviations or domain jargon may not match well against natural language queries.
 - **Cold start on first search** — The initial `explorer` call takes a few seconds for chunking + first batch embedding. Subsequent calls are faster.
+- **Large files skipped** — Files over 1 MB are excluded from indexing. This covers virtually all hand-written frontend source; generated bundles or large SVG-in-TSX may be skipped.
 
 ## Architecture
 
@@ -184,7 +185,7 @@ src/
 ├── indexer/
 │   ├── mod.rs       Indexing orchestration + incremental embed
 │   ├── walker.rs    File discovery (respects .gitignore patterns)
-│   ├── chunker.rs   tree-sitter AST chunking + import parsing
+│   ├── chunker/     tree-sitter AST chunking + import parsing
 │   └── embedder.rs  Gemini embedding API client
 ├── resolver.rs      Import path resolution (tsconfig aliases, index.ts probing)
 ├── query.rs         Hybrid search (vector + name fallback + rerank)

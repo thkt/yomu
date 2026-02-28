@@ -21,7 +21,23 @@ use crate::indexer::{self, embedder::{Embed, Embedder}};
 use crate::query;
 use crate::storage;
 
-const MAX_CHUNKS_PER_BUDGET: u32 = 50;
+const DEFAULT_EMBED_BUDGET: u32 = 50;
+
+fn max_chunks_per_budget() -> u32 {
+    static VALUE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        match std::env::var("YOMU_EMBED_BUDGET") {
+            Ok(v) => match v.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default {DEFAULT_EMBED_BUDGET}");
+                    DEFAULT_EMBED_BUDGET
+                }
+            },
+            Err(_) => DEFAULT_EMBED_BUDGET,
+        }
+    })
+}
 
 #[derive(Debug, PartialEq)]
 enum IndexState {
@@ -93,15 +109,18 @@ pub struct IndexParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ImpactParams {
-    /// File path or file:symbol to analyze. Examples: "src/hooks/useAuth.ts", "src/hooks/useAuth.ts:useAuth"
+    /// File path to analyze (relative to project root). Example: "src/hooks/useAuth.ts".
+    /// Legacy format "file:symbol" is also accepted for backward compatibility.
     pub target: String,
+    /// Optional symbol name to filter results. When set, only dependents that reference
+    /// this specific symbol are shown. Preferred over the "file:symbol" target format.
+    pub symbol: Option<String>,
     /// Maximum depth for transitive dependency traversal (default: 3, max: 10)
     pub depth: Option<u32>,
 }
 
 #[tool_router]
 impl Yomu {
-    /// Prefer [`with_root`](Self::with_root) when the root path is known.
     pub fn new() -> Result<Self, YomuError> {
         let cwd = std::env::current_dir().map_err(|e| {
             std::io::Error::new(e.kind(), format!("cannot determine current directory: {e}"))
@@ -119,8 +138,6 @@ impl Yomu {
             .timeout(Duration::from_secs(60))
             .build()?;
 
-        // Intentional: .ok() so the server starts even without GEMINI_API_KEY.
-        // Tools that need embeddings will return a clear error via require_embedder().
         let embedder: Option<Arc<dyn Embed>> = match Embedder::from_env(http) {
             Ok(e) => Some(Arc::new(e) as _),
             Err(e) => {
@@ -165,8 +182,9 @@ impl Yomu {
 
         let stats = self.with_db(storage::get_stats).await?;
         let state = determine_index_state(&stats);
+        let mut embed_error: Option<String> = None;
 
-        match state {
+        let needs_embed = match state {
             IndexState::Empty => {
                 if self.auto_index_failures.load(Ordering::SeqCst) < 3
                     && self
@@ -186,32 +204,26 @@ impl Yomu {
                         }
                         return Err(McpError::internal_error(e.to_string(), None));
                     }
-                    // Incremental embed after chunk-only index
-                    if let Err(e) = indexer::run_incremental_embed(
-                        Arc::clone(&self.conn),
-                        embedder,
-                        MAX_CHUNKS_PER_BUDGET,
-                        hints_ref,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "Incremental embed failed, search may have limited results");
-                    }
+                    true
+                } else {
+                    false
                 }
             }
-            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
-                if let Err(e) = indexer::run_incremental_embed(
-                    Arc::clone(&self.conn),
-                    embedder,
-                    MAX_CHUNKS_PER_BUDGET,
-                    hints_ref,
-                )
-                .await
-                {
-                    tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
-                }
-            }
-            IndexState::FullyEmbedded => {}
+            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => true,
+            IndexState::FullyEmbedded => false,
+        };
+
+        if needs_embed
+            && let Err(e) = indexer::run_incremental_embed(
+                Arc::clone(&self.conn),
+                embedder,
+                max_chunks_per_budget(),
+                hints_ref,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
+            embed_error = Some(e.to_string());
         }
 
         let results =
@@ -221,7 +233,13 @@ impl Yomu {
 
         if results.is_empty() {
             let stats = self.with_db(storage::get_stats).await?;
-            let msg = format_no_results_message(&stats);
+            let msg = match embed_error {
+                Some(ref err) => format!(
+                    "{}\n\nNote: embedding failed: {err}",
+                    format_no_results_message(&stats)
+                ),
+                None => format_no_results_message(&stats),
+            };
             return Ok(CallToolResult::success(vec![Content::text(msg)]));
         }
 
@@ -242,10 +260,11 @@ impl Yomu {
         let force = params.force.unwrap_or(false);
 
         if force {
-            // Force: full rebuild using legacy run_index
             let result = indexer::run_index(Arc::clone(&self.conn), &self.root, embedder, true)
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            self.auto_index_failures.store(0, Ordering::SeqCst);
+            self.auto_indexed.store(false, Ordering::SeqCst);
             let text = format!(
                 "Indexing complete: {} files processed, {} chunks created, {} files skipped (unchanged), {} files errored",
                 result.files_processed, result.chunks_created, result.files_skipped, result.files_errored
@@ -253,16 +272,17 @@ impl Yomu {
             return Ok(CallToolResult::success(vec![Content::text(text)]));
         }
 
-        // Chunk-only index first (no API calls)
         let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        // Then embed all un-embedded chunks (throttled, no budget limit)
         let embed_result =
             indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, u32::MAX, None)
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        self.auto_index_failures.store(0, Ordering::SeqCst);
+        self.auto_indexed.store(false, Ordering::SeqCst);
 
         let text = format!(
             "Indexing complete: {} files chunked, {} chunks created, {} files skipped, {} chunks embedded, {} files embedded",
@@ -294,7 +314,8 @@ impl Yomu {
             )]));
         }
 
-        let (file_path, symbol_filter) = parse_impact_target(&params.target);
+        let (file_path, parsed_symbol) = parse_impact_target(&params.target);
+        let symbol_filter = params.symbol.as_deref().or(parsed_symbol);
         let max_depth = params.depth.unwrap_or(3).min(10);
         let file_path_owned = file_path.to_string();
 
@@ -311,7 +332,6 @@ impl Yomu {
             ))]));
         }
 
-        // If symbol filter, query for symbol-specific references
         let text = if let Some(symbol) = symbol_filter {
             let file_path_owned = file_path.to_string();
             let symbol_owned = symbol.to_string();
@@ -414,17 +434,13 @@ impl Yomu {
     }
 }
 
-/// Parse "file:symbol" or "file" target format.
 fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
-    // Split on the last colon to separate "file:symbol".
-    // colon_pos > 0 ensures we don't split an empty file path.
     if let Some(colon_pos) = target.rfind(':')
         && colon_pos > 0
         && colon_pos < target.len() - 1
     {
         let file = &target[..colon_pos];
         let symbol = &target[colon_pos + 1..];
-        // Sanity: symbol shouldn't look like a path component
         if !symbol.contains('/') && !symbol.contains('\\') {
             return (file, Some(symbol));
         }

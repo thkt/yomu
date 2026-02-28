@@ -1,4 +1,7 @@
-//! Verify vec_chunks data integrity in an actual yomu DB.
+//! Developer-local smoke test: verify vec_chunks data integrity in an actual yomu DB.
+//!
+//! This test uses a hardcoded local path and is NOT portable.
+//! It gracefully skips when the DB is absent (skip_if_no_db).
 //!
 //! Usage: cargo test --test verify_kai_db -- --nocapture
 //!
@@ -27,7 +30,6 @@ fn vec_chunks_row_count_matches_stats() {
     let conn = yomu::storage::open_db(&kai_db_path()).unwrap();
     let stats = yomu::storage::get_stats(&conn).unwrap();
 
-    // vec_chunks count should match embedded_chunks in stats
     let vec_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))
         .unwrap();
@@ -50,7 +52,6 @@ fn vec_chunks_ids_reference_valid_chunks() {
 
     let conn = yomu::storage::open_db(&kai_db_path()).unwrap();
 
-    // Every chunk_id in vec_chunks must exist in chunks table
     let orphan_count: u32 = conn
         .query_row(
             "SELECT COUNT(*) FROM vec_chunks v
@@ -73,7 +74,6 @@ fn vec_chunks_embeddings_have_correct_dimensions() {
 
     let conn = yomu::storage::open_db(&kai_db_path()).unwrap();
 
-    // Each embedding should be 768 * 4 bytes = 3072 bytes (f32 little-endian)
     let expected_bytes = yomu::storage::EMBEDDING_DIMS as usize * 4;
 
     let mut stmt = conn
@@ -142,10 +142,7 @@ fn vec_chunks_embeddings_are_not_zero_vectors() {
         let (chunk_id, blob) = row.unwrap();
         total += 1;
 
-        // Reinterpret bytes as f32 slice
         let floats: &[f32] = bytemuck::cast_slice(&blob);
-
-        // Check if all zeros
         let norm_sq: f64 = floats.iter().map(|&x| (x as f64) * (x as f64)).sum();
         let norm = norm_sq.sqrt();
 
@@ -153,7 +150,6 @@ fn vec_chunks_embeddings_are_not_zero_vectors() {
             zero_count += 1;
         }
 
-        // Collect first 5 norms as samples
         if sample_norms.len() < 5 {
             sample_norms.push((chunk_id, norm));
         }
@@ -177,7 +173,6 @@ fn vec_chunks_embedded_files_match_most_imported_order() {
 
     let conn = yomu::storage::open_db(&kai_db_path()).unwrap();
 
-    // Get files that have embeddings (via JOIN with chunks)
     let mut stmt = conn
         .prepare(
             "SELECT DISTINCT c.file_path
@@ -194,23 +189,17 @@ fn vec_chunks_embedded_files_match_most_imported_order() {
 
     println!("embedded files: {:?}", embedded_files);
 
-    // Get most-imported files (should be superset of embedded files)
     let most_imported = yomu::storage::get_files_by_import_count(&conn).unwrap();
     println!(
         "most-imported order (top 5): {:?}",
         &most_imported.iter().take(5).collect::<Vec<_>>()
     );
 
-    // All embedded files should be in the most-imported list
-    // (they may not be at the very top since get_files_by_import_count
-    //  only returns UN-embedded files, but the original ordering should match)
     assert!(
         !embedded_files.is_empty(),
         "should have at least one embedded file"
     );
 
-    // Verify embedded file import counts are >= all un-embedded file import counts
-    // i.e., the most important files were prioritized
     let mut embedded_min_imports = u32::MAX;
     for f in &embedded_files {
         let count: u32 = conn
@@ -226,7 +215,6 @@ fn vec_chunks_embedded_files_match_most_imported_order() {
         }
     }
 
-    // Check that un-embedded files with MORE imports than our minimum don't exist
     let higher_unembedded: u32 = conn
         .query_row(
             "SELECT COUNT(DISTINCT c.file_path) FROM chunks c
@@ -260,7 +248,6 @@ fn vector_search_returns_results_from_embedded_chunks() {
 
     let conn = yomu::storage::open_db(&kai_db_path()).unwrap();
 
-    // Get an actual embedding to use as a query vector
     let query_vec: Vec<u8> = conn
         .query_row("SELECT embedding FROM vec_chunks LIMIT 1", [], |row| {
             row.get(0)
@@ -274,7 +261,6 @@ fn vector_search_returns_results_from_embedded_chunks() {
         "query vector should have 768 dims"
     );
 
-    // Search using the embedding itself — should find at least itself
     let results = yomu::storage::search_similar(&conn, query_floats, 5, 0).unwrap();
 
     println!("search results: {}", results.len());

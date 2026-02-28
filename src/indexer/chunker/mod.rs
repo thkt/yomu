@@ -226,7 +226,7 @@ fn extract_parsed_imports(root: &tree_sitter::Node, source: &str) -> Vec<ParsedI
 ///
 /// Returns a list of parsed imports with their specifiers and source paths.
 /// Returns empty Vec if no imports found or if the file type doesn't support imports.
-#[allow(dead_code)] // public API, used in tests
+#[cfg(test)]
 pub fn parse_structured_imports(source: &str, extension: &str) -> Vec<ParsedImport> {
     match extension {
         "tsx" | "jsx" => {
@@ -246,6 +246,7 @@ pub fn parse_structured_imports(source: &str, extension: &str) -> Vec<ParsedImpo
     }
 }
 
+#[cfg(test)]
 fn parse_imports_from_ast(source: &str, parser: &mut tree_sitter::Parser) -> Vec<ParsedImport> {
     let Some(tree) = parser.parse(source, None) else {
         return Vec::new();

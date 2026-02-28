@@ -1,35 +1,21 @@
 use std::path::{Path, PathBuf};
 
-/// Extensions to probe when import path has no extension.
 const PROBE_EXTENSIONS: &[&str] = &["tsx", "ts", "jsx", "js"];
-
-/// Extensions considered valid for exact match (already has extension).
 const SUPPORTED_EXTENSIONS: &[&str] = &["tsx", "ts", "jsx", "js", "css", "html"];
-
-/// Index filenames to probe when import points to a directory.
 const INDEX_FILES: &[&str] = &["index.tsx", "index.ts", "index.jsx", "index.js"];
 
-/// Path alias mapping from tsconfig.json (e.g., "@/*" → "src/*").
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathAlias {
     pub prefix: String,
     pub target: String,
 }
 
-/// Resolver for import paths within a project.
-///
-/// Resolves relative imports, tsconfig aliases, and index file probing.
-/// All resolved paths are relative to the project root.
 pub struct Resolver {
-    /// Absolute path to the project root directory.
     root: PathBuf,
-    /// tsconfig.json path aliases (e.g., `@/` → `src/`).
     aliases: Vec<PathAlias>,
 }
 
 impl Resolver {
-    /// Create a new resolver for the given project root.
-    /// Automatically loads tsconfig.json aliases if present.
     pub fn new(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
@@ -37,22 +23,18 @@ impl Resolver {
         }
     }
 
-    /// Resolve an import source path relative to the importing file.
     /// Returns None for bare specifiers (npm packages) or unresolvable paths.
-    /// `from_file` is relative to project root (e.g., "src/components/Button.tsx").
     pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
         let resolved_source = self.apply_alias(source);
         let source = resolved_source.as_deref().unwrap_or(source);
 
         if !source.starts_with('.') && !source.starts_with('/') && resolved_source.is_none() {
-            return None; // bare specifier
+            return None;
         }
 
         let base_dir = if resolved_source.is_some() {
-            // alias-resolved paths are relative to project root
             self.root.clone()
         } else {
-            // relative paths are relative to the importing file's directory
             let from_abs = self.root.join(from_file);
             from_abs.parent()?.to_path_buf()
         };
@@ -61,7 +43,6 @@ impl Resolver {
         self.probe_path(&candidate)
     }
 
-    /// Apply alias substitution if source matches any alias prefix.
     fn apply_alias(&self, source: &str) -> Option<String> {
         for alias in &self.aliases {
             if let Some(rest) = source.strip_prefix(&alias.prefix) {
@@ -71,10 +52,7 @@ impl Resolver {
         None
     }
 
-    /// Probe a candidate path with extension and index resolution.
-    /// Rejects paths that escape the project root (path traversal guard).
     fn probe_path(&self, candidate: &Path) -> Option<String> {
-        // 1. Exact match (already has a supported extension)
         if let Some(ext) = candidate.extension().and_then(|e| e.to_str())
             && SUPPORTED_EXTENSIONS.contains(&ext)
             && candidate.exists()
@@ -82,7 +60,6 @@ impl Resolver {
             return self.to_relative(candidate);
         }
 
-        // 2. Extension probing
         for ext in PROBE_EXTENSIONS {
             let with_ext = candidate.with_extension(ext);
             if with_ext.exists() {
@@ -90,7 +67,6 @@ impl Resolver {
             }
         }
 
-        // 3. Directory index probing
         if candidate.is_dir() {
             for index in INDEX_FILES {
                 let index_path = candidate.join(index);
@@ -103,8 +79,7 @@ impl Resolver {
         None
     }
 
-    /// Convert an absolute path back to a project-relative path string.
-    /// Returns None if the path escapes the project root (path traversal guard).
+    /// Returns None if the path escapes the project root.
     fn to_relative(&self, abs: &Path) -> Option<String> {
         let abs = match abs.canonicalize() {
             Ok(p) => p,
@@ -129,12 +104,8 @@ impl Resolver {
         }
     }
 
-    /// Resolve a re-export chain, following `export { X } from './Y'` and
-    /// `export * from './Y'` through barrel files.
-    /// Returns files in the chain (excluding the start file).
-    /// Follows only the first resolvable re-export at each hop.
-    /// Detects circular re-exports via visited set and stops.
-    #[allow(dead_code)] // public API, used in tests
+    /// Follow re-export chain through barrel files. Returns files excluding start.
+    #[cfg(test)]
     pub fn resolve_reexport_chain(&self, start_file: &str) -> Vec<String> {
         use crate::indexer::chunker::parse_reexports;
         use std::collections::HashSet;
@@ -164,7 +135,7 @@ impl Resolver {
             for re in &reexports {
                 if let Some(resolved) = self.resolve(&re.source, &current) {
                     if visited.contains(&resolved) {
-                        continue; // circular — skip
+                        continue;
                     }
                     visited.insert(resolved.clone());
                     result.push(resolved.clone());
@@ -181,12 +152,15 @@ impl Resolver {
     }
 }
 
-/// Load path aliases from tsconfig.json if it exists.
 pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
     let tsconfig_path = root.join("tsconfig.json");
     let content = match std::fs::read_to_string(&tsconfig_path) {
         Ok(c) => c,
-        Err(_) => return vec![],
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) => {
+            tracing::warn!(path = %tsconfig_path.display(), error = %e, "Failed to read tsconfig.json");
+            return vec![];
+        }
     };
 
     let json: serde_json::Value = match serde_json::from_str(&content) {
@@ -227,8 +201,6 @@ mod tests {
     use super::*;
     use std::fs;
 
-    // ── T-007: Relative path with extension probing ─────────────────
-
     #[test]
     fn resolve_relative_tsx() {
         let tmp = tempfile::tempdir().unwrap();
@@ -241,8 +213,6 @@ mod tests {
         let result = resolver.resolve("./Button", "src/App.tsx");
         assert_eq!(result, Some("src/Button.tsx".to_string()));
     }
-
-    // ── T-008: Index file probing ───────────────────────────────────
 
     #[test]
     fn resolve_index_file_tsx() {
@@ -257,8 +227,6 @@ mod tests {
         assert_eq!(result, Some("src/components/index.tsx".to_string()));
     }
 
-    // ── T-009: Missing file returns None ────────────────────────────
-
     #[test]
     fn resolve_missing_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -271,8 +239,6 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    // ── T-010: Bare specifier returns None ──────────────────────────
-
     #[test]
     fn resolve_bare_specifier_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -282,8 +248,6 @@ mod tests {
         let result = resolver.resolve("react", "src/App.tsx");
         assert_eq!(result, None);
     }
-
-    // ── T-011: load_aliases with tsconfig.json ──────────────────────
 
     #[test]
     fn load_aliases_from_tsconfig() {
@@ -307,8 +271,6 @@ mod tests {
         );
     }
 
-    // ── T-012: load_aliases without tsconfig.json ───────────────────
-
     #[test]
     fn load_aliases_no_tsconfig() {
         let tmp = tempfile::tempdir().unwrap();
@@ -316,8 +278,6 @@ mod tests {
         let aliases = load_aliases(tmp.path());
         assert!(aliases.is_empty());
     }
-
-    // ── T-013: Alias path resolution ────────────────────────────────
 
     #[test]
     fn resolve_alias_path() {
@@ -340,8 +300,6 @@ mod tests {
         assert_eq!(result, Some("src/lib/auth.ts".to_string()));
     }
 
-    // ── Edge: Resolve .ts extension ─────────────────────────────────
-
     #[test]
     fn resolve_relative_ts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -353,8 +311,6 @@ mod tests {
         let result = resolver.resolve("./utils", "src/App.tsx");
         assert_eq!(result, Some("src/utils.ts".to_string()));
     }
-
-    // ── Edge: Resolve going up a directory ──────────────────────────
 
     #[test]
     fn resolve_parent_directory() {
@@ -370,8 +326,6 @@ mod tests {
         assert_eq!(result, Some("src/utils/format.ts".to_string()));
     }
 
-    // ── Edge: Resolve CSS file ──────────────────────────────────────
-
     #[test]
     fn resolve_css_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -383,8 +337,6 @@ mod tests {
         let result = resolver.resolve("./styles.css", "src/App.tsx");
         assert_eq!(result, Some("src/styles.css".to_string()));
     }
-
-    // ── Edge: Extension probing priority (.tsx > .ts) ───────────────
 
     #[test]
     fn resolve_prefers_tsx_over_ts() {
@@ -399,8 +351,6 @@ mod tests {
         assert_eq!(result, Some("src/Button.tsx".to_string()));
     }
 
-    // ── Edge: Index file with .ts ───────────────────────────────────
-
     #[test]
     fn resolve_index_file_ts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -412,8 +362,6 @@ mod tests {
         let result = resolver.resolve("./hooks", "src/App.tsx");
         assert_eq!(result, Some("src/hooks/index.ts".to_string()));
     }
-
-    // ── Edge: Multiple aliases ──────────────────────────────────────
 
     #[test]
     fn load_aliases_multiple() {
@@ -440,8 +388,6 @@ mod tests {
         }));
     }
 
-    // ── Edge: Exact extension should match (no double probing) ──────
-
     #[test]
     fn resolve_exact_extension_match() {
         let tmp = tempfile::tempdir().unwrap();
@@ -450,12 +396,9 @@ mod tests {
         fs::write(src.join("styles.css"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        // Exact path with supported extension should resolve
         let result = resolver.resolve("./styles.css", "src/App.tsx");
         assert_eq!(result, Some("src/styles.css".to_string()));
     }
-
-    // ── Edge: Non-frontend file should not resolve ──────────────────
 
     #[test]
     fn resolve_non_frontend_extension_returns_none() {
@@ -465,13 +408,9 @@ mod tests {
         fs::write(src.join("data.json"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        // .json is not in the probing extensions, and exact match should not match
-        // unsupported extensions
         let result = resolver.resolve("./data", "src/App.tsx");
         assert_eq!(result, None);
     }
-
-    // ── Edge: Bare specifier with scope ─────────────────────────────
 
     #[test]
     fn resolve_scoped_package_returns_none() {
@@ -482,8 +421,6 @@ mod tests {
         let result = resolver.resolve("@tanstack/react-query", "src/App.tsx");
         assert_eq!(result, None);
     }
-
-    // ── Edge: Resolver::new loads aliases automatically ──────────────
 
     #[test]
     fn resolver_new_loads_aliases() {
@@ -498,7 +435,6 @@ mod tests {
         fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        // Access internal state via alias resolution behavior
         let src = tmp.path().join("src").join("lib");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("utils.ts"), "").unwrap();
@@ -506,8 +442,6 @@ mod tests {
         let result = resolver.resolve("@/lib/utils", "src/App.tsx");
         assert_eq!(result, Some("src/lib/utils.ts".to_string()));
     }
-
-    // ── Edge: Alias with different target ───────────────────────────
 
     #[test]
     fn resolve_tilde_alias() {
@@ -530,20 +464,16 @@ mod tests {
         assert_eq!(result, Some("lib/core/engine.ts".to_string()));
     }
 
-    // ── T-016: Circular re-export detection ─────────────────────────
-
     #[test]
     fn resolve_reexport_chain_circular() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
-        // A re-exports from B, B re-exports from A (circular)
         fs::write(src.join("a.ts"), "export { X } from './b';").unwrap();
         fs::write(src.join("b.ts"), "export { X } from './a';").unwrap();
 
         let resolver = Resolver::new(tmp.path());
         let chain = resolver.resolve_reexport_chain("src/a.ts");
-        // Should find B but stop at circular reference back to A
         assert_eq!(chain, vec!["src/b.ts".to_string()]);
     }
 
@@ -552,7 +482,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
-        // A → B → C (linear chain)
         fs::write(src.join("a.ts"), "export { X } from './b';").unwrap();
         fs::write(src.join("b.ts"), "export { X } from './c';").unwrap();
         fs::write(src.join("c.ts"), "export const X = 1;").unwrap();
@@ -573,8 +502,6 @@ mod tests {
         let chain = resolver.resolve_reexport_chain("src/a.ts");
         assert!(chain.is_empty());
     }
-
-    // ── Edge: HTML file resolution ──────────────────────────────────
 
     #[test]
     fn resolve_html_file() {

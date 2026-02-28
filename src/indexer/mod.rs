@@ -33,15 +33,11 @@ impl From<tokio::task::JoinError> for IndexError {
     }
 }
 
-/// Summary of an indexing run returned by [`run_index`].
+#[derive(Debug)]
 pub struct IndexResult {
-    /// Files that were chunked, embedded, and stored.
     pub files_processed: u32,
-    /// Total chunks inserted across all processed files.
     pub chunks_created: u32,
-    /// Files skipped because content hash was unchanged.
     pub files_skipped: u32,
-    /// Files that failed to read or embed (skipped, not fatal).
     pub files_errored: u32,
 }
 
@@ -53,7 +49,23 @@ struct PendingFile {
     hash: String,
 }
 
+impl PendingFile {
+    fn to_new_chunks(&self) -> Vec<storage::NewChunk<'_>> {
+        self.raw_chunks
+            .iter()
+            .map(|c| storage::NewChunk {
+                chunk_type: &c.chunk_type,
+                name: c.name.as_deref(),
+                content: &c.content,
+                start_line: c.start_line,
+                end_line: c.end_line,
+            })
+            .collect()
+    }
+}
+
 const MAX_FILE_SIZE: u64 = 1_000_000;
+const LARGE_PROJECT_THRESHOLD: usize = 5_000;
 
 enum FileAction {
     Process(PendingFile),
@@ -244,17 +256,7 @@ fn store_file_data(
     embeddings: Vec<Vec<f32>>,
     refs: Vec<Reference>,
 ) -> Result<(), StorageError> {
-    let new_chunks: Vec<storage::NewChunk> = pf
-        .raw_chunks
-        .iter()
-        .map(|c| storage::NewChunk {
-            chunk_type: &c.chunk_type,
-            name: c.name.as_deref(),
-            content: &c.content,
-            start_line: c.start_line,
-            end_line: c.end_line,
-        })
-        .collect();
+    let new_chunks = pf.to_new_chunks();
     let conn = conn.lock();
     storage::replace_file_chunks(&conn, &pf.rel_path, &new_chunks, &embeddings, &pf.hash, &pf.imports_text, &refs)
 }
@@ -310,7 +312,7 @@ async fn embed_and_store(
     Ok((files_processed, chunks_created, files_errored))
 }
 
-/// Summary of a chunk-only indexing run (no embedding API calls).
+#[derive(Debug)]
 pub struct ChunkOnlyResult {
     pub files_processed: u32,
     pub chunks_created: u32,
@@ -318,7 +320,7 @@ pub struct ChunkOnlyResult {
     pub files_errored: u32,
 }
 
-/// Summary of an incremental embedding run.
+#[derive(Debug)]
 pub struct EmbedResult {
     pub chunks_embedded: u32,
     pub files_completed: u32,
@@ -326,7 +328,6 @@ pub struct EmbedResult {
 }
 
 /// Walk, chunk, and store files without calling the embedding API.
-/// Populates chunks, file_context, and file_references.
 pub async fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
@@ -350,17 +351,7 @@ pub async fn run_chunk_only_index(
             match process_file(&conn_guard, root, file_path, false)? {
                 FileAction::Process(pf) => {
                     let n = pf.raw_chunks.len() as u32;
-                    let new_chunks: Vec<storage::NewChunk> = pf
-                        .raw_chunks
-                        .iter()
-                        .map(|c| storage::NewChunk {
-                            chunk_type: &c.chunk_type,
-                            name: c.name.as_deref(),
-                            content: &c.content,
-                            start_line: c.start_line,
-                            end_line: c.end_line,
-                        })
-                        .collect();
+                    let new_chunks = pf.to_new_chunks();
                     let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
                     storage::replace_file_chunks_only(
                         &conn_guard,
@@ -391,9 +382,7 @@ pub async fn run_chunk_only_index(
     })
 }
 
-/// Embed un-embedded chunks up to `max_chunks` budget.
-/// Processes files in most-imported-first order.
-/// When `type_hints` is provided, files containing matching chunk types are prioritized.
+/// Embed un-embedded chunks up to `max_chunks` budget, most-imported-first.
 pub async fn run_incremental_embed(
     conn: Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
@@ -404,34 +393,24 @@ pub async fn run_incremental_embed(
         let conn_guard = conn.lock();
         let mut files = storage::get_files_by_import_count(&conn_guard)?;
 
-        if let Some(hints) = type_hints {
-            if !hints.is_empty() {
-                let type_list: Vec<String> = hints.iter().map(|t| format!("'{}'", t.as_str())).collect();
-                let sql = format!(
-                    "SELECT DISTINCT file_path FROM chunks WHERE chunk_type IN ({}) AND file_path IN ({})",
-                    type_list.join(","),
-                    files.iter().map(|f| format!("'{f}'")).collect::<Vec<_>>().join(","),
-                );
-                let mut stmt = conn_guard.prepare(&sql).map_err(storage::StorageError::from)?;
-                let hint_files: std::collections::HashSet<String> = stmt
-                    .query_map([], |row| row.get::<_, String>(0))
-                    .map_err(storage::StorageError::from)?
-                    .filter_map(|r| r.ok())
-                    .collect();
+        if let Some(hints) = type_hints
+            && !hints.is_empty()
+        {
+            let hint_files =
+                storage::get_files_with_chunk_types(&conn_guard, &files, hints)?;
 
-                if !hint_files.is_empty() {
-                    let mut prioritized: Vec<String> = Vec::new();
-                    let mut rest: Vec<String> = Vec::new();
-                    for f in files {
-                        if hint_files.contains(&f) {
-                            prioritized.push(f);
-                        } else {
-                            rest.push(f);
-                        }
+            if !hint_files.is_empty() {
+                let mut prioritized: Vec<String> = Vec::new();
+                let mut rest: Vec<String> = Vec::new();
+                for f in files {
+                    if hint_files.contains(&f) {
+                        prioritized.push(f);
+                    } else {
+                        rest.push(f);
                     }
-                    prioritized.extend(rest);
-                    files = prioritized;
                 }
+                prioritized.extend(rest);
+                files = prioritized;
             }
         }
 
@@ -449,22 +428,13 @@ pub async fn run_incremental_embed(
     let mut chunks_embedded = 0u32;
     let mut files_completed = 0u32;
     let mut budget_exhausted = false;
+    let mut consecutive_errors = 0u32;
 
     for file_path in &ordered_files {
-        // Get chunk IDs and content for this file
         let (chunk_ids, texts) = {
             let conn_guard = conn.lock();
-            let mut stmt = conn_guard.prepare(
-                "SELECT c.id, c.content FROM chunks c
-                 LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-                 WHERE c.file_path = ?1 AND v.chunk_id IS NULL",
-            ).map_err(storage::StorageError::from)?;
-            let rows = stmt.query_map([file_path.as_str()], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            }).map_err(storage::StorageError::from)?;
-            let pairs: Vec<(i64, String)> = rows
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(storage::StorageError::from)?;
+            let pairs =
+                storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
             let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
             let texts: Vec<String> = pairs.into_iter().map(|(_, t)| t).collect();
             (ids, texts)
@@ -474,16 +444,23 @@ pub async fn run_incremental_embed(
             continue;
         }
 
-        // Check budget
         if chunks_embedded + texts.len() as u32 > max_chunks && chunks_embedded > 0 {
             budget_exhausted = true;
             break;
         }
 
         let embeddings = match embedder.embed_documents(&texts).await {
-            Ok(embs) => embs,
+            Ok(embs) => {
+                consecutive_errors = 0;
+                embs
+            }
             Err(e) => {
-                tracing::warn!(file = %file_path, error = %e, "Embedding failed, skipping file");
+                consecutive_errors += 1;
+                tracing::warn!(file = %file_path, error = %e, consecutive = consecutive_errors, "Embedding failed, skipping file");
+                if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
+                    tracing::error!(consecutive_errors, "Too many consecutive embedding failures in incremental embed, aborting");
+                    return Err(IndexError::Embed(e));
+                }
                 continue;
             }
         };
@@ -527,7 +504,7 @@ pub async fn run_index(
     force: bool,
 ) -> Result<IndexResult, IndexError> {
     let files = walker::walk_frontend_files(root);
-    if files.len() > 5000 {
+    if files.len() > LARGE_PROJECT_THRESHOLD {
         tracing::warn!(count = files.len(), "Large number of files detected — indexing may be slow");
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
@@ -572,6 +549,7 @@ fn file_hash(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
     #[test]
     fn file_hash_is_deterministic() {
         let h1 = file_hash("hello world");
@@ -769,12 +747,6 @@ mod tests {
         assert!(imports.contains("import { useAuth } from './useAuth'"), "expected useAuth import, got: {imports}");
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // Incremental Indexing – Phase 2 Indexer (T-011 〜 T-013)
-    // ══════════════════════════════════════════════════════════════
-
-    // ── T-011: run_chunk_only_index → chunks あり, vec_chunks なし, refs あり ──
-
     #[tokio::test]
     async fn run_chunk_only_index_stores_chunks_without_embeddings() {
         let dir = tempfile::tempdir().unwrap();
@@ -802,26 +774,21 @@ mod tests {
         let stats = storage::get_stats(&conn.lock()).unwrap();
         assert_eq!(stats.total_files, 2);
         assert!(stats.total_chunks >= 2);
-        // No embeddings
         assert_eq!(stats.embedded_chunks, 0);
 
-        // file_references should be populated
         let ref_count = storage::get_reference_count(&conn.lock()).unwrap();
         assert!(ref_count >= 1, "expected at least 1 reference from App→Button, got {ref_count}");
     }
-
-    // ── T-012: run_incremental_embed with budget → embed within budget ──
 
     #[tokio::test]
     async fn run_incremental_embed_within_budget() {
         let dir = tempfile::tempdir().unwrap();
         let src_dir = dir.path().join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
-        // Create 3 small files (1 chunk each ≈ 3 chunks total)
         for name in ["A.tsx", "B.tsx", "C.tsx"] {
             std::fs::write(
                 src_dir.join(name),
-                &format!("function {}() {{ return 1; }}", &name[..1]),
+                format!("function {}() {{ return 1; }}", &name[..1]),
             ).unwrap();
         }
 
@@ -829,12 +796,10 @@ mod tests {
         let conn = storage::open_db(&db_path).unwrap();
         let conn = Arc::new(Mutex::new(conn));
 
-        // First: chunk-only index
         run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
         let stats_before = storage::get_stats(&conn.lock()).unwrap();
         assert_eq!(stats_before.embedded_chunks, 0);
 
-        // Incremental embed with budget=50 (enough for all 3 files)
         let result = run_incremental_embed(
             Arc::clone(&conn), &MockEmbedder, 50, None,
         ).await.unwrap();
@@ -847,18 +812,15 @@ mod tests {
         assert_eq!(stats_after.embedded_chunks, stats_after.total_chunks);
     }
 
-    // ── T-013: run_incremental_embed with small budget → budget_exhausted ──
-
     #[tokio::test]
     async fn run_incremental_embed_exhausts_budget() {
         let dir = tempfile::tempdir().unwrap();
         let src_dir = dir.path().join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
-        // Create 5 files, each with 1 chunk
         for i in 0..5 {
             std::fs::write(
                 src_dir.join(format!("F{i}.tsx")),
-                &format!("function F{i}() {{ return {i}; }}"),
+                format!("function F{i}() {{ return {i}; }}"),
             ).unwrap();
         }
 
@@ -868,7 +830,6 @@ mod tests {
 
         run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
 
-        // Budget of 2 chunks — should embed only 2 files worth
         let result = run_incremental_embed(
             Arc::clone(&conn), &MockEmbedder, 2, None,
         ).await.unwrap();
@@ -876,16 +837,9 @@ mod tests {
         assert!(result.budget_exhausted);
         assert!(result.chunks_embedded <= 2);
 
-        // Some chunks should remain un-embedded
         let stats = storage::get_stats(&conn.lock()).unwrap();
         assert!(stats.embedded_chunks < stats.total_chunks);
     }
-
-    // ══════════════════════════════════════════════════════════════
-    // Search Quality – Phase 3 Indexer (T-007, T-008)
-    // ══════════════════════════════════════════════════════════════
-
-    // ── T-007: type_hints=[Hook] → hook files embedded first ──
 
     #[tokio::test]
     async fn run_incremental_embed_prioritizes_type_hints() {
@@ -893,7 +847,6 @@ mod tests {
         let db_path = dir.path().join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path).unwrap();
 
-        // TypeDef file (no hook/component)
         storage::replace_file_chunks_only(
             &conn, "src/types.tsx",
             &[storage::NewChunk {
@@ -905,7 +858,6 @@ mod tests {
             "h1", "", &[],
         ).unwrap();
 
-        // Hook file
         storage::replace_file_chunks_only(
             &conn, "src/useAuth.tsx",
             &[storage::NewChunk {
@@ -919,7 +871,6 @@ mod tests {
 
         let conn = Arc::new(Mutex::new(conn));
 
-        // Budget of 1 file → only 1 file gets embedded
         let result = run_incremental_embed(
             Arc::clone(&conn), &MockEmbedder, 1,
             Some(&[storage::ChunkType::Hook]),
@@ -928,11 +879,9 @@ mod tests {
         assert_eq!(result.files_completed, 1);
         assert!(result.chunks_embedded >= 1);
 
-        // The hook file should have been embedded (prioritized by type_hints)
         let stats = storage::get_stats(&conn.lock()).unwrap();
         assert!(stats.embedded_chunks >= 1);
 
-        // Verify hook file is embedded, typedef is not
         let hook_embedded: bool = conn.lock().query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM vec_chunks v
@@ -943,15 +892,12 @@ mod tests {
         assert!(hook_embedded, "hook file should be embedded first");
     }
 
-    // ── T-008: type_hints=None → existing behavior (import count order) ──
-
     #[tokio::test]
     async fn run_incremental_embed_none_hints_preserves_order() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path).unwrap();
 
-        // Two files, no references → alphabetical order as tiebreaker
         storage::replace_file_chunks_only(
             &conn, "src/B.tsx",
             &[storage::NewChunk {
@@ -975,7 +921,6 @@ mod tests {
 
         let conn = Arc::new(Mutex::new(conn));
 
-        // hints=None: should use existing import count order
         let result = run_incremental_embed(
             Arc::clone(&conn), &MockEmbedder, 50, None,
         ).await.unwrap();
@@ -983,5 +928,82 @@ mod tests {
         assert_eq!(result.files_completed, 2);
         assert!(result.chunks_embedded >= 2);
         assert!(!result.budget_exhausted);
+    }
+
+    struct FailingEmbedder;
+
+    impl Embed for FailingEmbedder {
+        fn embed_query<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>, embedder::EmbedError>> + Send + 'a>> {
+            Box::pin(async {
+                Err(embedder::EmbedError::Api { status: 500, message: "mock failure".into() })
+            })
+        }
+        fn embed_documents<'a>(
+            &'a self,
+            _texts: &'a [String],
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<Vec<f32>>, embedder::EmbedError>> + Send + 'a>> {
+            Box::pin(async {
+                Err(embedder::EmbedError::Api { status: 500, message: "mock failure".into() })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_incremental_embed_aborts_after_consecutive_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(".yomu").join("index.db");
+        let conn = storage::open_db(&db_path).unwrap();
+
+        for i in 0..6 {
+            storage::replace_file_chunks_only(
+                &conn,
+                &format!("src/F{i}.tsx"),
+                &[storage::NewChunk {
+                    chunk_type: &storage::ChunkType::Component,
+                    name: Some(&format!("F{i}")),
+                    content: &format!("function F{i}() {{}}"),
+                    start_line: 1,
+                    end_line: 1,
+                }],
+                &format!("h{i}"),
+                "",
+                &[],
+            )
+            .unwrap();
+        }
+
+        let conn = Arc::new(Mutex::new(conn));
+
+        let result = run_incremental_embed(Arc::clone(&conn), &FailingEmbedder, 50, None).await;
+
+        assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("mock failure"), "got: {err_msg}");
+    }
+
+    #[tokio::test]
+    async fn embed_and_store_aborts_after_consecutive_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        for i in 0..6 {
+            std::fs::write(
+                src_dir.join(format!("F{i}.tsx")),
+                format!("function F{i}() {{ return {i}; }}"),
+            )
+            .unwrap();
+        }
+
+        let db_path = dir.path().join(".yomu").join("index.db");
+        let conn = storage::open_db(&db_path).unwrap();
+        let conn = Arc::new(Mutex::new(conn));
+
+        let result = run_index(Arc::clone(&conn), dir.path(), &FailingEmbedder, false).await;
+
+        assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
     }
 }

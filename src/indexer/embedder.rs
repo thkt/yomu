@@ -79,65 +79,79 @@ impl Embedder {
         url: &str,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, EmbedError> {
-        let api_key_header = {
-            let mut v = reqwest::header::HeaderValue::from_str(&self.api_key)
-                .map_err(|_| EmbedError::ApiKeyNotSet)?;
-            v.set_sensitive(true);
-            v
-        };
-        let mut last_status: u16 = 0;
-        for attempt in 0..=MAX_RETRIES {
-            if attempt > 0 {
-                let base = 500 * 2u64.pow(attempt - 1);
-                // Simple jitter: use current time nanos to avoid adding `rand` dependency.
-                // Known-weak for concurrent clients; acceptable for single-process MCP server.
-                let jitter = (std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as u64)
-                    % (base / 2 + 1);
-                let delay = Duration::from_millis(base + jitter);
-                tracing::warn!(
-                    attempt,
-                    max_retries = MAX_RETRIES,
-                    status = last_status,
-                    url,
-                    "Gemini API transient error, retrying in {delay:?}"
-                );
-                tokio::time::sleep(delay).await;
-            }
+        const PER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+        const TOTAL_RETRY_TIMEOUT: Duration = Duration::from_secs(90);
 
-            let resp = self
-                .http
-                .post(url)
-                .header("x-goog-api-key", api_key_header.clone())
-                .json(body)
-                .send()
-                .await?;
+        let result = tokio::time::timeout(TOTAL_RETRY_TIMEOUT, async {
+            let api_key_header = {
+                let mut v = reqwest::header::HeaderValue::from_str(&self.api_key)
+                    .map_err(|_| EmbedError::ApiKeyNotSet)?;
+                v.set_sensitive(true);
+                v
+            };
+            let mut last_status: u16 = 0;
+            for attempt in 0..=MAX_RETRIES {
+                if attempt > 0 {
+                    let base = 500 * 2u64.pow(attempt - 1);
+                    // Simple jitter: use current time nanos to avoid adding `rand` dependency.
+                    // Known-weak for concurrent clients; acceptable for single-process MCP server.
+                    let jitter = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64)
+                        % (base / 2 + 1);
+                    let delay = Duration::from_millis(base + jitter);
+                    tracing::warn!(
+                        attempt,
+                        max_retries = MAX_RETRIES,
+                        status = last_status,
+                        url,
+                        "Gemini API transient error, retrying in {delay:?}"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
 
-            if resp.status().is_success() {
-                return resp.json().await.map_err(EmbedError::Network);
-            }
+                let resp = self
+                    .http
+                    .post(url)
+                    .header("x-goog-api-key", api_key_header.clone())
+                    .json(body)
+                    .timeout(PER_REQUEST_TIMEOUT)
+                    .send()
+                    .await?;
 
-            let status = resp.status().as_u16();
-            last_status = status;
-            if is_retryable(status) {
-                // Only log body for retryable errors; non-retryable may contain reflected request data.
-                let resp_body = resp.text().await.unwrap_or_default();
-                let safe_body = resp_body.replace(&self.api_key, "[REDACTED]");
-                let truncated = truncate_str(&safe_body, 500);
-                tracing::warn!(status, body = truncated, "Gemini API error response");
-            } else {
-                tracing::warn!(status, "Gemini API error response");
+                if resp.status().is_success() {
+                    return resp.json().await.map_err(EmbedError::Network);
+                }
+
+                let status = resp.status().as_u16();
+                last_status = status;
+                if is_retryable(status) {
+                    let resp_body = resp.text().await.unwrap_or_default();
+                    let safe_body = resp_body.replace(&self.api_key, "[REDACTED]");
+                    let truncated = truncate_str(&safe_body, 500);
+                    tracing::warn!(status, body = truncated, "Gemini API error response");
+                } else {
+                    tracing::warn!(status, "Gemini API error response");
+                }
+                if !is_retryable(status) || attempt == MAX_RETRIES {
+                    return Err(EmbedError::Api {
+                        status,
+                        message: sanitize_api_error(status),
+                    });
+                }
             }
-            if !is_retryable(status) || attempt == MAX_RETRIES {
-                return Err(EmbedError::Api {
-                    status,
-                    message: sanitize_api_error(status),
-                });
-            }
+            unreachable!()
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => Err(EmbedError::Api {
+                status: 0,
+                message: "Gemini API did not respond within retry window (90s). Check network connectivity.".into(),
+            }),
         }
-        unreachable!()
     }
 }
 

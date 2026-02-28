@@ -104,6 +104,7 @@ fn format_results_grouped_renders_file_header_and_context() {
             start_line: 5,
             end_line: 7,
         },
+        chunk_id: None,
         distance: 0.15,
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.15),
@@ -147,6 +148,7 @@ fn format_results_grouped_groups_same_file_chunks() {
                 start_line: 1,
                 end_line: 5,
             },
+            chunk_id: None,
             distance: 0.1,
             match_source: storage::MatchSource::Semantic,
             score: 1.0 / (1.0 + 0.1),
@@ -160,6 +162,7 @@ fn format_results_grouped_groups_same_file_chunks() {
                 start_line: 7,
                 end_line: 10,
             },
+            chunk_id: None,
             distance: 0.2,
             match_source: storage::MatchSource::Semantic,
             score: 1.0 / (1.0 + 0.2),
@@ -188,6 +191,7 @@ fn format_results_grouped_deduplicates_siblings() {
             start_line: 5,
             end_line: 7,
         },
+        chunk_id: None,
         distance: 0.1,
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.1),
@@ -233,6 +237,7 @@ fn format_results_grouped_omits_empty_imports() {
             start_line: 1,
             end_line: 3,
         },
+        chunk_id: None,
         distance: 0.1,
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.1),
@@ -254,6 +259,7 @@ fn format_results_grouped_omits_empty_siblings() {
             start_line: 1,
             end_line: 3,
         },
+        chunk_id: None,
         distance: 0.1,
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.1),
@@ -279,6 +285,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: 0.5,
             match_source: storage::MatchSource::Semantic,
             score: 1.0 / (1.0 + 0.5),
@@ -292,6 +299,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: 0.1,
             match_source: storage::MatchSource::Semantic,
             score: 1.0 / (1.0 + 0.1),
@@ -344,9 +352,6 @@ async fn explorer_auto_indexes_empty_db() {
     assert!(text.contains("Button"), "expected Button in results, got: {text}");
 }
 
-// ── T-022: impact lists all files importing target ─────────────
-
-/// Insert a dummy chunk so the index is non-empty (impact tool checks this).
 fn seed_index(conn: &storage::Db) {
     let embedding = vec![0.0_f32; 768];
     storage::insert_chunk(
@@ -359,7 +364,6 @@ fn seed_index(conn: &storage::Db) {
 #[tokio::test]
 async fn impact_lists_dependents() {
     let (y, _dir) = test_yomu();
-    // Set up references: A→B, C→B
     {
         let conn = y.conn.lock();
         seed_index(&conn);
@@ -373,6 +377,7 @@ async fn impact_lists_dependents() {
 
     let params = Parameters(ImpactParams {
         target: "src/hooks/useAuth.ts".to_string(),
+        symbol: None,
         depth: None,
     });
     let result = y.impact(params).await.unwrap();
@@ -381,8 +386,6 @@ async fn impact_lists_dependents() {
     assert!(text.contains("src/C.tsx"), "expected C.tsx: {text}");
     assert!(text.contains("2 dependent"), "expected 2 dependents: {text}");
 }
-
-// ── T-023: impact filters by symbol ──────────────────────────────
 
 #[tokio::test]
 async fn impact_filters_by_symbol() {
@@ -400,6 +403,7 @@ async fn impact_filters_by_symbol() {
 
     let params = Parameters(ImpactParams {
         target: "src/hooks/useAuth.ts:useAuth".to_string(),
+        symbol: None,
         depth: None,
     });
     let result = y.impact(params).await.unwrap();
@@ -408,13 +412,12 @@ async fn impact_filters_by_symbol() {
     assert!(text.contains("src/A.tsx"), "expected A.tsx in symbol refs: {text}");
 }
 
-// ── T-024: impact rejects empty target ───────────────────────────
-
 #[tokio::test]
 async fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
     let params = Parameters(ImpactParams {
         target: String::new(),
+        symbol: None,
         depth: None,
     });
     let err = y.impact(params).await.unwrap_err();
@@ -425,15 +428,12 @@ async fn impact_rejects_empty_target() {
     );
 }
 
-// ── T-025: integration test — index then impact ──────────────────
-
 #[tokio::test]
 async fn integration_index_then_impact() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
 
-    // A imports B, B imports C
     std::fs::write(
         src_dir.join("A.tsx"),
         "import { B } from './B';\nfunction A() { return <B/>; }",
@@ -451,7 +451,6 @@ async fn integration_index_then_impact() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    // Index the project
     indexer::run_index(
         Arc::clone(&conn),
         dir.path(),
@@ -468,9 +467,9 @@ async fn integration_index_then_impact() {
         tool_router: Yomu::tool_router(),
     };
 
-    // Impact on C should show B and A
     let params = Parameters(ImpactParams {
         target: "src/C.tsx".to_string(),
+        symbol: None,
         depth: Some(3),
     });
     let result = y.impact(params).await.unwrap();
@@ -478,8 +477,6 @@ async fn integration_index_then_impact() {
     assert!(text.contains("src/B.tsx"), "expected B.tsx as direct dependent: {text}");
     assert!(text.contains("src/A.tsx"), "expected A.tsx as transitive dependent: {text}");
 }
-
-// ── parse_impact_target tests ────────────────────────────────────
 
 #[test]
 fn parse_impact_target_file_only() {
@@ -559,9 +556,6 @@ async fn status_returns_counts_after_insert() {
     );
 }
 
-// ── Phase 3: Incremental indexing tests ───────────────────────────
-
-// T-014: explorer hybrid flow — empty DB → chunk-only + embed + search
 #[tokio::test]
 async fn explorer_hybrid_flow_empty_db() {
     let dir = tempfile::tempdir().unwrap();
@@ -595,7 +589,6 @@ async fn explorer_hybrid_flow_empty_db() {
     let text = &result.content[0].as_text().unwrap().text;
     assert!(text.contains("Button"), "expected Button in results: {text}");
 
-    // Verify hybrid flow: both chunks and embeddings exist
     let stats = {
         let c = conn.lock();
         storage::get_stats(&c).unwrap()
@@ -607,7 +600,6 @@ async fn explorer_hybrid_flow_empty_db() {
     );
 }
 
-// T-015: explorer incremental embeds from ChunkedOnly state
 #[tokio::test]
 async fn explorer_incremental_embeds_chunked_only() {
     let dir = tempfile::tempdir().unwrap();
@@ -623,12 +615,10 @@ async fn explorer_incremental_embeds_chunked_only() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    // Phase 1: chunk-only index (no embeddings)
     indexer::run_chunk_only_index(Arc::clone(&conn), dir.path())
         .await
         .unwrap();
 
-    // Verify: chunks exist, no embeddings
     {
         let c = conn.lock();
         let stats = storage::get_stats(&c).unwrap();
@@ -654,7 +644,6 @@ async fn explorer_incremental_embeds_chunked_only() {
     let text = &result.content[0].as_text().unwrap().text;
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
-    // Verify: embeddings were added by incremental embed
     {
         let c = conn.lock();
         let stats = storage::get_stats(&c).unwrap();
@@ -665,7 +654,6 @@ async fn explorer_incremental_embeds_chunked_only() {
     }
 }
 
-// T-016: explorer shows coverage info when no results and partially embedded
 #[tokio::test]
 async fn explorer_shows_coverage_on_no_results() {
     let dir = tempfile::tempdir().unwrap();
@@ -680,7 +668,6 @@ async fn explorer_shows_coverage_on_no_results() {
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    // Insert chunk-only data manually (no embeddings)
     storage::replace_file_chunks_only(
         &conn,
         "src/A.tsx",
@@ -701,13 +688,11 @@ async fn explorer_shows_coverage_on_no_results() {
     assert!(stats.total_chunks > 0, "should have chunks");
     assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
 
-    // Format the no-results message with coverage
     let msg = format_no_results_message(&stats);
     assert!(msg.contains("coverage"), "expected coverage info: {msg}");
     assert!(msg.contains("0/"), "expected 0 embedded: {msg}");
 }
 
-// T-017: index tool embeds all chunk-only files
 #[tokio::test]
 async fn index_embeds_chunk_only_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -728,7 +713,6 @@ async fn index_embeds_chunk_only_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    // Chunk-only index first
     indexer::run_chunk_only_index(Arc::clone(&conn), dir.path())
         .await
         .unwrap();
@@ -750,7 +734,6 @@ async fn index_embeds_chunk_only_files() {
         "expected completion message: {text}"
     );
 
-    // Verify: all chunks have embeddings (100% coverage)
     let stats = {
         let c = conn.lock();
         storage::get_stats(&c).unwrap()
@@ -762,12 +745,10 @@ async fn index_embeds_chunk_only_files() {
     );
 }
 
-// T-018: status shows embedded/total chunk counts
 #[tokio::test]
 async fn status_shows_embedded_total() {
     let (conn, _dir) = test_db();
 
-    // Insert chunk-only (no embedding)
     storage::replace_file_chunks_only(
         &conn,
         "src/A.tsx",
@@ -801,7 +782,6 @@ async fn status_shows_embedded_total() {
     );
 }
 
-// T-019: determine_index_state returns correct variants
 #[test]
 fn determine_index_state_variants() {
     let empty = storage::IndexStatus {
@@ -846,16 +826,6 @@ fn determine_index_state_variants() {
     ));
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Search Quality – Phase 3 Tools (T-010, T-011)
-// ══════════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════════════════════
-// Rerank – Phase 3 Display (T-010, T-011)
-// ══════════════════════════════════════════════════════════════════
-
-// ── T-010: score-based display for all results ──
-
 #[test]
 fn format_results_grouped_shows_score_for_all() {
     let results = vec![
@@ -868,6 +838,7 @@ fn format_results_grouped_shows_score_for_all() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: 0.5,
             match_source: storage::MatchSource::Semantic,
             score: 0.72,
@@ -881,6 +852,7 @@ fn format_results_grouped_shows_score_for_all() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: f32::INFINITY,
             match_source: storage::MatchSource::NameMatch,
             score: 0.55,
@@ -889,14 +861,10 @@ fn format_results_grouped_shows_score_for_all() {
     let empty_imports: HashMap<String, String> = HashMap::new();
     let empty_siblings: HashMap<String, Vec<storage::SiblingInfo>> = HashMap::new();
     let text = format_results_grouped(&results, &empty_imports, &empty_siblings);
-    // Both should show score as similarity
     assert!(text.contains("(similarity: 0.72)"), "expected score for Semantic: {text}");
     assert!(text.contains("(similarity: 0.55)"), "expected score for NameMatch: {text}");
-    // No more "(name match)" label
     assert!(!text.contains("(name match)"), "should not show (name match): {text}");
 }
-
-// ── T-011: file groups sorted by best score (descending) ──
 
 #[test]
 fn format_results_grouped_sorts_by_score() {
@@ -910,6 +878,7 @@ fn format_results_grouped_sorts_by_score() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: 0.5,
             match_source: storage::MatchSource::Semantic,
             score: 0.60,
@@ -923,6 +892,7 @@ fn format_results_grouped_sorts_by_score() {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance: 0.1,
             match_source: storage::MatchSource::Semantic,
             score: 0.95,
@@ -934,4 +904,23 @@ fn format_results_grouped_sorts_by_score() {
     let a_pos = text.find("## src/A.tsx").unwrap();
     let b_pos = text.find("## src/B.tsx").unwrap();
     assert!(a_pos < b_pos, "A (score 0.95) should come before B (score 0.60): {text}");
+}
+
+#[test]
+fn with_root_creates_db_and_returns_yomu() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = Yomu::with_root(dir.path().to_path_buf());
+    assert!(result.is_ok(), "with_root should succeed: {:?}", result.err());
+    let yomu = result.unwrap();
+    assert_eq!(yomu.root, dir.path());
+    assert!(dir.path().join(".yomu").join("index.db").exists());
+}
+
+#[test]
+fn with_root_initializes_all_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let yomu = Yomu::with_root(dir.path().to_path_buf()).unwrap();
+    assert!(!yomu.auto_indexed.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(yomu.auto_index_failures.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(yomu.tool_router.map.len(), 4);
 }

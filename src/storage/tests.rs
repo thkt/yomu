@@ -305,8 +305,6 @@ fn get_file_siblings_returns_empty_for_empty_input() {
     assert!(siblings.is_empty());
 }
 
-// ── T-017: replace_file_references stores references ─────────────
-
 #[test]
 fn replace_file_references_stores_refs() {
     let (conn, _dir) = test_db();
@@ -320,8 +318,6 @@ fn replace_file_references_stores_refs() {
     let count = get_reference_count(&conn).unwrap();
     assert_eq!(count, 3);
 }
-
-// ── T-018: re-index replaces old references ──────────────────────
 
 #[test]
 fn replace_file_references_replaces_existing() {
@@ -347,8 +343,6 @@ fn replace_file_references_replaces_existing() {
     assert_eq!(dependents[0].file_path, "src/A.tsx");
 }
 
-// ── T-019: delete file also deletes references ───────────────────
-
 #[test]
 fn delete_file_chunks_also_removes_references() {
     let (conn, _dir) = test_db();
@@ -370,12 +364,9 @@ fn delete_file_chunks_also_removes_references() {
     assert_eq!(count, 0);
 }
 
-// ── T-020: transitive dependents A→B→C ───────────────────────────
-
 #[test]
 fn get_transitive_dependents_chain() {
     let (conn, _dir) = test_db();
-    // A imports B, B imports C → C's dependents = [B(1), A(2)]
     replace_file_references(&conn, "src/A.tsx", &[
         Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
     ]).unwrap();
@@ -389,12 +380,9 @@ fn get_transitive_dependents_chain() {
     assert_eq!(deps[1], Dependent { file_path: "src/A.tsx".into(), depth: 2 });
 }
 
-// ── T-021: circular dependents A→B→A ─────────────────────────────
-
 #[test]
 fn get_transitive_dependents_circular() {
     let (conn, _dir) = test_db();
-    // A imports B, B imports A → circular
     replace_file_references(&conn, "src/A.tsx", &[
         Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
     ]).unwrap();
@@ -403,16 +391,10 @@ fn get_transitive_dependents_circular() {
     ]).unwrap();
 
     let deps = get_transitive_dependents(&conn, "src/A.tsx", 5).unwrap();
-    // Should return B at depth 1, but NOT loop infinitely
     assert_eq!(deps.len(), 1);
     assert_eq!(deps[0], Dependent { file_path: "src/B.tsx".into(), depth: 1 });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Incremental Indexing – Phase 1 Storage (T-001 〜 T-010)
-// ══════════════════════════════════════════════════════════════════
-
-/// Helper: query chunk IDs for a file (ordered by id ASC).
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")
@@ -423,13 +405,10 @@ fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
         .collect()
 }
 
-/// Helper: count rows in vec_chunks.
 fn vec_chunks_count(conn: &Connection) -> u32 {
     conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))
         .unwrap()
 }
-
-// ── T-001: replace_file_chunks_only → chunks あり, vec_chunks なし ──
 
 #[test]
 fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
@@ -443,34 +422,27 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
 
     replace_file_chunks_only(&conn, "src/Button.tsx", &chunks, "hash_a", "import React from 'react'", &refs).unwrap();
 
-    // chunks テーブルに 2 行
     let chunk_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM chunks WHERE file_path = 'src/Button.tsx'", [], |row| row.get(0))
         .unwrap();
     assert_eq!(chunk_count, 2);
 
-    // vec_chunks テーブルに 0 行
     assert_eq!(vec_chunks_count(&conn), 0);
 
-    // file_context も保存されている
     let contexts = get_file_contexts(&conn, &["src/Button.tsx"]).unwrap();
     assert_eq!(contexts["src/Button.tsx"], "import React from 'react'");
 
-    // index_meta の last_indexed_at が更新されている
     let last: String = conn
         .query_row("SELECT value FROM index_meta WHERE key = 'last_indexed_at'", [], |row| row.get(0))
         .unwrap();
     assert!(!last.is_empty());
 }
 
-// ── T-002: replace_file_chunks_only with existing embed → 古い vec_chunks も削除 ──
-
 #[test]
 fn replace_file_chunks_only_deletes_old_embeddings() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
-    // 既存の embed 済みチャンクを挿入
     insert_chunk(
         &conn, "src/App.tsx",
         &NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "old code", start_line: 1, end_line: 5 },
@@ -478,35 +450,28 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
     ).unwrap();
     assert_eq!(vec_chunks_count(&conn), 1);
 
-    // replace_file_chunks_only で同じファイルを上書き
     let new_chunks = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("AppV2"), content: "new code", start_line: 1, end_line: 3 },
     ];
     replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[]).unwrap();
 
-    // 古い vec_chunks は削除されている
     assert_eq!(vec_chunks_count(&conn), 0);
 
-    // 新しい chunks は存在する
     let chunk_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM chunks WHERE file_path = 'src/App.tsx'", [], |row| row.get(0))
         .unwrap();
     assert_eq!(chunk_count, 1);
 
-    // 新しいチャンクの name は "AppV2"
     let name: String = conn
         .query_row("SELECT name FROM chunks WHERE file_path = 'src/App.tsx'", [], |row| row.get(0))
         .unwrap();
     assert_eq!(name, "AppV2");
 }
 
-// ── T-003: add_embeddings → vec_chunks に行追加、dims 一致 ──
-
 #[test]
 fn add_embeddings_inserts_into_vec_chunks() {
     let (conn, _dir) = test_db();
 
-    // chunk-only 状態を作成
     let chunks = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("Card"), content: "function Card() {}", start_line: 1, end_line: 3 },
         NewChunk { chunk_type: &ChunkType::Hook, name: Some("useCard"), content: "function useCard() {}", start_line: 5, end_line: 8 },
@@ -514,7 +479,6 @@ fn add_embeddings_inserts_into_vec_chunks() {
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[]).unwrap();
     assert_eq!(vec_chunks_count(&conn), 0);
 
-    // chunk_id を取得して embedding を追加
     let ids = get_chunk_ids(&conn, "src/Card.tsx");
     assert_eq!(ids.len(), 2);
 
@@ -530,13 +494,10 @@ fn add_embeddings_inserts_into_vec_chunks() {
     assert_eq!(vec_chunks_count(&conn), 2);
 }
 
-// ── T-004: add_embeddings with already embedded chunk_id → スキップ ──
-
 #[test]
 fn add_embeddings_skips_already_embedded() {
     let (conn, _dir) = test_db();
 
-    // chunk-only → add_embeddings で 1 件 embed
     let chunks = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("Modal"), content: "function Modal() {}", start_line: 1, end_line: 3 },
     ];
@@ -549,37 +510,30 @@ fn add_embeddings_skips_already_embedded() {
     let inserted = add_embeddings(&conn, &embeddings).unwrap();
     assert_eq!(inserted, 1);
 
-    // 同じ chunk_id で再度 add_embeddings → INSERT OR IGNORE でスキップ
     let embeddings_dup = vec![(ids[0], emb)];
     let inserted_dup = add_embeddings(&conn, &embeddings_dup).unwrap();
     assert_eq!(inserted_dup, 0);
 
-    // vec_chunks は 1 行のまま
     assert_eq!(vec_chunks_count(&conn), 1);
 }
-
-// ── T-005: get_unembedded_file_paths with mixed state → 未 embed のみ ──
 
 #[test]
 fn get_unembedded_file_paths_returns_only_unembedded() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
-    // ファイル A: embed 済み（insert_chunk 経由）
     insert_chunk(
         &conn, "src/A.tsx",
         &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 },
         "h1", &embedding,
     ).unwrap();
 
-    // ファイル B: chunk-only（embed なし）
     let chunks_b = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code b", start_line: 1, end_line: 3 },
         NewChunk { chunk_type: &ChunkType::Hook, name: Some("useB"), content: "code b2", start_line: 5, end_line: 8 },
     ];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
 
-    // ファイル C: chunk-only（embed なし）
     let chunks_c = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("C"), content: "code c", start_line: 1, end_line: 3 },
     ];
@@ -587,22 +541,17 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
 
     let unembedded = get_unembedded_file_paths(&conn).unwrap();
 
-    // A は embed 済みなので含まれない
     let paths: Vec<&str> = unembedded.iter().map(|(p, _)| p.as_str()).collect();
     assert!(!paths.contains(&"src/A.tsx"));
     assert!(paths.contains(&"src/B.tsx"));
     assert!(paths.contains(&"src/C.tsx"));
 
-    // B のチャンク数は 2
     let b_count = unembedded.iter().find(|(p, _)| p == "src/B.tsx").unwrap().1;
     assert_eq!(b_count, 2);
 
-    // C のチャンク数は 1
     let c_count = unembedded.iter().find(|(p, _)| p == "src/C.tsx").unwrap().1;
     assert_eq!(c_count, 1);
 }
-
-// ── T-006: needs_embedding for chunk-only file → true ──
 
 #[test]
 fn needs_embedding_returns_true_for_chunk_only_file() {
@@ -613,11 +562,8 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
     ];
     replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[]).unwrap();
 
-    // hash は同一だが embed がないので true
     assert!(needs_embedding(&conn, "src/Nav.tsx", "hash_nav").unwrap());
 }
-
-// ── T-007: needs_embedding for fully embedded file → false ──
 
 #[test]
 fn needs_embedding_returns_false_for_fully_embedded() {
@@ -630,11 +576,8 @@ fn needs_embedding_returns_false_for_fully_embedded() {
         "hash_footer", &embedding,
     ).unwrap();
 
-    // hash 同一 + 全チャンク embed 済み → false
     assert!(!needs_embedding(&conn, "src/Footer.tsx", "hash_footer").unwrap());
 }
-
-// ── T-008: needs_embedding with hash change → true ──
 
 #[test]
 fn needs_embedding_returns_true_when_hash_changed() {
@@ -647,18 +590,14 @@ fn needs_embedding_returns_true_when_hash_changed() {
         "hash_v1", &embedding,
     ).unwrap();
 
-    // hash が変わったので true（再チャンク + 再 embed 必要）
     assert!(needs_embedding(&conn, "src/Header.tsx", "hash_v2").unwrap());
 }
-
-// ── T-009: get_stats with mixed state → embedded_chunks < total_chunks ──
 
 #[test]
 fn get_stats_reports_embedded_vs_total_chunks() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
-    // ファイル A: embed 済み (2 chunks)
     insert_chunk(
         &conn, "src/A.tsx",
         &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 },
@@ -670,7 +609,6 @@ fn get_stats_reports_embedded_vs_total_chunks() {
         "h1", &embedding,
     ).unwrap();
 
-    // ファイル B: chunk-only (1 chunk, embed なし)
     let chunks_b = vec![
         NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code b", start_line: 1, end_line: 3 },
     ];
@@ -679,17 +617,14 @@ fn get_stats_reports_embedded_vs_total_chunks() {
     let stats = get_stats(&conn).unwrap();
     assert_eq!(stats.total_chunks, 3);
     assert_eq!(stats.total_files, 2);
-    assert_eq!(stats.embedded_chunks, 2); // FR-005: NEW field
+    assert_eq!(stats.embedded_chunks, 2);
     assert!(stats.embedded_chunks < stats.total_chunks);
 }
-
-// ── T-010: get_files_by_import_count → 被参照数降順 ──
 
 #[test]
 fn get_files_by_import_count_returns_most_imported_first() {
     let (conn, _dir) = test_db();
 
-    // 3 ファイルを chunk-only で登録
     for (path, hash) in [("src/utils.tsx", "h1"), ("src/Button.tsx", "h2"), ("src/App.tsx", "h3")] {
         let chunks = vec![
             NewChunk { chunk_type: &ChunkType::Component, name: Some("X"), content: "code", start_line: 1, end_line: 3 },
@@ -697,7 +632,6 @@ fn get_files_by_import_count_returns_most_imported_first() {
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
     }
 
-    // file_references: utils は 3 回参照、Button は 1 回参照、App は 0 回参照
     replace_file_references(&conn, "src/App.tsx", &[
         Reference { source_file: "src/App.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: Some("format".into()), ref_kind: RefKind::Named },
         Reference { source_file: "src/App.tsx".into(), target_file: "src/Button.tsx".into(), symbol_name: Some("Button".into()), ref_kind: RefKind::Named },
@@ -705,7 +639,6 @@ fn get_files_by_import_count_returns_most_imported_first() {
     replace_file_references(&conn, "src/Button.tsx", &[
         Reference { source_file: "src/Button.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: Some("cn".into()), ref_kind: RefKind::Named },
     ]).unwrap();
-    // 別ファイルからも utils を参照（3 回目）
     replace_file_references(&conn, "src/Other.tsx", &[
         Reference { source_file: "src/Other.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: None, ref_kind: RefKind::Namespace },
     ]).unwrap();
@@ -718,12 +651,6 @@ fn get_files_by_import_count_returns_most_imported_first() {
     assert_eq!(ordered[1], "src/Button.tsx");
     assert_eq!(ordered[2], "src/App.tsx");
 }
-
-// ══════════════════════════════════════════════════════════════════
-// Search Quality – Phase 1 Storage (T-001 〜 T-003, T-006)
-// ══════════════════════════════════════════════════════════════════
-
-// ── T-001: search_by_name matches chunk name with LIKE ──
 
 #[test]
 fn search_by_name_matches_keyword() {
@@ -743,8 +670,6 @@ fn search_by_name_matches_keyword() {
     assert_eq!(results[0].distance, f32::INFINITY);
 }
 
-// ── T-002: search_by_name with type_filter → only matching type ──
-
 #[test]
 fn search_by_name_filters_by_type() {
     let (conn, _dir) = test_db();
@@ -761,8 +686,6 @@ fn search_by_name_filters_by_type() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("useBtn"));
     assert_eq!(results[0].chunk.chunk_type, ChunkType::Hook);
 }
-
-// ── T-003: search_by_name with exclude_ids → excluded chunk absent ──
 
 #[test]
 fn search_by_name_excludes_ids() {
@@ -783,8 +706,6 @@ fn search_by_name_excludes_ids() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("useAuthProvider"));
 }
-
-// ── T-006: get_files_by_import_count with hook/component boost ──
 
 #[test]
 fn get_files_by_import_count_boosts_hook_component_files() {
@@ -820,8 +741,6 @@ fn get_files_by_import_count_boosts_hook_component_files() {
     assert_eq!(ordered[2], "src/types.tsx", "typedef file should be last: {ordered:?}");
 }
 
-// ── search_similar sets MatchSource::Semantic ──
-
 #[test]
 fn search_similar_sets_semantic_match_source() {
     let (conn, _dir) = test_db();
@@ -835,8 +754,6 @@ fn search_similar_sets_semantic_match_source() {
     assert_eq!(results[0].match_source, MatchSource::Semantic);
 }
 
-// ── search_by_name returns empty for empty keywords ──
-
 #[test]
 fn search_by_name_empty_keywords_returns_empty() {
     let (conn, _dir) = test_db();
@@ -849,12 +766,6 @@ fn search_by_name_empty_keywords_returns_empty() {
     let results = search_by_name(&conn, &[], None, &HashSet::new(), 10).unwrap();
     assert!(results.is_empty());
 }
-
-// ══════════════════════════════════════════════════════════════════
-// Rerank – Phase 1 Storage (T-001, T-002, T-006)
-// ══════════════════════════════════════════════════════════════════
-
-// ── T-001 (rerank spec): search_similar sets initial score ──
 
 #[test]
 fn search_similar_sets_initial_score() {
@@ -877,8 +788,6 @@ fn search_similar_sets_initial_score() {
         "expected score {expected_score}, got {}", results[0].score);
 }
 
-// ── T-002 (rerank spec): search_by_name sets score 0.5 ──
-
 #[test]
 fn search_by_name_sets_base_score() {
     let (conn, _dir) = test_db();
@@ -893,8 +802,6 @@ fn search_by_name_sets_base_score() {
     assert!((results[0].score - 0.5).abs() < 1e-6,
         "NameMatch score should be 0.5, got {}", results[0].score);
 }
-
-// ── T-006 (rerank spec): get_import_counts batch SQL ──
 
 #[test]
 fn get_import_counts_returns_correct_counts() {
@@ -934,8 +841,6 @@ fn get_import_counts_returns_empty_for_empty_input() {
     let counts = get_import_counts(&conn, &[]).unwrap();
     assert!(counts.is_empty());
 }
-
-// ── search_by_name respects limit ──
 
 #[test]
 fn search_by_name_respects_limit() {

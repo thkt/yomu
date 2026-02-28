@@ -26,8 +26,6 @@ impl From<tokio::task::JoinError> for QueryError {
 
 const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and", "or"];
 
-/// Extract search keywords from a query string.
-/// Splits on whitespace, lowercases, removes stopwords and tokens shorter than 2 chars.
 pub fn extract_keywords(query: &str) -> Vec<String> {
     query
         .split_whitespace()
@@ -36,7 +34,6 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Extract ChunkType hints from a query string based on keyword mapping.
 pub fn extract_type_hints(query: &str) -> Vec<ChunkType> {
     let tokens: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
     let mut hints = Vec::new();
@@ -49,10 +46,10 @@ pub fn extract_type_hints(query: &str) -> Vec<ChunkType> {
             "test" | "tests" | "spec" => Some(ChunkType::TestCase),
             _ => None,
         };
-        if let Some(h) = hint {
-            if !hints.contains(&h) {
-                hints.push(h);
-            }
+        if let Some(h) = hint
+            && !hints.contains(&h)
+        {
+            hints.push(h);
         }
     }
     hints
@@ -63,7 +60,6 @@ const TYPE_HINT_BONUS: f32 = 0.03;
 const IMPORT_RANK_BONUS: f32 = 0.03;
 const TEST_PATH_PENALTY: f32 = 0.05;
 
-/// Test/example file path patterns that receive a ranking penalty.
 fn is_test_path(path: &str) -> bool {
     path.contains("__tests__")
         || path.contains(".test.")
@@ -72,21 +68,16 @@ fn is_test_path(path: &str) -> bool {
         || path.contains("/examples/")
 }
 
-/// Rerank search results using multiple signals.
-///
-/// Computes a score for each result and sorts by score descending (higher = better).
-/// Signals: base score, name match bonus, type hint bonus, import rank bonus, test path penalty.
+/// Rerank results by score (name match, type hint, import rank, test penalty).
 pub fn rerank(
     results: &mut [storage::SearchResult],
     type_hints: &[storage::ChunkType],
-    _keywords: &[String],
     import_counts: &std::collections::HashMap<String, u32>,
 ) {
     if results.is_empty() {
         return;
     }
 
-    // Top 25% import count threshold
     let mut counts: Vec<u32> = import_counts.values().copied().filter(|&c| c > 0).collect();
     counts.sort_unstable();
     let top_25_threshold = if counts.is_empty() {
@@ -143,10 +134,7 @@ pub fn rerank(
     });
 }
 
-/// Search for code chunks semantically similar to `query`.
-///
-/// Performs vector search first. If results are fewer than `limit`,
-/// falls back to name-based search with deduplication.
+/// Vector search with name-based fallback when results < limit.
 pub async fn search(
     conn: Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
@@ -169,13 +157,7 @@ pub async fn search(
 
             let exclude_ids: HashSet<i64> = results
                 .iter()
-                .filter_map(|r| {
-                    conn.query_row(
-                        "SELECT id FROM chunks WHERE file_path = ?1 AND start_line = ?2 AND end_line = ?3",
-                        rusqlite::params![r.chunk.file_path, r.chunk.start_line, r.chunk.end_line],
-                        |row| row.get::<_, i64>(0),
-                    ).ok()
-                })
+                .filter_map(|r| r.chunk_id)
                 .collect();
 
             let remaining = limit - results.len() as u32;
@@ -187,7 +169,7 @@ pub async fn search(
         // Rerank with multiple signals
         let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
         let import_counts = storage::get_import_counts(&conn, &file_paths)?;
-        rerank(&mut results, &type_hints, &keywords, &import_counts);
+        rerank(&mut results, &type_hints, &import_counts);
 
         Ok::<_, StorageError>(results)
     })
@@ -241,12 +223,6 @@ mod tests {
         assert_eq!(results[0].chunk.name.as_deref(), Some("Button"));
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // Search Quality – Phase 2 Query Layer (T-004, T-005, T-009)
-    // ══════════════════════════════════════════════════════════════
-
-    // ── extract_keywords tests ──
-
     #[test]
     fn extract_keywords_basic() {
         let kw = extract_keywords("streaming chat hooks");
@@ -271,8 +247,6 @@ mod tests {
         let kw = extract_keywords("UseAuth Component");
         assert_eq!(kw, vec!["useauth", "component"]);
     }
-
-    // ── T-009: extract_type_hints ──
 
     #[test]
     fn extract_type_hints_hooks() {
@@ -302,15 +276,12 @@ mod tests {
         assert_eq!(extract_type_hints("spec"), vec![storage::ChunkType::TestCase]);
     }
 
-    // ── T-004: search fallback merge ──
-
     #[tokio::test]
     async fn search_fallback_merges_vector_and_name_results() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let conn = storage::open_db(&db_path).unwrap();
 
-        // Chunk A: embedded (will be found by vector search)
         let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
         emb[0] = 1.0;
         storage::insert_chunk(
@@ -324,7 +295,6 @@ mod tests {
             "h1", &emb,
         ).unwrap();
 
-        // Chunk B: NOT embedded (chunk-only, will be found by name fallback)
         storage::replace_file_chunks_only(
             &conn, "src/B.tsx",
             &[storage::NewChunk {
@@ -337,21 +307,15 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        // limit=5: vector returns 1 (AuthForm), fallback fills remaining with name search
         let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap();
 
-        // Should have both: vector result + fallback result
         assert!(results.len() >= 2, "expected at least 2 results (vector + fallback), got {}", results.len());
 
         let names: Vec<&str> = results.iter().filter_map(|r| r.chunk.name.as_deref()).collect();
         assert!(names.contains(&"AuthForm"), "expected AuthForm from vector: {names:?}");
         assert!(names.contains(&"useAuth"), "expected useAuth from fallback: {names:?}");
-
-        // Vector results should come first (Semantic)
         assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
     }
-
-    // ── T-005: search dedupe ──
 
     #[tokio::test]
     async fn search_deduplicates_vector_and_name_results() {
@@ -359,7 +323,6 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = storage::open_db(&db_path).unwrap();
 
-        // Chunk: embedded AND has matching name
         let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
         emb[0] = 1.0;
         storage::insert_chunk(
@@ -376,15 +339,10 @@ mod tests {
         let conn = Arc::new(Mutex::new(conn));
         let results = search(conn, &MockEmbedder, "auth", 5, 0).await.unwrap();
 
-        // Should appear only once (as Semantic, not duplicated)
         let auth_count = results.iter().filter(|r| r.chunk.name.as_deref() == Some("useAuth")).count();
         assert_eq!(auth_count, 1, "useAuth should appear exactly once");
         assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
     }
-
-    // ══════════════════════════════════════════════════════════════
-    // Rerank – Phase 2 Query Layer
-    // ══════════════════════════════════════════════════════════════
 
     use std::collections::HashMap;
 
@@ -408,39 +366,33 @@ mod tests {
                 start_line: 1,
                 end_line: 3,
             },
+            chunk_id: None,
             distance,
             match_source,
             score,
         }
     }
 
-    // ── T-001: Semantic base_score ──
-
     #[test]
     fn rerank_semantic_base_score() {
         let mut results = vec![
             make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.5, storage::MatchSource::Semantic),
         ];
-        rerank(&mut results, &[], &[], &HashMap::new());
+        rerank(&mut results, &[], &HashMap::new());
         let expected = 1.0 / (1.0 + 0.5);
         assert!((results[0].score - expected).abs() < 1e-6,
             "expected {expected}, got {}", results[0].score);
     }
-
-    // ── T-002: NameMatch base_score = 0.5 ──
 
     #[test]
     fn rerank_name_match_base_score() {
         let mut results = vec![
             make_result("src/A.tsx", "useAuth", storage::ChunkType::Hook, f32::INFINITY, storage::MatchSource::NameMatch),
         ];
-        rerank(&mut results, &[], &[], &HashMap::new());
-        // NameMatch base = 0.5, no bonuses → 0.5 + 0.05 (name_match_bonus) = 0.55
+        rerank(&mut results, &[], &HashMap::new());
         assert!((results[0].score - 0.55).abs() < 1e-6,
             "expected 0.55, got {}", results[0].score);
     }
-
-    // ── T-003: sorted by score descending ──
 
     #[test]
     fn rerank_sorts_by_score_descending() {
@@ -448,13 +400,11 @@ mod tests {
             make_result("src/B.tsx", "B", storage::ChunkType::Component, 0.5, storage::MatchSource::Semantic),
             make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.1, storage::MatchSource::Semantic),
         ];
-        rerank(&mut results, &[], &[], &HashMap::new());
+        rerank(&mut results, &[], &HashMap::new());
         assert!(results[0].score >= results[1].score,
             "expected descending: {} >= {}", results[0].score, results[1].score);
         assert_eq!(results[0].chunk.name.as_deref(), Some("A"));
     }
-
-    // ── T-004: type hint bonus +0.03 ──
 
     #[test]
     fn rerank_type_hint_bonus() {
@@ -463,15 +413,13 @@ mod tests {
         ];
         let mut without_hint = with_hint.clone();
 
-        rerank(&mut with_hint, &[storage::ChunkType::Hook], &[], &HashMap::new());
-        rerank(&mut without_hint, &[], &[], &HashMap::new());
+        rerank(&mut with_hint, &[storage::ChunkType::Hook], &HashMap::new());
+        rerank(&mut without_hint, &[], &HashMap::new());
 
         let diff = with_hint[0].score - without_hint[0].score;
         assert!((diff - 0.03).abs() < 1e-6,
             "type_hint bonus should be +0.03, got diff {diff}");
     }
-
-    // ── T-005: type_hints empty → no bonus ──
 
     #[test]
     fn rerank_no_type_hint_bonus_when_empty() {
@@ -479,12 +427,10 @@ mod tests {
             make_result("src/A.tsx", "useAuth", storage::ChunkType::Hook, 0.5, storage::MatchSource::Semantic),
         ];
         let base = 1.0 / (1.0 + 0.5_f32);
-        rerank(&mut results, &[], &[], &HashMap::new());
+        rerank(&mut results, &[], &HashMap::new());
         assert!((results[0].score - base).abs() < 1e-6,
             "no bonus expected: {base} vs {}", results[0].score);
     }
-
-    // ── T-007: import rank bonus top 25% ──
 
     #[test]
     fn rerank_import_rank_bonus() {
@@ -496,15 +442,13 @@ mod tests {
             ("src/popular.tsx".to_string(), 10u32),
             ("src/unpopular.tsx".to_string(), 1u32),
         ]);
-        rerank(&mut results, &[], &[], &import_counts);
+        rerank(&mut results, &[], &import_counts);
 
         let popular = results.iter().find(|r| r.chunk.name.as_deref() == Some("Popular")).unwrap();
         let unpopular = results.iter().find(|r| r.chunk.name.as_deref() == Some("Unpopular")).unwrap();
         assert!(popular.score > unpopular.score,
             "popular should rank higher: {} > {}", popular.score, unpopular.score);
     }
-
-    // ── T-008: test path penalty -0.05 ──
 
     #[test]
     fn rerank_test_path_penalty() {
@@ -514,15 +458,13 @@ mod tests {
         let mut normal_result = vec![
             make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.3, storage::MatchSource::Semantic),
         ];
-        rerank(&mut test_result, &[], &[], &HashMap::new());
-        rerank(&mut normal_result, &[], &[], &HashMap::new());
+        rerank(&mut test_result, &[], &HashMap::new());
+        rerank(&mut normal_result, &[], &HashMap::new());
 
         let diff = normal_result[0].score - test_result[0].score;
         assert!((diff - 0.05).abs() < 1e-6,
             "test penalty should be -0.05, got diff {diff}");
     }
-
-    // ── T-009: TestCase query exempts test path penalty ──
 
     #[test]
     fn rerank_test_query_exempts_penalty() {
@@ -530,12 +472,10 @@ mod tests {
             make_result("src/__tests__/A.test.tsx", "testA", storage::ChunkType::TestCase, 0.3, storage::MatchSource::Semantic),
         ];
         let base = 1.0 / (1.0 + 0.3_f32) + 0.03; // base + type_hint bonus (TestCase matches)
-        rerank(&mut results, &[storage::ChunkType::TestCase], &[], &HashMap::new());
+        rerank(&mut results, &[storage::ChunkType::TestCase], &HashMap::new());
         assert!((results[0].score - base).abs() < 1e-6,
             "TestCase query should exempt test penalty: expected {base}, got {}", results[0].score);
     }
-
-    // ── T-012: NameMatch with all bonuses ──
 
     #[test]
     fn rerank_name_match_all_bonuses() {
@@ -543,13 +483,10 @@ mod tests {
             make_result("src/useAuth.tsx", "useAuth", storage::ChunkType::Hook, f32::INFINITY, storage::MatchSource::NameMatch),
         ];
         let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
-        rerank(&mut results, &[storage::ChunkType::Hook], &[], &import_counts);
-        // base 0.5 + name_match 0.05 + type_hint 0.03 + import 0.03 = 0.61
+        rerank(&mut results, &[storage::ChunkType::Hook], &import_counts);
         assert!((results[0].score - 0.61).abs() < 1e-6,
             "expected 0.61, got {}", results[0].score);
     }
-
-    // ── T-013: search() returns results sorted by score ──
 
     #[tokio::test]
     async fn search_returns_results_sorted_by_score() {
@@ -557,7 +494,6 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = storage::open_db(&db_path).unwrap();
 
-        // Chunk A: embedded (vector match)
         let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
         emb[0] = 1.0;
         storage::insert_chunk(
@@ -571,7 +507,6 @@ mod tests {
             "h1", &emb,
         ).unwrap();
 
-        // Chunk B: NOT embedded (name match fallback)
         storage::replace_file_chunks_only(
             &conn, "src/B.tsx",
             &[storage::NewChunk {
@@ -586,7 +521,6 @@ mod tests {
         let conn = Arc::new(Mutex::new(conn));
         let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap();
 
-        // Results should be sorted by score descending
         for w in results.windows(2) {
             assert!(w[0].score >= w[1].score,
                 "results should be sorted by score: {} >= {}", w[0].score, w[1].score);
