@@ -55,9 +55,9 @@ impl Resolver {
     fn probe_path(&self, candidate: &Path) -> Option<String> {
         if let Some(ext) = candidate.extension().and_then(|e| e.to_str())
             && SUPPORTED_EXTENSIONS.contains(&ext)
-            && candidate.exists()
+            && let Some(rel) = self.to_relative(candidate)
         {
-            return self.to_relative(candidate);
+            return Some(rel);
         }
 
         for ext in PROBE_EXTENSIONS {

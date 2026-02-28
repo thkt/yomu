@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
 
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -129,9 +128,7 @@ impl Yomu {
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let http = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()?;
+        let http = Client::builder().build()?;
 
         let embedder: Option<Arc<dyn Embed>> = match Embedder::from_env(http) {
             Ok(e) => Some(Arc::new(e) as _),
