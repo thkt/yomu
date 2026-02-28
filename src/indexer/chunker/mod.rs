@@ -1,5 +1,116 @@
 use crate::storage::ChunkType;
 
+// ── Import structure types (FR-001) ──
+// Used by resolver (Phase 2) and indexer integration (Phase 4).
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportKind {
+    Named,
+    Default,
+    Namespace,
+    TypeOnly,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportSpecifier {
+    pub name: String,
+    pub alias: Option<String>,
+    pub kind: ImportKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedImport {
+    pub specifiers: Vec<ImportSpecifier>,
+    pub source: String,
+}
+
+// ── Re-export types (FR-004) ──
+
+/// Re-export entry in a barrel file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReExport {
+    pub symbol_name: Option<String>,
+    pub source: String,
+}
+
+/// Parse re-export statements from source code.
+/// Handles `export { X } from './Y'` and `export * from './Y'`.
+pub fn parse_reexports(source: &str, extension: &str) -> Vec<ReExport> {
+    let lang = match extension {
+        "tsx" | "ts" | "jsx" | "js" => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        _ => return vec![],
+    };
+    let Some(mut parser) = make_parser(&lang) else {
+        return vec![];
+    };
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    extract_reexports(&tree.root_node(), source)
+}
+
+fn extract_specifier_name(spec: &tree_sitter::Node, source: &str) -> Option<String> {
+    spec.child_by_field_name("name")
+        .or_else(|| find_child_by_kind(spec, "identifier"))
+        .map(|n| source[n.byte_range()].to_string())
+}
+
+fn extract_reexports(root: &tree_sitter::Node, source: &str) -> Vec<ReExport> {
+    let mut reexports = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "export_statement" {
+            continue;
+        }
+        // Must have a `from` source (re-export, not local export)
+        let source_str = match extract_export_source(&child, source) {
+            Some(s) => s,
+            None => continue,
+        };
+        // Check for `export *` (namespace re-export)
+        if has_star_export(&child) {
+            reexports.push(ReExport {
+                symbol_name: None,
+                source: source_str,
+            });
+            continue;
+        }
+        // Check for `export { X, Y }` (named re-exports)
+        if let Some(clause) = find_child_by_kind(&child, "export_clause") {
+            let mut clause_cursor = clause.walk();
+            for spec in clause.children(&mut clause_cursor) {
+                if spec.kind() == "export_specifier"
+                    && let Some(name) = extract_specifier_name(&spec, source)
+                {
+                    reexports.push(ReExport {
+                        symbol_name: Some(name),
+                        source: source_str.clone(),
+                    });
+                }
+            }
+        }
+    }
+    reexports
+}
+
+fn extract_export_source(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let string_node = find_child_by_kind(node, "string")?;
+    find_child_by_kind(&string_node, "string_fragment")
+        .map(|f| source[f.byte_range()].to_string())
+        .or_else(|| {
+            let text = &source[string_node.byte_range()];
+            Some(text.trim_matches('\'').trim_matches('"').to_string())
+        })
+}
+
+fn has_star_export(node: &tree_sitter::Node) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(|c| {
+        c.kind() == "*" || (c.kind() == "namespace_export")
+    })
+}
+
 /// Intermediate chunk representation produced by the chunker.
 ///
 /// Data flow: source code → `RawChunk` (chunker) → `NewChunk` (storage insert) → `Chunk` (storage read).
@@ -19,6 +130,8 @@ pub struct RawChunk {
 pub struct FileChunks {
     /// Raw import statement text (JS/TS only; empty for CSS/HTML/fallback).
     pub imports: Vec<String>,
+    /// Structured import data for reference graph construction (JS/TS only).
+    pub parsed_imports: Vec<ParsedImport>,
     pub chunks: Vec<RawChunk>,
 }
 
@@ -32,9 +145,9 @@ pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
     match extension {
         "tsx" | "jsx" => chunk_tsx(source),
         "ts" | "js" | "mjs" => chunk_ts(source),
-        "css" => FileChunks { imports: vec![], chunks: chunk_css(source) },
-        "html" => FileChunks { imports: vec![], chunks: chunk_html(source) },
-        _ => FileChunks { imports: vec![], chunks: chunk_fallback(source) },
+        "css" => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_css(source) },
+        "html" => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_html(source) },
+        _ => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) },
     }
 }
 
@@ -49,14 +162,14 @@ fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
 
 fn chunk_tsx(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TSX.into()) else {
-        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
 
 fn chunk_ts(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) else {
-        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
@@ -85,19 +198,184 @@ fn chunk_with_ast(
 fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) -> FileChunks {
     let Some(tree) = parser.parse(source, None) else {
         tracing::warn!("AST parse failed, using fallback chunker");
-        return FileChunks { imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
     };
     let root = tree.root_node();
     let imports = extract_imports_from_ast(&root, source);
+    let parsed_imports = extract_parsed_imports(&root, source);
     let mut cursor = root.walk();
     let chunks: Vec<RawChunk> = root
         .children(&mut cursor)
         .filter_map(|node| classify_js_node(&node, source))
         .collect();
     if chunks.is_empty() {
-        return FileChunks { imports, chunks: chunk_fallback(source) };
+        return FileChunks { imports, parsed_imports, chunks: chunk_fallback(source) };
     }
-    FileChunks { imports, chunks }
+    FileChunks { imports, parsed_imports, chunks }
+}
+
+fn extract_parsed_imports(root: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {
+    let mut cursor = root.walk();
+    root.children(&mut cursor)
+        .filter(|node| node.kind() == "import_statement")
+        .filter_map(|node| parse_single_import(&node, source))
+        .collect()
+}
+
+/// Parse structured import information from source code using tree-sitter.
+///
+/// Returns a list of parsed imports with their specifiers and source paths.
+/// Returns empty Vec if no imports found or if the file type doesn't support imports.
+#[allow(dead_code)] // public API, used in tests
+pub fn parse_structured_imports(source: &str, extension: &str) -> Vec<ParsedImport> {
+    match extension {
+        "tsx" | "jsx" => {
+            let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TSX.into()) else {
+                return Vec::new();
+            };
+            parse_imports_from_ast(source, &mut parser)
+        }
+        "ts" | "js" | "mjs" => {
+            let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            else {
+                return Vec::new();
+            };
+            parse_imports_from_ast(source, &mut parser)
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn parse_imports_from_ast(source: &str, parser: &mut tree_sitter::Parser) -> Vec<ParsedImport> {
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    root.children(&mut cursor)
+        .filter(|node| node.kind() == "import_statement")
+        .filter_map(|node| parse_single_import(&node, source))
+        .collect()
+}
+
+fn parse_single_import(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let source_path = extract_import_source(node, source)?;
+    let is_type_import = has_type_keyword(node);
+    let specifiers = match find_child_by_kind(node, "import_clause") {
+        Some(clause) => parse_import_clause(&clause, source, is_type_import),
+        None => Vec::new(), // side-effect import
+    };
+    Some(ParsedImport {
+        specifiers,
+        source: source_path,
+    })
+}
+
+fn extract_import_source(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let string_node = find_child_by_kind(node, "string")?;
+    let fragment = find_child_by_kind(&string_node, "string_fragment")?;
+    Some(source[fragment.byte_range()].to_string())
+}
+
+fn has_type_keyword(node: &tree_sitter::Node) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| !child.is_named() && child.kind() == "type")
+}
+
+fn parse_import_clause(
+    clause: &tree_sitter::Node,
+    source: &str,
+    is_type_import: bool,
+) -> Vec<ImportSpecifier> {
+    let mut specifiers = Vec::new();
+    let mut cursor = clause.walk();
+    for child in clause.children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                // default import: `import X from ...`
+                let name = source[child.byte_range()].to_string();
+                let kind = if is_type_import {
+                    ImportKind::TypeOnly
+                } else {
+                    ImportKind::Default
+                };
+                specifiers.push(ImportSpecifier {
+                    name,
+                    alias: None,
+                    kind,
+                });
+            }
+            "named_imports" => {
+                parse_named_imports_node(&child, source, is_type_import, &mut specifiers);
+            }
+            "namespace_import" => {
+                let alias = find_child_by_kind(&child, "identifier")
+                    .map(|id| source[id.byte_range()].to_string());
+                specifiers.push(ImportSpecifier {
+                    name: "*".to_string(),
+                    alias,
+                    kind: ImportKind::Namespace,
+                });
+            }
+            _ => {}
+        }
+    }
+    specifiers
+}
+
+fn parse_named_imports_node(
+    node: &tree_sitter::Node,
+    source: &str,
+    is_type_import: bool,
+    specifiers: &mut Vec<ImportSpecifier>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "import_specifier"
+            && let Some(spec) = parse_import_specifier(&child, source, is_type_import)
+        {
+            specifiers.push(spec);
+        }
+    }
+}
+
+fn parse_import_specifier(
+    node: &tree_sitter::Node,
+    source: &str,
+    is_type_import: bool,
+) -> Option<ImportSpecifier> {
+    let has_inline_type = has_type_keyword(node);
+    let mut identifiers: Vec<String> = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            identifiers.push(source[child.byte_range()].to_string());
+        }
+    }
+    let (name, alias) = match identifiers.len() {
+        0 => return None,
+        1 => (identifiers.remove(0), None),
+        _ => {
+            let name = identifiers.remove(0);
+            let alias = Some(identifiers.remove(0));
+            (name, alias)
+        }
+    };
+    let kind = if is_type_import || has_inline_type {
+        ImportKind::TypeOnly
+    } else {
+        ImportKind::Named
+    };
+    Some(ImportSpecifier { name, alias, kind })
+}
+
+fn find_child_by_kind<'a>(
+    node: &'a tree_sitter::Node<'a>,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).find(|c| c.kind() == kind)
 }
 
 fn extract_imports_from_ast(root: &tree_sitter::Node, source: &str) -> Vec<String> {
@@ -332,208 +610,5 @@ fn classify_test_call(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn chunk_tsx_component_function() {
-        let source = "function Button() { return <div/>; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Button"));
-    }
-
-    #[test]
-    fn chunk_tsx_hook() {
-        let source = "function useAuth() { return { user: null }; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Hook);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("useAuth"));
-    }
-
-    #[test]
-    fn chunk_tsx_interface() {
-        let source = "interface Props { label: string; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Props"));
-    }
-
-    #[test]
-    fn chunk_tsx_exported_arrow_component() {
-        let source = "export const Card = () => { return <div/>; };";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Card"));
-    }
-
-    #[test]
-    fn chunk_css_rule_set() {
-        let source = ".container { color: red; }";
-        let result = chunk_file(source, "css");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
-        assert!(result.imports.is_empty());
-    }
-
-    #[test]
-    fn chunk_html_element() {
-        let source = "<html><body>Hello</body></html>";
-        let result = chunk_file(source, "html");
-        assert!(!result.chunks.is_empty());
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::HtmlElement);
-        assert!(result.imports.is_empty());
-    }
-
-    #[test]
-    fn chunk_tsx_test_case() {
-        let source = r#"describe('Auth', () => {
-    it('should render', () => {
-        expect(true).toBe(true);
-    });
-});"#;
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Auth"));
-    }
-
-    #[test]
-    fn chunk_fallback_for_unknown_extension() {
-        let source = "line1\nline2\nline3\nline4\nline5";
-        let result = chunk_file(source, "toml");
-        assert!(!result.chunks.is_empty());
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
-        assert!(result.imports.is_empty());
-    }
-
-    #[test]
-    fn chunk_tsx_type_alias() {
-        let source = "type Theme = 'light' | 'dark';";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Theme"));
-    }
-
-    #[test]
-    fn chunk_js_file() {
-        let source = "function App() { return 'hello'; }";
-        let result = chunk_file(source, "js");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("App"));
-    }
-
-    #[test]
-    fn chunk_line_numbers() {
-        let source = "\nfunction Foo() {\n  return 42;\n}\n";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].start_line, 2);
-        assert_eq!(result.chunks[0].end_line, 4);
-    }
-
-    #[test]
-    fn chunk_tsx_it_test_case() {
-        let source = r#"it('should work', () => {
-    expect(1).toBe(1);
-});"#;
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("should work"));
-    }
-
-    #[test]
-    fn chunk_tsx_test_fn_case() {
-        let source = r#"test('adds numbers', () => {
-    expect(1 + 2).toBe(3);
-});"#;
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::TestCase);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("adds numbers"));
-    }
-
-    #[test]
-    fn chunk_css_media_statement() {
-        let source = "@media (max-width: 768px) { .container { display: none; } }";
-        let result = chunk_file(source, "css");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
-    }
-
-    #[test]
-    fn chunk_css_keyframes() {
-        let source = "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }";
-        let result = chunk_file(source, "css");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
-    }
-
-    #[test]
-    fn classify_non_hook_use_function() {
-        let source = "function username() { return 'alice'; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
-    }
-
-    #[test]
-    fn classify_utility_function_as_other() {
-        let source = "function formatDate() { return '2024-01-01'; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
-        assert_eq!(result.chunks[0].name.as_deref(), Some("formatDate"));
-    }
-
-    #[test]
-    fn chunk_fallback_produces_overlapping_chunks() {
-        let line = "x".repeat(60);
-        let source = std::iter::repeat(line.as_str())
-            .take(30)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let chunks = chunk_fallback(&source);
-        assert!(chunks.len() >= 2, "expected overlapping chunks, got {}", chunks.len());
-        assert!(
-            chunks[1].start_line < chunks[0].end_line,
-            "expected overlap: chunk[1].start={} < chunk[0].end={}",
-            chunks[1].start_line,
-            chunks[0].end_line
-        );
-    }
-
-    #[test]
-    fn extract_single_import() {
-        let source = "import { useState } from 'react';\nfunction App() { return <div/>; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.imports.len(), 1);
-        assert_eq!(result.imports[0], "import { useState } from 'react';");
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
-    }
-
-    #[test]
-    fn extract_multiple_imports() {
-        let source = "import { useState } from 'react';\nimport { useAuth } from './useAuth';\nimport type { Props } from './types';\nfunction App() { return <div/>; }";
-        let result = chunk_file(source, "tsx");
-        assert_eq!(result.imports.len(), 3);
-        assert!(result.imports[0].contains("useState"));
-        assert!(result.imports[1].contains("useAuth"));
-        assert!(result.imports[2].contains("Props"));
-    }
-
-    #[test]
-    fn no_imports_returns_empty_vec() {
-        let source = "function App() { return <div/>; }";
-        let result = chunk_file(source, "tsx");
-        assert!(result.imports.is_empty());
-    }
-}

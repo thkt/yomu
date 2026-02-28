@@ -1,11 +1,5 @@
-mod config;
-mod indexer;
-mod query;
-mod storage;
-mod tools;
-
 use rmcp::{ServiceExt, transport::stdio};
-use tools::Yomu;
+use yomu::tools::Yomu;
 use tracing::info;
 
 #[tokio::main]
