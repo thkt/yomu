@@ -60,14 +60,9 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
 }
 
 fn format_no_results_message(stats: &storage::IndexStatus) -> String {
-    let pct = if stats.total_chunks > 0 {
-        (stats.embedded_chunks as f64 / stats.total_chunks as f64 * 100.0) as u32
-    } else {
-        0
-    };
     format!(
         "No results found. Index coverage: {}/{} chunks ({}%). Use 'index' for full coverage or repeat search to expand.",
-        stats.embedded_chunks, stats.total_chunks, pct
+        stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
     )
 }
 
@@ -182,49 +177,7 @@ impl Yomu {
 
         let stats = self.with_db(storage::get_stats).await?;
         let state = determine_index_state(&stats);
-        let mut embed_error: Option<String> = None;
-
-        let needs_embed = match state {
-            IndexState::Empty => {
-                if self.auto_index_failures.load(Ordering::SeqCst) < 3
-                    && self
-                        .auto_indexed
-                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_ok()
-                {
-                    tracing::info!("Index is empty, running chunk-only index");
-                    if let Err(e) =
-                        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
-                    {
-                        let failures = self.auto_index_failures.fetch_add(1, Ordering::SeqCst) + 1;
-                        if failures >= 3 {
-                            tracing::warn!(failures, "Auto-index failed {failures} times, disabling retries");
-                        } else {
-                            self.auto_indexed.store(false, Ordering::SeqCst);
-                        }
-                        return Err(McpError::internal_error(e.to_string(), None));
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => true,
-            IndexState::FullyEmbedded => false,
-        };
-
-        if needs_embed
-            && let Err(e) = indexer::run_incremental_embed(
-                Arc::clone(&self.conn),
-                embedder,
-                max_chunks_per_budget(),
-                hints_ref,
-            )
-            .await
-        {
-            tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
-            embed_error = Some(e.to_string());
-        }
+        let embed_error = self.ensure_indexed(embedder, state, hints_ref).await?;
 
         let results =
             query::search(Arc::clone(&self.conn), embedder, &params.query, limit, offset)
@@ -357,19 +310,13 @@ impl Yomu {
         let stats = self.with_db(storage::get_stats).await?;
         let ref_count = self.with_db(storage::get_reference_count).await?;
 
-        let pct = if stats.total_chunks > 0 {
-            (stats.embedded_chunks as f64 / stats.total_chunks as f64 * 100.0) as u32
-        } else {
-            0
-        };
-
         let text = format!(
             "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}/{} ({}%)\n  References: {}\n  Last indexed: {}",
             stats.total_files,
             stats.total_chunks,
             stats.embedded_chunks,
             stats.total_chunks,
-            pct,
+            stats.embed_percentage(),
             ref_count,
             stats.last_indexed_at.as_deref().unwrap_or("never")
         );
@@ -378,6 +325,59 @@ impl Yomu {
 }
 
 impl Yomu {
+    /// Auto-index if needed and run incremental embedding.
+    /// Returns embed error message if embedding failed but search can still proceed.
+    async fn ensure_indexed(
+        &self,
+        embedder: &dyn Embed,
+        state: IndexState,
+        type_hints: Option<&[storage::ChunkType]>,
+    ) -> Result<Option<String>, McpError> {
+        let needs_embed = match state {
+            IndexState::Empty => {
+                if self.auto_index_failures.load(Ordering::SeqCst) < 3
+                    && self
+                        .auto_indexed
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    tracing::info!("Index is empty, running chunk-only index");
+                    if let Err(e) =
+                        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
+                    {
+                        let failures = self.auto_index_failures.fetch_add(1, Ordering::SeqCst) + 1;
+                        if failures >= 3 {
+                            tracing::warn!(failures, "Auto-index failed {failures} times, disabling retries");
+                        } else {
+                            self.auto_indexed.store(false, Ordering::SeqCst);
+                        }
+                        return Err(McpError::internal_error(e.to_string(), None));
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => true,
+            IndexState::FullyEmbedded => false,
+        };
+
+        if needs_embed
+            && let Err(e) = indexer::run_incremental_embed(
+                Arc::clone(&self.conn),
+                embedder,
+                max_chunks_per_budget(),
+                type_hints,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
+            return Ok(Some(e.to_string()));
+        }
+
+        Ok(None)
+    }
+
     fn require_embedder(&self) -> Result<&dyn Embed, McpError> {
         self.embedder.as_deref().ok_or_else(|| {
             McpError::internal_error(

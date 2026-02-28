@@ -6,6 +6,7 @@ pub mod walker;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -249,6 +250,7 @@ fn build_references(
 }
 
 const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
+const RATE_LIMIT_INTERVAL: Duration = Duration::from_millis(700);
 
 fn store_file_data(
     conn: &Arc<Mutex<Db>>,
@@ -293,6 +295,8 @@ async fn embed_and_store(
             }
         };
 
+        tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
+
         let n = pf.raw_chunks.len() as u32;
         let rel_path = pf.rel_path.clone();
         let refs = build_references(&pf.parsed_imports, &pf.rel_path, resolver);
@@ -313,14 +317,6 @@ async fn embed_and_store(
 }
 
 #[derive(Debug)]
-pub struct ChunkOnlyResult {
-    pub files_processed: u32,
-    pub chunks_created: u32,
-    pub files_skipped: u32,
-    pub files_errored: u32,
-}
-
-#[derive(Debug)]
 pub struct EmbedResult {
     pub chunks_embedded: u32,
     pub files_completed: u32,
@@ -331,7 +327,7 @@ pub struct EmbedResult {
 pub async fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
-) -> Result<ChunkOnlyResult, IndexError> {
+) -> Result<IndexResult, IndexError> {
     let files = walker::walk_frontend_files(root);
     tracing::info!(file_count = files.len(), "Starting chunk-only indexing");
 
@@ -345,28 +341,27 @@ pub async fn run_chunk_only_index(
 
     let resolver = Resolver::new(root);
 
-    {
+    for file_path in &files {
         let conn_guard = conn.lock();
-        for file_path in &files {
-            match process_file(&conn_guard, root, file_path, false)? {
-                FileAction::Process(pf) => {
-                    let n = pf.raw_chunks.len() as u32;
-                    let new_chunks = pf.to_new_chunks();
-                    let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
-                    storage::replace_file_chunks_only(
-                        &conn_guard,
-                        &pf.rel_path,
-                        &new_chunks,
-                        &pf.hash,
-                        &pf.imports_text,
-                        &refs,
-                    )?;
-                    chunks_created += n;
-                    files_processed += 1;
-                }
-                FileAction::Skip => files_skipped += 1,
-                FileAction::Error => files_errored += 1,
+        match process_file(&conn_guard, root, file_path, false)? {
+            FileAction::Process(pf) => {
+                let n = pf.raw_chunks.len() as u32;
+                let new_chunks = pf.to_new_chunks();
+                let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
+                storage::replace_file_chunks_only(
+                    &conn_guard,
+                    &pf.rel_path,
+                    &new_chunks,
+                    &pf.hash,
+                    &pf.imports_text,
+                    &refs,
+                )?;
+                drop(conn_guard);
+                chunks_created += n;
+                files_processed += 1;
             }
+            FileAction::Skip => files_skipped += 1,
+            FileAction::Error => files_errored += 1,
         }
     }
 
@@ -374,12 +369,40 @@ pub async fn run_chunk_only_index(
 
     tracing::info!(files_processed, chunks_created, files_skipped, files_errored, "Chunk-only indexing complete");
 
-    Ok(ChunkOnlyResult {
+    Ok(IndexResult {
         files_processed,
         chunks_created,
         files_skipped,
         files_errored,
     })
+}
+
+fn order_files_for_embedding(
+    conn: &Db,
+    type_hints: Option<&[storage::ChunkType]>,
+) -> Result<Vec<String>, StorageError> {
+    let mut files = storage::get_files_by_import_count(conn)?;
+
+    if let Some(hints) = type_hints
+        && !hints.is_empty()
+    {
+        let hint_files = storage::get_files_with_chunk_types(conn, &files, hints)?;
+        if !hint_files.is_empty() {
+            let mut prioritized: Vec<String> = Vec::new();
+            let mut rest: Vec<String> = Vec::new();
+            for f in files {
+                if hint_files.contains(&f) {
+                    prioritized.push(f);
+                } else {
+                    rest.push(f);
+                }
+            }
+            prioritized.extend(rest);
+            files = prioritized;
+        }
+    }
+
+    Ok(files)
 }
 
 /// Embed un-embedded chunks up to `max_chunks` budget, most-imported-first.
@@ -391,30 +414,7 @@ pub async fn run_incremental_embed(
 ) -> Result<EmbedResult, IndexError> {
     let ordered_files = {
         let conn_guard = conn.lock();
-        let mut files = storage::get_files_by_import_count(&conn_guard)?;
-
-        if let Some(hints) = type_hints
-            && !hints.is_empty()
-        {
-            let hint_files =
-                storage::get_files_with_chunk_types(&conn_guard, &files, hints)?;
-
-            if !hint_files.is_empty() {
-                let mut prioritized: Vec<String> = Vec::new();
-                let mut rest: Vec<String> = Vec::new();
-                for f in files {
-                    if hint_files.contains(&f) {
-                        prioritized.push(f);
-                    } else {
-                        rest.push(f);
-                    }
-                }
-                prioritized.extend(rest);
-                files = prioritized;
-            }
-        }
-
-        files
+        order_files_for_embedding(&conn_guard, type_hints)?
     };
 
     if ordered_files.is_empty() {
@@ -464,6 +464,8 @@ pub async fn run_incremental_embed(
                 continue;
             }
         };
+
+        tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
 
         let pairs: Vec<(i64, Vec<f32>)> = chunk_ids
             .into_iter()

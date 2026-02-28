@@ -77,6 +77,16 @@ pub struct IndexStatus {
     pub last_indexed_at: Option<String>,
 }
 
+impl IndexStatus {
+    pub fn embed_percentage(&self) -> u32 {
+        if self.total_chunks > 0 {
+            (self.embedded_chunks as f64 / self.total_chunks as f64 * 100.0) as u32
+        } else {
+            0
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatchSource {
     Semantic,
@@ -197,13 +207,15 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         )"
     ))?;
 
-    let stored: String = conn
-        .query_row(
-            "SELECT value FROM index_meta WHERE key = 'schema_version'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or_else(|_| "0".to_string());
+    let stored: String = match conn.query_row(
+        "SELECT value FROM index_meta WHERE key = 'schema_version'",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(v) => v,
+        Err(rusqlite::Error::QueryReturnedNoRows) => "0".to_string(),
+        Err(e) => return Err(e.into()),
+    };
 
     if stored != SCHEMA_VERSION {
         migrate(conn, &stored)?;
@@ -217,8 +229,14 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
 }
 
 fn migrate(_conn: &Connection, from_version: &str) -> Result<(), StorageError> {
-    let from: u32 = from_version.parse().unwrap_or(0);
-    let to: u32 = SCHEMA_VERSION.parse().unwrap_or(0);
+    let from: u32 = match from_version.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::warn!(version = from_version, "Unparseable schema version, treating as 0");
+            0
+        }
+    };
+    let to: u32 = SCHEMA_VERSION.parse().expect("SCHEMA_VERSION must be a valid u32");
     if from >= to {
         return Ok(());
     }
@@ -572,7 +590,7 @@ pub fn search_by_name(
         return Ok(Vec::new());
     }
 
-    let keyword_clause = vec!["name LIKE ?"; keywords.len()].join(" OR ");
+    let keyword_clause = vec!["name LIKE ? ESCAPE '\\'"; keywords.len()].join(" OR ");
 
     let mut sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line \
@@ -582,7 +600,7 @@ pub fn search_by_name(
 
     let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
         .iter()
-        .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
+        .map(|k| Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>)
         .collect();
 
     if let Some(types) = type_filter
@@ -769,11 +787,13 @@ pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
     Ok(count)
 }
 
+const HOOK_COMPONENT_PRIORITY_BOOST: u32 = 3;
+
 /// Returns un-embedded file paths ordered by import count (most-imported first).
 pub fn get_files_by_import_count(
     conn: &Connection,
 ) -> Result<Vec<String>, StorageError> {
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT c.file_path
          FROM chunks c
          LEFT JOIN vec_chunks v ON c.id = v.chunk_id
@@ -787,9 +807,10 @@ pub fn get_files_by_import_count(
                  SELECT 1 FROM chunks c2
                  WHERE c2.file_path = c.file_path
                  AND c2.chunk_type IN ('hook', 'component')
-             ) THEN 3 ELSE 0 END
-         ) DESC, c.file_path ASC",
-    )?;
+             ) THEN {HOOK_COMPONENT_PRIORITY_BOOST} ELSE 0 END
+         ) DESC, c.file_path ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
@@ -836,6 +857,17 @@ pub struct SiblingInfo {
 
 pub fn sql_placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count).collect::<Vec<_>>().join(",")
+}
+
+fn escape_like(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
 }
 
 pub fn get_file_contexts(

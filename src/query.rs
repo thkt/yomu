@@ -488,6 +488,35 @@ mod tests {
             "expected 0.61, got {}", results[0].score);
     }
 
+    #[test]
+    fn rerank_combined_bonuses_semantic() {
+        let mut results = vec![
+            make_result("src/useAuth.tsx", "useAuth", storage::ChunkType::Hook, 0.1, storage::MatchSource::Semantic),
+        ];
+        let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
+        rerank(&mut results, &[storage::ChunkType::Hook], &import_counts);
+
+        let base = 1.0 / (1.0 + 0.1_f32);
+        let expected = base + TYPE_HINT_BONUS + IMPORT_RANK_BONUS;
+        assert!((results[0].score - expected).abs() < 1e-6,
+            "combined semantic: expected {expected}, got {}", results[0].score);
+    }
+
+    #[test]
+    fn rerank_combined_score_can_exceed_one() {
+        let mut results = vec![
+            make_result("src/useAuth.tsx", "useAuth", storage::ChunkType::Hook, 0.0, storage::MatchSource::Semantic),
+        ];
+        let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
+        rerank(&mut results, &[storage::ChunkType::Hook], &import_counts);
+
+        assert!(results[0].score > 1.0,
+            "score can exceed 1.0 with all bonuses: {}", results[0].score);
+        let expected = 1.0 + TYPE_HINT_BONUS + IMPORT_RANK_BONUS;
+        assert!((results[0].score - expected).abs() < 1e-6,
+            "expected {expected}, got {}", results[0].score);
+    }
+
     #[tokio::test]
     async fn search_returns_results_sorted_by_score() {
         let dir = tempfile::tempdir().unwrap();
