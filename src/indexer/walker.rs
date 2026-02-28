@@ -7,6 +7,7 @@ const FRONTEND_EXTENSIONS: &[&str] = &[
 
 const EXCLUDED_DIRS: &[&str] = &[
     "node_modules", ".git", ".yomu", "dist", "build", ".next", "target",
+    "storybook-static", "coverage", "out", ".turbo", ".cache",
 ];
 
 /// Walk `root` recursively, collecting files with frontend extensions.
