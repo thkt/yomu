@@ -103,11 +103,9 @@ pub struct IndexParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ImpactParams {
-    /// File path to analyze (relative to project root). Example: "src/hooks/useAuth.ts".
-    /// Legacy format "file:symbol" is also accepted for backward compatibility.
+    /// File path to analyze, relative to project root. Example: "src/hooks/useAuth.ts"
     pub target: String,
-    /// Optional symbol name to filter results. When set, only dependents that reference
-    /// this specific symbol are shown. Preferred over the "file:symbol" target format.
+    /// Filter to dependents that reference this specific symbol. Example: "useAuth"
     pub symbol: Option<String>,
     /// Maximum depth for transitive dependency traversal (default: 3, max: 10)
     pub depth: Option<u32>,
@@ -150,7 +148,7 @@ impl Yomu {
 
     #[tool(
         name = "explorer",
-        description = "Semantic code search for frontend projects. Finds components, hooks, types, and patterns by meaning, not just text matching. Automatically builds the index on first use. Returns ranked results with file paths, line ranges, and code snippets."
+        description = "Semantic code search for frontend projects. Finds components, hooks, types, and patterns by meaning, not just text matching. Automatically builds the index on first use. Returns ranked results with full code chunks, file imports, and sibling definitions."
     )]
     async fn explorer(
         &self,
@@ -200,7 +198,7 @@ impl Yomu {
 
     #[tool(
         name = "index",
-        description = "Build or update the search index for the current project. Scans frontend files (TS, TSX, JS, JSX, CSS, HTML), splits them into semantic chunks using AST parsing, and generates embeddings. Uses throttled embedding to avoid API rate limits."
+        description = "Build or update the search index for the current project. Scans frontend files (TS, TSX, JS, JSX, CSS, HTML), splits them into semantic chunks using AST parsing, and embeds them incrementally. With force=true, does a full rebuild with re-embedding."
     )]
     async fn index(
         &self,
@@ -247,7 +245,7 @@ impl Yomu {
 
     #[tool(
         name = "impact",
-        description = "Analyze the impact of changes to a file or symbol. Shows which files depend on the target, both directly and transitively. Use this to understand the blast radius before modifying code."
+        description = "Analyze the impact of changes to a file or symbol. Shows which files depend on the target, both directly and transitively. Use the symbol parameter to filter to a specific export. Requires an existing index."
     )]
     async fn impact(
         &self,
@@ -611,9 +609,14 @@ impl ServerHandler for Yomu {
                  (2) you want to find code by concept (e.g. \"form validation\", \"auth flow\"), \
                  (3) you need to discover related components/hooks/types across the codebase. \
                  Use grep/glob instead when you need exact string matching or known file paths. \
+                 'explorer' auto-indexes on first use. Results include full code, imports, and sibling \
+                 chunks. Use limit/offset for pagination. \
                  'impact' analyzes which files depend on a given file or symbol — use it to understand \
-                 the blast radius before modifying code (e.g. impact target=\"src/hooks/useAuth.ts\"). \
+                 the blast radius before modifying code. Pass target=\"src/hooks/useAuth.ts\" for file-level \
+                 analysis, or add symbol=\"useAuth\" to filter to a specific export. \
                  'index' rebuilds the search index (usually not needed — explorer auto-indexes on first use). \
+                 Without force, it chunks all files then embeds incrementally. With force=true, it does a \
+                 full rebuild. \
                  'status' shows index statistics."
                     .into(),
             ),

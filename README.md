@@ -45,7 +45,7 @@ cargo build --release
 
 You need a [Gemini API key](https://aistudio.google.com/apikey) (free tier works).
 
-Add to your MCP client config (e.g. Claude Code `~/.claude/settings.json`):
+Add to your MCP client config (e.g. Claude Code `~/.claude/.mcp.json`):
 
 ```json
 {
@@ -53,7 +53,7 @@ Add to your MCP client config (e.g. Claude Code `~/.claude/settings.json`):
     "yomu": {
       "command": "yomu",
       "env": {
-        "GEMINI_API_KEY": "your-key-here"
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
     }
   }
