@@ -2733,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "yomu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytemuck",
  "parking_lot",
