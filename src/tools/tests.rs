@@ -16,20 +16,22 @@ fn test_yomu() -> (Yomu, tempfile::TempDir) {
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
     (y, dir)
 }
 
 #[test]
-fn tool_router_has_four_tools() {
+fn tool_router_has_five_tools() {
     let router = Yomu::tool_router();
     let names: Vec<&str> = router.map.keys().map(|k| k.as_ref()).collect();
     assert!(names.contains(&"explorer"), "missing explorer: {names:?}");
     assert!(names.contains(&"index"), "missing index: {names:?}");
+    assert!(names.contains(&"rebuild"), "missing rebuild: {names:?}");
     assert!(names.contains(&"impact"), "missing impact: {names:?}");
     assert!(names.contains(&"status"), "missing status: {names:?}");
-    assert_eq!(names.len(), 4, "expected 4 tools, got {names:?}");
+    assert_eq!(names.len(), 5, "expected 5 tools, got {names:?}");
 }
 
 #[tokio::test]
@@ -66,15 +68,26 @@ async fn status_returns_empty_stats() {
 }
 
 #[tokio::test]
-async fn index_requires_api_key() {
-    let (y, _dir) = test_yomu();
-    let params = Parameters(IndexParams { force: None, budget: None });
-    let err = y.index(params).await.unwrap_err();
-    assert!(
-        err.message.contains("GEMINI_API_KEY"),
-        "expected API key error, got: {}",
-        err.message
-    );
+async fn index_works_without_api_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(src_dir.join("A.tsx"), "function A() {}").unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let y = Yomu {
+        conn: Arc::new(Mutex::new(conn)),
+        embedder: None,
+        root: dir.path().to_path_buf(),
+        auto_indexed: Arc::new(AtomicBool::new(false)),
+        auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
+        tool_router: Yomu::tool_router(),
+    };
+    let result = y.index().await.unwrap();
+    let text = &result.content[0].as_text().unwrap().text;
+    assert!(text.contains("complete"), "expected success: {text}");
 }
 
 #[tokio::test]
@@ -335,6 +348,7 @@ async fn explorer_auto_indexes_empty_db() {
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
@@ -464,6 +478,7 @@ async fn integration_index_then_impact() {
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
@@ -544,6 +559,7 @@ async fn status_returns_counts_after_insert() {
         embedder: None,
         root: PathBuf::from("/tmp"),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         auto_indexed: Arc::new(AtomicBool::new(false)),
         tool_router: Yomu::tool_router(),
     };
@@ -577,6 +593,7 @@ async fn explorer_hybrid_flow_empty_db() {
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
@@ -632,6 +649,7 @@ async fn explorer_incremental_embeds_chunked_only() {
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(true)), // already chunk-indexed
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
@@ -694,7 +712,7 @@ async fn explorer_shows_coverage_on_no_results() {
 }
 
 #[tokio::test]
-async fn index_embeds_chunk_only_files() {
+async fn index_chunks_without_embedding() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -713,35 +731,80 @@ async fn index_embeds_chunk_only_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    indexer::run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .await
-        .unwrap();
-
     let y = Yomu {
         conn: Arc::clone(&conn),
-        embedder: Some(Arc::new(crate::indexer::embedder::MockEmbedder)),
+        embedder: None,
         root: dir.path().to_path_buf(),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
-    let params = Parameters(IndexParams { force: None, budget: None });
-    let result = y.index(params).await.unwrap();
+    let result = y.index().await.unwrap();
     let text = &result.content[0].as_text().unwrap().text;
-    assert!(
-        text.contains("complete"),
-        "expected completion message: {text}"
-    );
+    assert!(text.contains("complete"), "expected completion: {text}");
+    assert!(text.contains("Embedding coverage:"), "should show coverage gap: {text}");
 
     let stats = {
         let c = conn.lock();
         storage::get_stats(&c).unwrap()
     };
     assert!(stats.total_chunks > 0, "should have chunks");
-    assert_eq!(
-        stats.embedded_chunks, stats.total_chunks,
-        "all chunks should be embedded"
+    assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
+}
+
+#[tokio::test]
+async fn rebuild_re_parses_all_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("A.tsx"),
+        "export function A() { return <div/>; }",
+    )
+    .unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    // First, index normally
+    let y = Yomu {
+        conn: Arc::clone(&conn),
+        embedder: None,
+        root: dir.path().to_path_buf(),
+        auto_indexed: Arc::new(AtomicBool::new(false)),
+        auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
+        tool_router: Yomu::tool_router(),
+    };
+    y.index().await.unwrap();
+
+    let chunks_before = {
+        let c = conn.lock();
+        storage::get_stats(&c).unwrap().total_chunks
+    };
+    assert!(chunks_before > 0, "should have chunks after index");
+
+    // Add a new file, then rebuild (force re-parse all)
+    std::fs::write(
+        src_dir.join("B.tsx"),
+        "export function B() { return <span/>; }",
+    )
+    .unwrap();
+
+    let result = y.rebuild().await.unwrap();
+    let text = &result.content[0].as_text().unwrap().text;
+    assert!(text.contains("complete"), "expected completion: {text}");
+
+    let chunks_after = {
+        let c = conn.lock();
+        storage::get_stats(&c).unwrap().total_chunks
+    };
+    assert!(
+        chunks_after > chunks_before,
+        "rebuild should pick up new file: {chunks_before} -> {chunks_after}"
     );
 }
 
@@ -771,6 +834,7 @@ async fn status_shows_embedded_total() {
         root: PathBuf::from("/tmp"),
         auto_indexed: Arc::new(AtomicBool::new(false)),
         auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
         tool_router: Yomu::tool_router(),
     };
 
@@ -922,5 +986,5 @@ fn with_root_initializes_all_fields() {
     let yomu = Yomu::with_root(dir.path().to_path_buf()).unwrap();
     assert!(!yomu.auto_indexed.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(yomu.auto_index_failures.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert_eq!(yomu.tool_router.map.len(), 4);
+    assert_eq!(yomu.tool_router.map.len(), 5);
 }

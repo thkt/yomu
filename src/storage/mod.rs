@@ -1,5 +1,11 @@
 //! SQLite storage layer for chunks and vector embeddings.
 
+mod graph;
+mod search;
+
+pub use graph::*;
+pub use search::*;
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -14,7 +20,7 @@ pub const EMBEDDING_DIMS: u32 = 768;
 #[cfg(not(target_endian = "little"))]
 compile_error!("yomu requires a little-endian target for f32↔u8 embedding storage");
 
-fn f32_as_bytes(slice: &[f32]) -> &[u8] {
+pub(crate) fn f32_as_bytes(slice: &[f32]) -> &[u8] {
     bytemuck::cast_slice(slice)
 }
 
@@ -91,6 +97,7 @@ impl IndexStatus {
 pub enum MatchSource {
     Semantic,
     NameMatch,
+    ContentMatch,
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +155,17 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let conn = Connection::open(path)?;
+    let conn = match Connection::open(path) {
+        Ok(c) => c,
+        Err(e) => {
+            // Stale WAL/SHM files can cause I/O errors; remove them and retry
+            tracing::warn!(error = %e, "DB open failed, removing WAL/SHM and retrying");
+            let path_str = path.to_string_lossy();
+            let _ = std::fs::remove_file(format!("{path_str}-wal"));
+            let _ = std::fs::remove_file(format!("{path_str}-shm"));
+            Connection::open(path)?
+        }
+    };
 
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
@@ -159,7 +176,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -207,6 +224,13 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         )"
     ))?;
 
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
+            content,
+            content_rowid='rowid'
+        )"
+    )?;
+
     let stored: String = match conn.query_row(
         "SELECT value FROM index_meta WHERE key = 'schema_version'",
         [],
@@ -228,7 +252,7 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn migrate(_conn: &Connection, from_version: &str) -> Result<(), StorageError> {
+fn migrate(conn: &Connection, from_version: &str) -> Result<(), StorageError> {
     let from: u32 = match from_version.parse() {
         Ok(v) => v,
         Err(_) => {
@@ -241,6 +265,15 @@ fn migrate(_conn: &Connection, from_version: &str) -> Result<(), StorageError> {
         return Ok(());
     }
     tracing::info!(from, to, "Migrating schema from v{from} to v{to}");
+
+    // v2 → v3: populate fts_chunks from existing chunks
+    if from < 3 {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO fts_chunks(rowid, content)
+             SELECT id, content FROM chunks"
+        )?;
+    }
+
     Ok(())
 }
 
@@ -283,7 +316,14 @@ fn insert_chunk_row(
             file_hash,
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    let chunk_id = conn.last_insert_rowid();
+
+    conn.execute(
+        "INSERT INTO fts_chunks(rowid, content) VALUES (?1, ?2)",
+        rusqlite::params![chunk_id, chunk.content],
+    )?;
+
+    Ok(chunk_id)
 }
 
 pub fn insert_chunk(
@@ -558,6 +598,19 @@ pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     })
 }
 
+/// Returns true if the index was updated within `max_age_secs` seconds.
+pub fn is_index_fresh(conn: &Connection, max_age_secs: u32) -> Result<bool, StorageError> {
+    match conn.query_row(
+        "SELECT strftime('%s', 'now') - strftime('%s', value) < ?1 FROM index_meta WHERE key = 'last_indexed_at'",
+        [max_age_secs],
+        |row| row.get(0),
+    ) {
+        Ok(fresh) => Ok(fresh),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageError> {
     let mut stmt = conn.prepare("SELECT DISTINCT file_path FROM chunks")?;
     let paths = stmt.query_map([], |row| row.get::<_, String>(0))?;
@@ -566,6 +619,10 @@ pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageE
 
 /// No transaction -- caller manages.
 pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), StorageError> {
+    conn.execute(
+        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE file_path = ?1)",
+        [file_path],
+    )?;
     conn.execute(
         "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1)",
         [file_path],
@@ -577,75 +634,6 @@ pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), S
         [file_path],
     )?;
     Ok(())
-}
-
-pub fn search_by_name(
-    conn: &Connection,
-    keywords: &[&str],
-    type_filter: Option<&[ChunkType]>,
-    exclude_ids: &HashSet<i64>,
-    limit: u32,
-) -> Result<Vec<SearchResult>, StorageError> {
-    if keywords.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let keyword_clause = vec!["name LIKE ? ESCAPE '\\'"; keywords.len()].join(" OR ");
-
-    let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line \
-         FROM chunks WHERE name IS NOT NULL AND ({})",
-        keyword_clause
-    );
-
-    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
-        .iter()
-        .map(|k| Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-
-    if let Some(types) = type_filter
-        && !types.is_empty()
-    {
-        sql.push_str(&format!(" AND chunk_type IN ({})", sql_placeholders(types.len())));
-        for t in types {
-            all_params.push(Box::new(t.as_str().to_string()));
-        }
-    }
-
-    if !exclude_ids.is_empty() {
-        sql.push_str(&format!(" AND id NOT IN ({})", sql_placeholders(exclude_ids.len())));
-        for id in exclude_ids {
-            all_params.push(Box::new(*id));
-        }
-    }
-
-    sql.push_str(" LIMIT ?");
-    all_params.push(Box::new(limit));
-
-    let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params
-        .iter()
-        .map(|b| b.as_ref())
-        .collect();
-
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(SearchResult {
-            chunk: Chunk {
-                file_path: row.get(1)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                name: row.get(3)?,
-                content: row.get(4)?,
-                start_line: row.get(5)?,
-                end_line: row.get(6)?,
-            },
-            chunk_id: Some(row.get(0)?),
-            distance: f32::INFINITY,
-            match_source: MatchSource::NameMatch,
-            score: 0.5,
-        })
-    })?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -685,292 +673,8 @@ pub struct Reference {
     pub ref_kind: RefKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Dependent {
-    pub file_path: String,
-    pub depth: u32,
-}
-
-#[cfg(test)]
-pub fn replace_file_references(
-    conn: &Connection,
-    source_file: &str,
-    refs: &[Reference],
-) -> Result<(), StorageError> {
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "DELETE FROM file_references WHERE source_file = ?1",
-        [source_file],
-    )?;
-    for r in refs {
-        tx.execute(
-            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
-        )?;
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-#[cfg(test)]
-pub fn get_dependents(
-    conn: &Connection,
-    target_file: &str,
-) -> Result<Vec<Dependent>, StorageError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1",
-    )?;
-    let rows = stmt.query_map([target_file], |row| {
-        Ok(Dependent {
-            file_path: row.get(0)?,
-            depth: 1,
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-/// Recursive CTE traversal; depth clamped to max_depth (max 10).
-pub fn get_transitive_dependents(
-    conn: &Connection,
-    target_file: &str,
-    max_depth: u32,
-) -> Result<Vec<Dependent>, StorageError> {
-    let max_depth = max_depth.min(10);
-    let mut stmt = conn.prepare(
-        "WITH RECURSIVE deps(file_path, depth, visited) AS (
-            SELECT DISTINCT source_file, 1,
-                   ',' || ?1 || ',' || source_file || ','
-            FROM file_references
-            WHERE target_file = ?1
-          UNION
-            SELECT r.source_file, d.depth + 1,
-                   d.visited || r.source_file || ','
-            FROM file_references r
-            INNER JOIN deps d ON r.target_file = d.file_path
-            WHERE d.depth < ?2
-              AND INSTR(d.visited, ',' || r.source_file || ',') = 0
-        )
-        SELECT file_path, MIN(depth) as depth
-        FROM deps GROUP BY file_path ORDER BY depth, file_path",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![target_file, max_depth], |row| {
-        Ok(Dependent {
-            file_path: row.get(0)?,
-            depth: row.get(1)?,
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub fn get_symbol_dependents(
-    conn: &Connection,
-    target_file: &str,
-    symbol_name: &str,
-) -> Result<Vec<String>, StorageError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT source_file FROM file_references
-         WHERE target_file = ?1 AND symbol_name = ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![target_file, symbol_name], |row| {
-        row.get::<_, String>(0)
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
-    let count: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM file_references",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(count)
-}
-
-const HOOK_COMPONENT_PRIORITY_BOOST: u32 = 3;
-
-/// Returns un-embedded file paths ordered by import count (most-imported first).
-pub fn get_files_by_import_count(
-    conn: &Connection,
-) -> Result<Vec<String>, StorageError> {
-    let sql = format!(
-        "SELECT c.file_path
-         FROM chunks c
-         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE v.chunk_id IS NULL
-         GROUP BY c.file_path
-         ORDER BY (
-             SELECT COUNT(*) FROM file_references r
-             WHERE r.target_file = c.file_path
-         ) + (
-             SELECT CASE WHEN EXISTS(
-                 SELECT 1 FROM chunks c2
-                 WHERE c2.file_path = c.file_path
-                 AND c2.chunk_type IN ('hook', 'component')
-             ) THEN {HOOK_COMPONENT_PRIORITY_BOOST} ELSE 0 END
-         ) DESC, c.file_path ASC"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub fn get_import_counts(
-    conn: &Connection,
-    file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, u32>, StorageError> {
-    if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let sql = format!(
-        "SELECT fp.path, COALESCE(cnt.c, 0)
-         FROM (SELECT value AS path FROM ({})) fp
-         LEFT JOIN (
-             SELECT target_file, COUNT(DISTINCT source_file) AS c
-             FROM file_references
-             GROUP BY target_file
-         ) cnt ON cnt.target_file = fp.path",
-        file_paths.iter().enumerate()
-            .map(|(i, _)| format!("SELECT ?{} AS value", i + 1))
-            .collect::<Vec<_>>()
-            .join(" UNION ALL ")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
-    })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
-        .map_err(Into::into)
-}
-
-#[derive(Debug, Clone)]
-pub struct SiblingInfo {
-    pub name: Option<String>,
-    pub chunk_type: ChunkType,
-    pub start_line: u32,
-    pub end_line: u32,
-}
-
 pub fn sql_placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count).collect::<Vec<_>>().join(",")
-}
-
-fn escape_like(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len());
-    for c in s.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
-}
-
-pub fn get_file_contexts(
-    conn: &Connection,
-    file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, String>, StorageError> {
-    if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let placeholders = sql_placeholders(file_paths.len());
-    let sql = format!(
-        "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
-        .map_err(Into::into)
-}
-
-pub fn get_file_siblings(
-    conn: &Connection,
-    file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, Vec<SiblingInfo>>, StorageError> {
-    if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let placeholders = sql_placeholders(file_paths.len());
-    let sql = format!(
-        "SELECT file_path, name, chunk_type, start_line, end_line \
-         FROM chunks WHERE file_path IN ({placeholders}) \
-         ORDER BY file_path, start_line"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            SiblingInfo {
-                name: row.get(1)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                start_line: row.get(3)?,
-                end_line: row.get(4)?,
-            },
-        ))
-    })?;
-    let mut map: std::collections::HashMap<String, Vec<SiblingInfo>> =
-        std::collections::HashMap::new();
-    for row in rows {
-        let (path, info) = row?;
-        map.entry(path).or_default().push(info);
-    }
-    Ok(map)
-}
-
-pub fn search_similar(
-    conn: &Connection,
-    query_embedding: &[f32],
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<SearchResult>, StorageError> {
-    let query_bytes = f32_as_bytes(query_embedding);
-
-    let k = limit.saturating_add(offset);
-
-    let mut stmt = conn.prepare(
-        "SELECT c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, v.distance, c.id
-         FROM vec_chunks v
-         INNER JOIN chunks c ON c.id = v.chunk_id
-         WHERE v.embedding MATCH ?1 AND k = ?2
-         ORDER BY v.distance
-         LIMIT ?3
-         OFFSET ?4",
-    )?;
-
-    let rows = stmt.query_map(rusqlite::params![query_bytes, k, limit, offset], |row| {
-        let distance: f32 = row.get(6)?;
-        Ok(SearchResult {
-            chunk: Chunk {
-                file_path: row.get(0)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(1)?.as_ref()),
-                name: row.get(2)?,
-                content: row.get(3)?,
-                start_line: row.get(4)?,
-                end_line: row.get(5)?,
-            },
-            chunk_id: Some(row.get(7)?),
-            distance,
-            match_source: MatchSource::Semantic,
-            score: 1.0 / (1.0 + distance),
-        })
-    })?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 #[cfg(test)]

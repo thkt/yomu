@@ -255,6 +255,34 @@ fn build_references(
 const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 const RATE_LIMIT_INTERVAL: Duration = Duration::from_millis(700);
 
+enum EmbedFailure {
+    RateLimited(EmbedError),
+    Abort(EmbedError),
+    Skip,
+}
+
+fn classify_embed_error(
+    e: EmbedError,
+    consecutive_errors: &mut u32,
+    file_path: &str,
+) -> EmbedFailure {
+    if matches!(&e, EmbedError::Api { status: 429, .. }) {
+        tracing::warn!("Rate limit exhausted (429 after retries)");
+        return EmbedFailure::RateLimited(e);
+    }
+    *consecutive_errors += 1;
+    tracing::warn!(
+        file = %file_path, error = %e, consecutive = *consecutive_errors,
+        "Embedding failed, skipping file",
+    );
+    if *consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
+        tracing::error!(consecutive_errors = *consecutive_errors, "Too many consecutive embedding failures, aborting");
+        EmbedFailure::Abort(e)
+    } else {
+        EmbedFailure::Skip
+    }
+}
+
 fn store_file_data(
     conn: &Arc<Mutex<Db>>,
     pf: PendingFile,
@@ -286,16 +314,15 @@ async fn embed_and_store(
                 consecutive_errors = 0;
                 embs
             }
-            Err(e) => {
-                consecutive_errors += 1;
-                tracing::warn!(file = %pf.rel_path, error = %e, consecutive = consecutive_errors, "Embedding failed, skipping file");
-                files_errored += 1;
-                if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-                    tracing::error!(consecutive_errors, "Too many consecutive embedding failures, aborting");
+            Err(e) => match classify_embed_error(e, &mut consecutive_errors, &pf.rel_path) {
+                EmbedFailure::RateLimited(e) | EmbedFailure::Abort(e) => {
                     return Err(IndexError::Embed(e));
                 }
-                continue;
-            }
+                EmbedFailure::Skip => {
+                    files_errored += 1;
+                    continue;
+                }
+            },
         };
 
         tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
@@ -331,8 +358,23 @@ pub async fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
 ) -> Result<IndexResult, IndexError> {
+    run_chunk_only_index_inner(conn, root, false).await
+}
+
+pub async fn run_chunk_only_index_force(
+    conn: Arc<Mutex<Db>>,
+    root: &Path,
+) -> Result<IndexResult, IndexError> {
+    run_chunk_only_index_inner(conn, root, true).await
+}
+
+async fn run_chunk_only_index_inner(
+    conn: Arc<Mutex<Db>>,
+    root: &Path,
+    force: bool,
+) -> Result<IndexResult, IndexError> {
     let files = walker::walk_frontend_files(root);
-    tracing::info!(file_count = files.len(), "Starting chunk-only indexing");
+    tracing::info!(file_count = files.len(), force, "Starting chunk-only indexing");
 
     let current_rel_paths: std::collections::HashSet<String> =
         files.iter().map(|f| to_rel_path(root, f)).collect();
@@ -346,7 +388,7 @@ pub async fn run_chunk_only_index(
 
     for file_path in &files {
         let conn_guard = conn.lock();
-        match process_file(&conn_guard, root, file_path, false)? {
+        match process_file(&conn_guard, root, file_path, force)? {
             FileAction::Process(pf) => {
                 let n = pf.raw_chunks.len() as u32;
                 let new_chunks = pf.to_new_chunks();
@@ -447,7 +489,7 @@ pub async fn run_incremental_embed(
             continue;
         }
 
-        if chunks_embedded + texts.len().min(u32::MAX as usize) as u32 > max_chunks && chunks_embedded > 0 {
+        if chunks_embedded.saturating_add(texts.len() as u32) > max_chunks && chunks_embedded > 0 {
             budget_exhausted = true;
             break;
         }
@@ -457,24 +499,29 @@ pub async fn run_incremental_embed(
                 consecutive_errors = 0;
                 embs
             }
-            Err(e) => {
-                consecutive_errors += 1;
-                tracing::warn!(file = %file_path, error = %e, consecutive = consecutive_errors, "Embedding failed, skipping file");
-                if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-                    tracing::error!(consecutive_errors, "Too many consecutive embedding failures in incremental embed, aborting");
-                    return Err(IndexError::Embed(e));
+            Err(e) => match classify_embed_error(e, &mut consecutive_errors, file_path) {
+                EmbedFailure::RateLimited(_) => {
+                    budget_exhausted = true;
+                    break;
                 }
-                continue;
-            }
+                EmbedFailure::Abort(e) => return Err(IndexError::Embed(e)),
+                EmbedFailure::Skip => continue,
+            },
         };
 
         if embeddings.len() != chunk_ids.len() {
+            consecutive_errors += 1;
             tracing::warn!(
                 file = %file_path,
                 expected = chunk_ids.len(),
                 actual = embeddings.len(),
+                consecutive = consecutive_errors,
                 "Embedding count mismatch, skipping file"
             );
+            if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
+                tracing::error!(consecutive_errors, "Too many consecutive failures in incremental embed, aborting");
+                break;
+            }
             continue;
         }
 

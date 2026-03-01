@@ -1,4 +1,4 @@
-//! MCP tool handlers for explorer, index, and status.
+//! MCP tool handlers for explorer, index, rebuild, impact, and status.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,20 +22,17 @@ use crate::storage;
 
 const DEFAULT_EMBED_BUDGET: u32 = 50;
 
-fn max_chunks_per_budget() -> u32 {
-    static VALUE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| {
-        match std::env::var("YOMU_EMBED_BUDGET") {
-            Ok(v) => match v.parse() {
-                Ok(n) => n,
-                Err(_) => {
-                    tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default {DEFAULT_EMBED_BUDGET}");
-                    DEFAULT_EMBED_BUDGET
-                }
-            },
-            Err(_) => DEFAULT_EMBED_BUDGET,
-        }
-    })
+fn parse_embed_budget() -> u32 {
+    match std::env::var("YOMU_EMBED_BUDGET") {
+        Ok(v) => match v.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default {DEFAULT_EMBED_BUDGET}");
+                DEFAULT_EMBED_BUDGET
+            }
+        },
+        Err(_) => DEFAULT_EMBED_BUDGET,
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -60,7 +57,7 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
 
 fn format_no_results_message(stats: &storage::IndexStatus) -> String {
     format!(
-        "No results found. Index coverage: {}/{} chunks ({}%). Use 'index' for full coverage or repeat search to expand.",
+        "No results found. Index coverage: {}/{} chunks ({}%). Repeat search to expand embedding coverage.",
         stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
     )
 }
@@ -80,6 +77,7 @@ pub struct Yomu {
     conn: Arc<Mutex<storage::Db>>,
     embedder: Option<Arc<dyn Embed>>,
     root: PathBuf,
+    embed_budget: u32,
     auto_indexed: Arc<AtomicBool>,
     auto_index_failures: Arc<AtomicU32>,
     tool_router: ToolRouter<Self>,
@@ -93,15 +91,6 @@ pub struct ExplorerParams {
     pub limit: Option<u32>,
     /// Number of results to skip (default: 0)
     pub offset: Option<u32>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct IndexParams {
-    /// Force full rebuild (default: false, uses incremental update)
-    pub force: Option<bool>,
-    /// Maximum number of chunks to embed in this call (default: 500, 0 = unlimited).
-    /// Use to avoid hitting Gemini API rate limits on large projects.
-    pub budget: Option<u32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -143,6 +132,7 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder,
             root,
+            embed_budget: parse_embed_budget(),
             auto_indexed: Arc::new(AtomicBool::new(false)),
             auto_index_failures: Arc::new(AtomicU32::new(0)),
             tool_router: Self::tool_router(),
@@ -201,59 +191,56 @@ impl Yomu {
 
     #[tool(
         name = "index",
-        description = "Build or update the search index. Chunks all frontend files (TS, TSX, JS, CSS, HTML) then embeds up to `budget` chunks (default 500). Call repeatedly to embed more. With force=true, does a full rebuild. Set budget=0 for unlimited."
+        description = "Update the chunk index incrementally. Parses new or changed frontend files (TS, TSX, JS, CSS, HTML) into AST chunks and builds the import graph. No API calls — runs in ~2s. Embedding happens automatically through explorer. Usually not needed — explorer auto-indexes on first use."
     )]
-    async fn index(
-        &self,
-        Parameters(params): Parameters<IndexParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let embedder = self.require_embedder()?;
-        let force = params.force.unwrap_or(false);
-
-        if force {
-            let result = indexer::run_index(Arc::clone(&self.conn), &self.root, embedder, true)
-                .await
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            self.auto_index_failures.store(0, Ordering::SeqCst);
-            self.auto_indexed.store(false, Ordering::SeqCst);
-            let text = format!(
-                "Indexing complete: {} files processed, {} chunks created, {} files skipped (unchanged), {} files errored",
-                result.files_processed, result.chunks_created, result.files_skipped, result.files_errored
-            );
-            return Ok(CallToolResult::success(vec![Content::text(text)]));
-        }
-
+    async fn index(&self) -> Result<CallToolResult, McpError> {
         let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        let max_chunks = match params.budget {
-            Some(0) => u32::MAX,
-            Some(b) => b,
-            None => 500,
-        };
-        let embed_result =
-            indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, max_chunks, None)
-                .await
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         self.auto_index_failures.store(0, Ordering::SeqCst);
         self.auto_indexed.store(false, Ordering::SeqCst);
 
         let stats = self.with_db(storage::get_stats).await?;
-        let remaining = stats.total_chunks.saturating_sub(stats.embedded_chunks);
         let mut text = format!(
-            "Indexing complete: {} files chunked, {} chunks created, {} files skipped, {} chunks embedded, {} files embedded",
+            "Indexing complete: {} files chunked, {} chunks created, {} files skipped (unchanged), {} errors",
             chunk_result.files_processed,
             chunk_result.chunks_created,
             chunk_result.files_skipped,
-            embed_result.chunks_embedded,
-            embed_result.files_completed,
+            chunk_result.files_errored,
         );
-        if remaining > 0 {
+        if stats.embedded_chunks < stats.total_chunks {
             text.push_str(&format!(
-                "\n\nEmbedding progress: {}/{} chunks ({}%). {} remaining. Call index again to continue.",
-                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage(), remaining
+                "\n\nEmbedding coverage: {}/{} chunks ({}%). Use explorer to incrementally embed more.",
+                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(text)]))
+    }
+
+    #[tool(
+        name = "rebuild",
+        description = "Rebuild the chunk index from scratch. Re-parses all frontend files regardless of whether they changed. Use when the index seems corrupted or after upgrading yomu. No API calls."
+    )]
+    async fn rebuild(&self) -> Result<CallToolResult, McpError> {
+        let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        self.auto_index_failures.store(0, Ordering::SeqCst);
+        self.auto_indexed.store(false, Ordering::SeqCst);
+
+        let stats = self.with_db(storage::get_stats).await?;
+        let mut text = format!(
+            "Rebuild complete: {} files chunked, {} chunks created, {} errors",
+            chunk_result.files_processed,
+            chunk_result.chunks_created,
+            chunk_result.files_errored,
+        );
+        if stats.embedded_chunks < stats.total_chunks {
+            text.push_str(&format!(
+                "\n\nEmbedding coverage: {}/{} chunks ({}%). Use explorer to incrementally embed more.",
+                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
             ));
         }
         Ok(CallToolResult::success(vec![Content::text(text)]))
@@ -345,47 +332,19 @@ impl Yomu {
         type_hints: Option<&[storage::ChunkType]>,
     ) -> Result<Option<String>, McpError> {
         let needs_embed = match state {
-            IndexState::Empty => {
-                if self.auto_index_failures.load(Ordering::SeqCst) < 3
-                    && self
-                        .auto_indexed
-                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_ok()
-                {
-                    tracing::info!("Index is empty, running chunk-only index");
-                    if let Err(e) =
-                        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
-                    {
-                        let failures = self.auto_index_failures.fetch_add(1, Ordering::SeqCst) + 1;
-                        if failures >= 3 {
-                            tracing::warn!(failures, "Auto-index failed {failures} times, disabling retries");
-                        } else {
-                            self.auto_indexed.store(false, Ordering::SeqCst);
-                        }
-                        return Err(McpError::internal_error(e.to_string(), None));
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
+            IndexState::Empty => self.handle_empty_index().await?,
             IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
-                // Re-chunk to pick up new/changed files before embedding
-                if let Err(e) =
-                    indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
-                {
-                    tracing::warn!(error = %e, "Re-chunking failed, proceeding with existing chunks");
-                }
+                self.rechunk_if_stale(false).await;
                 true
             }
-            IndexState::FullyEmbedded => false,
+            IndexState::FullyEmbedded => self.handle_fully_embedded().await?,
         };
 
         if needs_embed
             && let Err(e) = indexer::run_incremental_embed(
                 Arc::clone(&self.conn),
                 embedder,
-                max_chunks_per_budget(),
+                self.embed_budget,
                 type_hints,
             )
             .await
@@ -395,6 +354,59 @@ impl Yomu {
         }
 
         Ok(None)
+    }
+
+    async fn handle_empty_index(&self) -> Result<bool, McpError> {
+        if self.auto_index_failures.load(Ordering::SeqCst) >= 3
+            || self
+                .auto_indexed
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return Ok(false);
+        }
+
+        tracing::info!("Index is empty, running chunk-only index");
+        if let Err(e) = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await {
+            let failures = self.auto_index_failures.fetch_add(1, Ordering::SeqCst) + 1;
+            if failures >= 3 {
+                tracing::warn!(failures, "Auto-index failed {failures} times, disabling retries");
+            } else {
+                self.auto_indexed.store(false, Ordering::SeqCst);
+            }
+            return Err(McpError::internal_error(e.to_string(), None));
+        }
+        self.auto_index_failures.store(0, Ordering::SeqCst);
+        Ok(true)
+    }
+
+    async fn rechunk_if_stale(&self, default_on_error: bool) {
+        let fresh = self.check_index_fresh(default_on_error).await;
+        if !fresh
+            && let Err(e) = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
+        {
+            tracing::warn!(error = %e, "Re-chunking failed, proceeding with existing chunks");
+        }
+    }
+
+    async fn handle_fully_embedded(&self) -> Result<bool, McpError> {
+        let fresh = self.check_index_fresh(true).await;
+        if fresh {
+            return Ok(false);
+        }
+        self.rechunk_if_stale(true).await;
+        let stats = self.with_db(storage::get_stats).await?;
+        Ok(stats.embedded_chunks < stats.total_chunks)
+    }
+
+    async fn check_index_fresh(&self, default_on_error: bool) -> bool {
+        match self.with_db(|conn| storage::is_index_fresh(conn, 60)).await {
+            Ok(fresh) => fresh,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to check index freshness");
+                default_on_error
+            }
+        }
     }
 
     fn require_embedder(&self) -> Result<&dyn Embed, McpError> {
@@ -625,15 +637,15 @@ impl ServerHandler for Yomu {
                  (2) you want to find code by concept (e.g. \"form validation\", \"auth flow\"), \
                  (3) you need to discover related components/hooks/types across the codebase. \
                  Use grep/glob instead when you need exact string matching or known file paths. \
-                 'explorer' auto-indexes on first use. Results include full code, imports, and sibling \
-                 chunks. Use limit/offset for pagination. \
+                 'explorer' auto-indexes on first use and incrementally embeds chunks each call. \
+                 Results include full code, imports, and sibling chunks. Use limit/offset for pagination. \
                  'impact' analyzes which files depend on a given file or symbol — use it to understand \
                  the blast radius before modifying code. Pass target=\"src/hooks/useAuth.ts\" for file-level \
                  analysis, or add symbol=\"useAuth\" to filter to a specific export. \
-                 'index' rebuilds the search index (usually not needed — explorer auto-indexes on first use). \
-                 It chunks all files then embeds up to `budget` chunks (default 500, set 0 for unlimited). \
-                 Call repeatedly to embed more. With force=true, it does a full rebuild. \
-                 'status' shows index statistics."
+                 'index' updates the chunk index incrementally (no API calls, ~2s). Usually not needed — \
+                 explorer auto-indexes on first use. \
+                 'rebuild' re-parses all files from scratch — use after upgrading yomu or if index seems corrupted. \
+                 'status' shows index statistics including embedding coverage."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

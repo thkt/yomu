@@ -856,3 +856,195 @@ fn search_by_name_respects_limit() {
     let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 2).unwrap();
     assert_eq!(results.len(), 2);
 }
+
+#[test]
+fn search_by_name_matches_file_path() {
+    let (conn, _dir) = test_db();
+
+    // Chunk with no name but file_path contains "fetch"
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "export default {}", start_line: 1, end_line: 3 },
+    ];
+    replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[]).unwrap();
+
+    let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.file_path, "src/utils/fetch-data.ts");
+}
+
+#[test]
+fn search_by_name_matches_name_or_path() {
+    let (conn, _dir) = test_db();
+
+    // Named chunk in unrelated path
+    let named = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "code", start_line: 1, end_line: 3 },
+    ];
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[]).unwrap();
+
+    // Unnamed chunk in path containing keyword
+    let path_match = vec![
+        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "code", start_line: 1, end_line: 3 },
+    ];
+    replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[]).unwrap();
+
+    let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 2, "should match both name and path: {results:?}");
+}
+
+#[test]
+fn search_by_name_path_match_respects_type_filter() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "helper", start_line: 1, end_line: 3 },
+        NewChunk { chunk_type: &ChunkType::Component, name: Some("Chart"), content: "component", start_line: 5, end_line: 10 },
+    ];
+    replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Filter to components only — path match on "chart" should return only the component
+    let results = search_by_name(&conn, &["chart"], Some(&[ChunkType::Component]), &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.chunk_type, ChunkType::Component);
+}
+
+#[test]
+fn fts5_available() {
+    let (conn, _dir) = test_db();
+    // Verify FTS5 extension is compiled in
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(content);
+         INSERT INTO _fts5_test(content) VALUES ('hello world');
+         DROP TABLE _fts5_test;",
+    ).expect("FTS5 should be available");
+}
+
+#[test]
+fn search_by_content_matches_code() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "function useFetch() { const [loading, setLoading] = useState(false); }", start_line: 1, end_line: 5 },
+        NewChunk { chunk_type: &ChunkType::Component, name: Some("Button"), content: "function Button({ label }) { return <button>{label}</button>; }", start_line: 7, end_line: 10 },
+    ];
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
+    assert_eq!(results[0].match_source, MatchSource::ContentMatch);
+}
+
+#[test]
+fn search_by_content_excludes_ids() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "function useA() { fetch('/api'); }", start_line: 1, end_line: 3 },
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useB"), content: "function useB() { fetch('/data'); }", start_line: 5, end_line: 7 },
+    ];
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    let ids = get_chunk_ids(&conn, "src/hooks.tsx");
+    let mut exclude = HashSet::new();
+    exclude.insert(ids[0]);
+
+    let results = search_by_content(&conn, &["fetch"], None, &exclude, 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useB"));
+}
+
+#[test]
+fn search_by_content_empty_keywords_returns_empty() {
+    let (conn, _dir) = test_db();
+    let results = search_by_content(&conn, &[], None, &HashSet::new(), 10).unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn fts_chunks_deleted_with_file() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useX"), content: "function useX() { return state; }", start_line: 1, end_line: 3 },
+    ];
+    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Should find it before delete
+    let results = search_by_content(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Delete file chunks
+    delete_file_chunks(&conn, "src/x.tsx").unwrap();
+
+    // Should not find it after delete
+    let results = search_by_content(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
+    assert!(results.is_empty());
+}
+
+#[test]
+fn fts5_migration_from_v2() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = open_db(&db_path).unwrap();
+
+    // Insert a chunk (schema is v3, fts_chunks populated via insert_chunk_row)
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useX"), content: "function useX() { return loading; }", start_line: 1, end_line: 3 },
+    ];
+    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Simulate a v2 DB by clearing fts_chunks and rolling back schema_version
+    conn.execute_batch("DELETE FROM fts_chunks").unwrap();
+    conn.execute("UPDATE index_meta SET value = '2' WHERE key = 'schema_version'", []).unwrap();
+
+    // Verify FTS5 is empty
+    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
+    assert!(results.is_empty(), "fts_chunks should be empty before migration");
+
+    // Re-init triggers migration v2→v3
+    drop(conn);
+    let conn = open_db(&db_path).unwrap();
+
+    // Migration should have populated fts_chunks from existing chunks
+    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1, "migration should populate fts_chunks");
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useX"));
+}
+
+#[test]
+fn fts5_handles_special_characters_in_content() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("App"),
+            content: "function App() { return <div className={`container ${active}`}>{data?.name}</div>; }",
+            start_line: 1,
+            end_line: 3,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Search for terms within JSX/template literal content
+    let results = search_by_content(&conn, &["container"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
+}
+
+#[test]
+fn search_by_content_respects_type_filter() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "function useFetch() { fetch('/api'); }", start_line: 1, end_line: 3 },
+        NewChunk { chunk_type: &ChunkType::Component, name: Some("FetchBtn"), content: "function FetchBtn() { onClick(() => fetch('/btn')); }", start_line: 5, end_line: 8 },
+    ];
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Filter to hooks only
+    let results = search_by_content(&conn, &["fetch"], Some(&[ChunkType::Hook]), &HashSet::new(), 10).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
+}

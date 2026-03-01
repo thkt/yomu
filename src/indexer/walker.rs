@@ -6,8 +6,8 @@ const FRONTEND_EXTENSIONS: &[&str] = &[
 ];
 
 const EXCLUDED_DIRS: &[&str] = &[
-    "node_modules", ".git", ".yomu", "dist", "build", ".next", "target",
-    "storybook-static", "coverage", "out", ".turbo", ".cache",
+    "node_modules", "dist", "build", "target",
+    "storybook-static", "coverage", "out",
 ];
 
 /// Walk `root` recursively, collecting files with frontend extensions.
@@ -16,8 +16,11 @@ pub fn walk_frontend_files(root: &Path) -> Vec<PathBuf> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
-            if entry.file_type().is_dir() {
+            if entry.file_type().is_dir() && entry.depth() > 0 {
                 let name = entry.file_name().to_str().unwrap_or("");
+                if name.starts_with('.') {
+                    return false;
+                }
                 return !EXCLUDED_DIRS.contains(&name);
             }
             true
@@ -76,6 +79,10 @@ mod tests {
         let yomu = dir.join(".yomu/index.db");
         fs::create_dir_all(yomu.parent().unwrap()).unwrap();
         fs::write(&yomu, "").unwrap();
+
+        let claude = dir.join(".claude/worktrees/agent-abc/src/App.tsx");
+        fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        fs::write(&claude, "// worktree copy").unwrap();
     }
 
     #[test]
@@ -113,6 +120,7 @@ mod tests {
             assert!(!s.contains("node_modules"), "included node_modules: {s}");
             assert!(!s.contains(".git"), "included .git: {s}");
             assert!(!s.contains(".yomu"), "included .yomu: {s}");
+            assert!(!s.contains(".claude"), "included .claude: {s}");
         }
     }
 }
