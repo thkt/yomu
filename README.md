@@ -1,47 +1,54 @@
 # yomu
 
-Frontend code search for AI agents. One call instead of six.
+Frontend code search for AI agents. Find code by concept when you don't know the name.
 
-## What it does
+## The problem
 
-An AI agent asked to find "the chat streaming hook" in [vercel/ai](https://github.com/vercel/ai) (3,535 files):
+An AI agent needs to find the chat streaming hook in [vercel/ai](https://github.com/vercel/ai) (3,535 files). It doesn't know the function is called `useChat`.
 
-**Without yomu** — 6+ tool calls, each consuming context window:
+**Typical agent workflow:**
 
 ```
-grep "useChat"    → 130 files. Which one is the implementation?
-grep "stream"     → 885 files. Worse.
-grep "chat hook"  → 0 files. Name unknown.
-glob "**/chat*"   → Files found, contents unknown.
-read use-chat.ts  → Got the code. What does it import?
-read 2 more files → Now I have context.
+glob "**/chat*"       → 12 files. None are it (it's called use-chat.ts).
+grep "stream.*hook"   → 0 files.
+grep "chat"           → too many results. Try reading a few...
+read packages/react/src/use-chat.ts  → Found it. What does it import?
+read packages/ai/src/ui/process-ui-message-stream.ts → Now I have context.
 ```
 
-**With yomu** — 1 tool call, everything included:
+3-5 tool calls, trial and error, noise in the context window.
+
+**With yomu:**
 
 ```
 explorer("streaming chat hooks")
 
-  useChat [hook] — packages/react/src/use-chat.ts:58
-  │ code:     Full function body (not a single-line match)
-  │ imports:  import { processUIMessageStream } from '@ai-sdk/ui-utils'
-  │ siblings: UseChatOptions [type_def], UseChatHelpers [type_def]
-  │
-  useStreamableValue [hook] — packages/rsc/src/streamable-value/...
-  │ ...
+  #1  useChat [hook] — packages/react/src/use-chat.ts:58
+      Full function body, imports, sibling type definitions included.
+
+  #2  useStreamableValue [hook] — packages/rsc/src/streamable-value/...
+  #3  useSharedChatContext [hook] — examples/ai-e2e-next/.../chat-context.tsx
 ```
 
-No name guessing. No follow-up reads. The agent gets code, imports, and related definitions in one response.
+1 call. The implementation is the first result — out of 130 files that contain "useChat", and 9,015 total chunks in the index.
 
-## Why this matters for agents
+Each result includes the full code body, file imports, and sibling definitions. No follow-up reads needed.
 
-AI agents pay for every tool call in two ways: **latency** and **context window consumption**. Each `grep` → `read` → `read` chain adds thousands of tokens of intermediate results to the conversation. Most of those tokens are noise — the 129 test files that matched `useChat`, the file listing that didn't show contents.
+## When to use yomu (and when not to)
 
-yomu returns only what the agent needs: the relevant code with its dependencies. This means:
+**Use yomu when:**
 
-- **Fewer tool calls** — 1 instead of 5-7 for concept-based search
-- **Less context waste** — No grep noise, no exploratory reads
-- **No name required** — Search by what code does, not what it's called
+- You don't know what the code is called — "error boundary logic", "data fetching layer"
+- grep returns too many results and you need the implementation, not the 125 test files
+- You want code + imports + related types in one response
+
+**Use grep/glob when:**
+
+- You know the exact name — `grep "useAuth"` is faster and more precise
+- You need regex matching or exact string search
+- The codebase is small and familiar
+
+yomu doesn't replace grep. It covers the case grep can't: searching by concept.
 
 ## Setup
 
@@ -80,9 +87,9 @@ No manual indexing. `explorer` auto-indexes on first call.
 
 ## Tools
 
-### `explorer` — Find code by concept
+### `explorer` — Search by concept
 
-The primary tool. Returns ranked results with full context:
+Returns ranked results with full context. Each result includes:
 
 | Included       | Why                                             |
 | -------------- | ----------------------------------------------- |
@@ -93,7 +100,7 @@ The primary tool. Returns ranked results with full context:
 
 ### `impact` — Blast radius of a change
 
-Shows which files depend on a target file or symbol. Real output from vercel/ai:
+Shows which files depend on a target file or symbol.
 
 ```
 > impact("packages/ai/src/ui/ui-messages.ts:UIMessage", depth=2)
@@ -104,11 +111,11 @@ Shows which files depend on a target file or symbol. Real output from vercel/ai:
   Total: 55 dependent files
 ```
 
-One call replaces manually tracing imports across dozens of files.
+Real output from vercel/ai. One call replaces manually tracing imports.
 
 ### `index` / `rebuild` / `status`
 
-- `index` — Update the chunk index incrementally. No API calls, ~2.5s on 3,535 files. Usually not needed since `explorer` auto-indexes.
+- `index` — Update the chunk index. No API calls, ~2.5s on 3,535 files. Usually not needed — `explorer` auto-indexes.
 - `rebuild` — Full re-parse from scratch.
 - `status` — Files, chunks, embedding coverage, references.
 
@@ -118,11 +125,11 @@ One call replaces manually tracing imports across dozens of files.
 Source files → tree-sitter AST → Semantic chunks → Gemini embeddings → Hybrid search
 ```
 
-**Indexing** — tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. Import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls.
+**Indexing** — tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. The import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls.
 
-**Embedding** — Chunks are embedded incrementally via Gemini (free tier). 50 chunks per `explorer` call, prioritized by import count — the most-used code gets searchable first.
+**Embedding** — Chunks are embedded incrementally via Gemini (free tier). 50 chunks per `explorer` call, prioritized by import count — the most-used code gets searchable first. No upfront build required.
 
-**Search** — Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Results are reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test/example files are pushed down.
+**Search** — Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Results are reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test files are pushed down.
 
 ## Supported file types
 
@@ -139,19 +146,28 @@ Other files fall back to character-based chunking with overlap.
 
 - **Gemini free-tier rate limits** — 100 RPM, 1,500 requests/day. Heavy usage across projects can exhaust the daily quota (resets midnight Pacific Time).
 - **SCSS/Sass not supported** — Only plain CSS.
-- **Cold start** — First `explorer` call takes a few seconds for chunking + initial embedding. Subsequent calls are faster.
+- **Cold start** — First `explorer` call takes a few seconds for chunking + initial embedding.
 - **Large files skipped** — Files over 1 MB are excluded from indexing.
 
 ## Architecture
 
 ```
 src/
-├── main.rs            MCP server entry point (stdio transport)
-├── tools/             MCP tool handlers (explorer, index, rebuild, impact, status)
-├── indexer/           Chunking, file walking, Gemini embedding client
-├── resolver.rs        Import path resolution (tsconfig aliases, index.ts probing)
-├── query.rs           Hybrid search + IDF reranking
-└── storage/           SQLite + sqlite-vec (search, import graph, CRUD)
+├── main.rs              MCP server (stdio transport)
+├── lib.rs               Crate root, public API
+├── config.rs            Runtime configuration
+├── tools/               MCP tool handlers (explorer, index, rebuild, impact, status)
+├── indexer/
+│   ├── mod.rs           Orchestration: incremental index, embed budget
+│   ├── chunker/         tree-sitter AST → semantic chunks
+│   ├── embedder.rs      Gemini embedding client (batchEmbedContents)
+│   └── walker.rs        File discovery, .gitignore filtering
+├── resolver.rs          Import path resolution (tsconfig aliases, index.ts probing)
+├── query.rs             Hybrid search + IDF reranking
+└── storage/
+    ├── mod.rs           Schema, CRUD, types
+    ├── search.rs        Vector similarity, name matching, FTS5
+    └── graph.rs         Import graph traversal, dependents, siblings
 ```
 
 Single binary, zero runtime dependencies. SQLite and sqlite-vec are statically linked.
