@@ -267,7 +267,7 @@ fn classify_embed_error(
     file_path: &str,
 ) -> EmbedFailure {
     if matches!(&e, EmbedError::Api { status: 429, .. }) {
-        tracing::warn!("Rate limit exhausted (429 after retries)");
+        tracing::warn!("Rate limited (429), stopping incremental embed");
         return EmbedFailure::RateLimited(e);
     }
     *consecutive_errors += 1;

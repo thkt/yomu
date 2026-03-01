@@ -12,7 +12,7 @@ const MAX_RETRIES: u32 = 5;
 const BATCH_SIZE: usize = 100;
 
 fn is_retryable(status: u16) -> bool {
-    matches!(status, 429 | 500 | 503)
+    matches!(status, 500 | 503)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,13 +102,7 @@ impl Embedder {
             let mut last_status = 0;
             for attempt in 0..=MAX_RETRIES {
                 if attempt > 0 {
-                    // 429 (rate limit): start at 2s to wait for RPM window reset.
-                    // Other retryable errors (500/503): start at 500ms.
-                    let base = if last_status == 429 {
-                        2000 * 2u64.pow(attempt - 1)
-                    } else {
-                        500 * 2u64.pow(attempt - 1)
-                    };
+                    let base = 500 * 2u64.pow(attempt - 1);
                     let jitter = (std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -429,7 +423,7 @@ mod tests {
 
     #[test]
     fn retryable_status_codes() {
-        assert!(is_retryable(429));
+        assert!(!is_retryable(429));
         assert!(is_retryable(500));
         assert!(is_retryable(503));
         assert!(!is_retryable(400));
@@ -458,25 +452,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_with_retry_retries_on_429() {
+    async fn post_with_retry_does_not_retry_on_429() {
         let server = MockServer::start().await;
 
-        // First call: 429, second call: 200
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429).set_body_string("rate limited"))
-            .up_to_n_times(1)
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(mock_embedding_response()))
             .expect(1)
             .mount(&server)
             .await;
 
         let embedder = Embedder::with_base_url(Client::new(), "test-key".into(), server.uri());
         let result = embedder.embed_query("test").await;
-        assert!(result.is_ok(), "should succeed after retry: {result:?}");
+        assert!(result.is_err(), "429 should fail immediately without retry");
+        match result.unwrap_err() {
+            EmbedError::Api { status, .. } => assert_eq!(status, 429),
+            other => panic!("expected Api error with 429, got: {other}"),
+        }
     }
 
     #[tokio::test]
