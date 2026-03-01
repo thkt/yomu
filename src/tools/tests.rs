@@ -1,5 +1,30 @@
 use super::*;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+
+use crate::indexer::embedder::EmbedError;
+
+struct FailingEmbedder;
+
+impl crate::indexer::embedder::Embed for FailingEmbedder {
+    fn embed_query<'a>(
+        &'a self,
+        _text: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
+        Box::pin(async {
+            Err(EmbedError::Api { status: 429, message: "rate limited".into() })
+        })
+    }
+    fn embed_documents<'a>(
+        &'a self,
+        _texts: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
+        Box::pin(async {
+            Err(EmbedError::Api { status: 429, message: "rate limited".into() })
+        })
+    }
+}
 
 fn test_db() -> (storage::Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -968,6 +993,48 @@ fn format_results_grouped_sorts_by_score() {
     let a_pos = text.find("## src/A.tsx").unwrap();
     let b_pos = text.find("## src/B.tsx").unwrap();
     assert!(a_pos < b_pos, "A (score 0.95) should come before B (score 0.60): {text}");
+}
+
+#[tokio::test]
+async fn explorer_degraded_empty_results_shows_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    // Insert a chunk that won't match the query
+    storage::replace_file_chunks_only(
+        &conn, "src/Button.tsx",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("Button"),
+            content: "function Button() { return <div/>; }",
+            start_line: 1, end_line: 3,
+        }],
+        "h1", "", &[],
+    ).unwrap();
+
+    let y = Yomu {
+        conn: Arc::new(Mutex::new(conn)),
+        embedder: Some(Arc::new(FailingEmbedder)),
+        root: dir.path().to_path_buf(),
+        auto_indexed: Arc::new(AtomicBool::new(true)),
+        auto_index_failures: Arc::new(AtomicU32::new(0)),
+        embed_budget: DEFAULT_EMBED_BUDGET,
+        tool_router: Yomu::tool_router(),
+    };
+
+    let params = Parameters(ExplorerParams {
+        query: "zzzznonexistent".to_string(),
+        limit: None,
+        offset: None,
+    });
+    let result = y.explorer(params).await.unwrap();
+    let text = &result.content[0].as_text().unwrap().text;
+    assert!(text.contains("No results found"), "expected no results: {text}");
+    assert!(
+        text.contains("embedding API was unavailable"),
+        "expected degraded note in empty results: {text}"
+    );
 }
 
 #[test]

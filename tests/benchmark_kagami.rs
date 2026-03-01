@@ -128,10 +128,10 @@ async fn step2_explorer() {
         let search_time = start.elapsed();
 
         match results {
-            Ok(results) => {
+            Ok(outcome) => {
                 eprintln!();
                 eprintln!("  explorer(\"{query}\") — {:.0}ms", search_time.as_millis());
-                for r in &results {
+                for r in &outcome.results {
                     let name = r.chunk.name.as_deref().unwrap_or("(unnamed)");
                     let ctype = format!("{:?}", r.chunk.chunk_type).to_lowercase();
                     eprintln!(
@@ -139,7 +139,7 @@ async fn step2_explorer() {
                         name, ctype, r.chunk.file_path, r.chunk.start_line, r.score
                     );
                 }
-                if results.is_empty() {
+                if outcome.results.is_empty() {
                     eprintln!("    (no results)");
                 }
             }

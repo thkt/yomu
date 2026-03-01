@@ -24,6 +24,14 @@ impl From<tokio::task::JoinError> for QueryError {
     }
 }
 
+/// Result of a search operation.
+#[derive(Debug)]
+pub struct SearchOutcome {
+    pub results: Vec<SearchResult>,
+    /// True when embedding API was unavailable and only text-based search was used.
+    pub degraded: bool,
+}
+
 const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and", "or"];
 
 /// Split identifiers by camelCase, PascalCase, kebab-case, and snake_case.
@@ -318,14 +326,17 @@ pub fn rerank(
 fn search_pipeline(
     conn: &Db,
     query: &str,
-    query_embedding: &[f32],
+    query_embedding: Option<&[f32]>,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<SearchResult>, StorageError> {
     let keywords = extract_keywords(query);
     let type_hints = extract_type_hints(query);
 
-    let mut results = storage::search_similar(conn, query_embedding, limit, offset)?;
+    let mut results = match query_embedding {
+        Some(emb) => storage::search_similar(conn, emb, limit, offset)?,
+        None => Vec::new(),
+    };
 
     let fallback_limit = limit * 3;
 
@@ -363,23 +374,31 @@ fn search_pipeline(
     Ok(results)
 }
 
-/// Vector search with name-based fallback when results < limit.
+/// Vector search with text-based fallback.
+/// Falls back to name/FTS5-only search when embedding API is unavailable.
 pub async fn search(
     conn: Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     query: &str,
     limit: u32,
     offset: u32,
-) -> Result<Vec<SearchResult>, QueryError> {
-    let query_embedding = embedder.embed_query(query).await?;
+) -> Result<SearchOutcome, QueryError> {
+    let (query_embedding, degraded) = match embedder.embed_query(query).await {
+        Ok(emb) => (Some(emb), false),
+        Err(EmbedError::ApiKeyNotSet) => return Err(EmbedError::ApiKeyNotSet.into()),
+        Err(e) => {
+            tracing::warn!(error = %e, "Query embedding failed, falling back to text search");
+            (None, true)
+        }
+    };
     let query_owned = query.to_string();
 
     let results = tokio::task::spawn_blocking(move || {
         let conn = conn.lock();
-        search_pipeline(&conn, &query_owned, &query_embedding, limit, offset)
+        search_pipeline(&conn, &query_owned, query_embedding.as_deref(), limit, offset)
     })
     .await?;
-    Ok(results?)
+    Ok(SearchOutcome { results: results?, degraded })
 }
 
 #[cfg(test)]
@@ -423,9 +442,10 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        let results = search(conn, &MockEmbedder, "button", 10, 0).await.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].chunk.name.as_deref(), Some("Button"));
+        let outcome = search(conn, &MockEmbedder, "button", 10, 0).await.unwrap();
+        assert!(!outcome.degraded);
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
     }
 
     #[test]
@@ -596,7 +616,7 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap();
+        let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap().results;
 
         assert!(results.len() >= 2, "expected at least 2 results (vector + fallback), got {}", results.len());
 
@@ -626,7 +646,7 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        let results = search(conn, &MockEmbedder, "auth", 5, 0).await.unwrap();
+        let results = search(conn, &MockEmbedder, "auth", 5, 0).await.unwrap().results;
 
         let auth_count = results.iter().filter(|r| r.chunk.name.as_deref() == Some("useAuth")).count();
         assert_eq!(auth_count, 1, "useAuth should appear exactly once");
@@ -842,7 +862,7 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap();
+        let results = search(conn, &MockEmbedder, "auth hook", 5, 0).await.unwrap().results;
 
         for w in results.windows(2) {
             assert!(w[0].score >= w[1].score,
@@ -934,6 +954,81 @@ mod tests {
         assert!((ratio_no_content).abs() < 1e-6, "name/path don't match → ratio=0.0, got {ratio_no_content}");
     }
 
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct FailingEmbedder;
+
+    impl Embed for FailingEmbedder {
+        fn embed_query<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
+            Box::pin(async {
+                Err(EmbedError::Api { status: 429, message: "rate limited".into() })
+            })
+        }
+        fn embed_documents<'a>(
+            &'a self,
+            _texts: &'a [String],
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+    }
+
+    #[tokio::test]
+    async fn search_degrades_on_embed_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = storage::open_db(&db_path).unwrap();
+
+        // Insert chunk with name-matchable data (no embedding needed for name/content search)
+        storage::replace_file_chunks_only(
+            &conn, "src/Auth.tsx",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some("AuthForm"),
+                content: "function AuthForm() { return <form/>; }",
+                start_line: 1, end_line: 3,
+            }],
+            "h1", "", &[],
+        ).unwrap();
+
+        let conn = Arc::new(Mutex::new(conn));
+        let outcome = search(conn, &FailingEmbedder, "auth", 10, 0).await.unwrap();
+        assert!(outcome.degraded, "should be degraded when embed fails");
+        assert!(!outcome.results.is_empty(), "should still return text-matched results");
+        assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("AuthForm"));
+        assert_ne!(outcome.results[0].match_source, storage::MatchSource::Semantic);
+    }
+
+    #[tokio::test]
+    async fn search_propagates_api_key_not_set() {
+        struct NoKeyEmbedder;
+        impl Embed for NoKeyEmbedder {
+            fn embed_query<'a>(
+                &'a self,
+                _text: &'a str,
+            ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
+                Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+            }
+            fn embed_documents<'a>(
+                &'a self,
+                _texts: &'a [String],
+            ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
+                Box::pin(async { Ok(vec![]) })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = storage::open_db(&db_path).unwrap();
+        let conn = Arc::new(Mutex::new(conn));
+
+        let err = search(conn, &NoKeyEmbedder, "test", 10, 0).await.unwrap_err();
+        assert!(err.to_string().contains("GEMINI_API_KEY"), "should propagate ApiKeyNotSet: {err}");
+    }
+
     #[tokio::test]
     #[ignore = "requires GEMINI_API_KEY"]
     async fn search_returns_results() {
@@ -957,7 +1052,7 @@ mod tests {
         ).unwrap();
 
         let conn = Arc::new(Mutex::new(conn));
-        let results = search(conn, &embedder, "button", 10, 0).await.unwrap();
-        assert!(!results.is_empty(), "expected at least one result");
+        let outcome = search(conn, &embedder, "button", 10, 0).await.unwrap();
+        assert!(!outcome.results.is_empty(), "expected at least one result");
     }
 }

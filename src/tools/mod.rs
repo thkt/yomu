@@ -167,25 +167,31 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let embed_error = self.ensure_indexed(embedder, state, hints_ref).await?;
 
-        let results =
+        let outcome =
             query::search(Arc::clone(&self.conn), embedder, &params.query, limit, offset)
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        if results.is_empty() {
+        if outcome.results.is_empty() {
             let stats = self.with_db(storage::get_stats).await?;
-            let msg = match embed_error {
+            let mut msg = match embed_error {
                 Some(ref err) => format!(
                     "{}\n\nNote: embedding failed: {err}",
                     format_no_results_message(&stats)
                 ),
                 None => format_no_results_message(&stats),
             };
+            if outcome.degraded {
+                msg.push_str("\n\nNote: embedding API was unavailable. Results are text-only — retry later for semantic search.");
+            }
             return Ok(CallToolResult::success(vec![Content::text(msg)]));
         }
 
-        let (imports_map, siblings_map) = self.fetch_enrichment_context(&results).await?;
-        let text = format_results_grouped(&results, &imports_map, &siblings_map);
+        let (imports_map, siblings_map) = self.fetch_enrichment_context(&outcome.results).await?;
+        let mut text = format_results_grouped(&outcome.results, &imports_map, &siblings_map);
+        if outcome.degraded {
+            text.push_str("\n---\nNote: Results from text search only (embedding API unavailable). Semantic ranking is reduced.\n");
+        }
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 

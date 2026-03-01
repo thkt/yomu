@@ -172,10 +172,10 @@ async fn benchmark_explorer_query() {
         let search_time = start.elapsed();
 
         match results {
-            Ok(results) => {
+            Ok(outcome) => {
                 eprintln!();
                 eprintln!("=== explorer(\"{query}\") — {:.0}ms ===", search_time.as_millis());
-                for r in &results {
+                for r in &outcome.results {
                     let name = r.chunk.name.as_deref().unwrap_or("(unnamed)");
                     let ctype = format!("{:?}", r.chunk.chunk_type).to_lowercase();
                     eprintln!(
