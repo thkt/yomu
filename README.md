@@ -1,5 +1,7 @@
 # yomu
 
+[日本語](README.ja.md)
+
 Frontend code search for AI agents. Find code by concept when you don't know the name.
 
 ## The problem
