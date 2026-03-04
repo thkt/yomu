@@ -1,5 +1,3 @@
-//! Import graph queries: dependents, siblings, file contexts.
-
 use rusqlite::Connection;
 
 use super::{sql_placeholders, ChunkType, StorageError};
@@ -22,7 +20,6 @@ pub struct SiblingInfo {
 
 const HOOK_COMPONENT_PRIORITY_BOOST: u32 = 3;
 
-/// Recursive CTE traversal; depth clamped to max_depth (max 10).
 pub fn get_transitive_dependents(
     conn: &Connection,
     target_file: &str,

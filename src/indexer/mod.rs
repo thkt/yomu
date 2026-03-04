@@ -1,5 +1,3 @@
-//! Walks, chunks, embeds, and stores frontend source files.
-
 pub mod chunker;
 pub mod embedder;
 pub mod walker;
@@ -353,7 +351,6 @@ pub struct EmbedResult {
     pub budget_exhausted: bool,
 }
 
-/// Walk, chunk, and store files without calling the embedding API.
 pub async fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
@@ -386,6 +383,8 @@ async fn run_chunk_only_index_inner(
 
     let resolver = Resolver::new(root);
 
+    storage::fts_set_automerge(&conn.lock(), false)?;
+
     for file_path in &files {
         let conn_guard = conn.lock();
         match process_file(&conn_guard, root, file_path, force)? {
@@ -408,6 +407,14 @@ async fn run_chunk_only_index_inner(
             FileAction::Skip => files_skipped += 1,
             FileAction::Error => files_errored += 1,
         }
+    }
+
+    {
+        let conn_guard = conn.lock();
+        if files_processed > 0 {
+            storage::fts_optimize(&conn_guard)?;
+        }
+        storage::fts_set_automerge(&conn_guard, true)?;
     }
 
     remove_orphans(&conn, current_rel_paths).await?;

@@ -1,5 +1,3 @@
-//! Search functions: vector similarity, name LIKE, FTS5 content.
-
 use std::collections::HashSet;
 
 use rusqlite::Connection;
@@ -70,11 +68,9 @@ pub fn search_by_name(
     );
 
     let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    // params for name LIKE clauses
     for k in keywords {
         all_params.push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
     }
-    // params for file_path LIKE clauses
     for k in keywords {
         all_params.push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
     }
@@ -110,11 +106,7 @@ pub fn search_by_name(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// FTS5 full-text search over chunk content.
-///
-/// Safety: keywords MUST come from `query::extract_keywords()`, which lowercases,
-/// splits on whitespace, and filters to len >= 2. This sanitization prevents
-/// FTS5 syntax injection. Do not pass raw user input directly.
+/// Keywords are double-quote escaped to prevent FTS5 syntax injection.
 pub fn search_by_content(
     conn: &Connection,
     keywords: &[&str],
@@ -126,7 +118,6 @@ pub fn search_by_content(
         return Ok(Vec::new());
     }
 
-    // Build FTS5 query: each keyword as a term, joined with OR
     let fts_query: String = keywords
         .iter()
         .map(|k| format!("\"{}\"", k.replace('"', "\"\"")))
@@ -173,8 +164,6 @@ pub fn search_by_content(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Count how many chunks contain each keyword (document frequency via FTS5).
-/// Returns a vec of (keyword, doc_count) in the same order as input keywords.
 pub fn get_keyword_doc_frequencies(
     conn: &Connection,
     keywords: &[&str],

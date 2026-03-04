@@ -1,37 +1,54 @@
-//! MCP tool handlers for explorer, index, rebuild, impact, and status.
+mod format;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 use reqwest::Client;
-use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    tool, tool_handler, tool_router,
-};
-use schemars::JsonSchema;
-use serde::Deserialize;
 
 use crate::config;
-use crate::indexer::{self, embedder::{Embed, Embedder}};
+use crate::indexer::{self, embedder::Embed, embedder::EmbedError, embedder::Embedder};
 use crate::query;
 use crate::storage;
 
+use format::{
+    format_coverage, format_coverage_note, format_impact_all, format_impact_results,
+    format_no_results_message, format_results_grouped, EnrichmentContext,
+};
+
 const DEFAULT_EMBED_BUDGET: u32 = 50;
+const INDEX_FRESHNESS_SECS: u32 = 60;
+const MIN_EMBED_BUDGET: u32 = 1;
+const MAX_EMBED_BUDGET: u32 = 500;
+const MAX_QUERY_LENGTH: usize = 2000;
+
+pub const MAX_SEARCH_LIMIT: u32 = 100;
+pub const MAX_SEARCH_OFFSET: u32 = 500;
+pub const MAX_IMPACT_DEPTH: u32 = 10;
 
 fn parse_embed_budget() -> u32 {
-    match std::env::var("YOMU_EMBED_BUDGET") {
-        Ok(v) => match v.parse() {
-            Ok(n) => n,
+    parse_budget_value(std::env::var("YOMU_EMBED_BUDGET").ok().as_deref())
+}
+
+fn parse_budget_value(value: Option<&str>) -> u32 {
+    match value {
+        Some(v) => match v.parse::<u32>() {
+            Ok(n) if (MIN_EMBED_BUDGET..=MAX_EMBED_BUDGET).contains(&n) => n,
+            Ok(n) => {
+                tracing::warn!(
+                    value = n,
+                    "YOMU_EMBED_BUDGET out of range ({MIN_EMBED_BUDGET}..={MAX_EMBED_BUDGET}), using default"
+                );
+                DEFAULT_EMBED_BUDGET
+            }
             Err(_) => {
-                tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default {DEFAULT_EMBED_BUDGET}");
+                tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default");
                 DEFAULT_EMBED_BUDGET
             }
         },
-        Err(_) => DEFAULT_EMBED_BUDGET,
+        None => DEFAULT_EMBED_BUDGET,
     }
 }
 
@@ -55,11 +72,22 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
     }
 }
 
-fn format_no_results_message(stats: &storage::IndexStatus) -> String {
-    format!(
-        "No results found. Index coverage: {}/{} chunks ({}%). Repeat search to expand embedding coverage.",
-        stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
-    )
+struct NoOpEmbedder;
+
+impl Embed for NoOpEmbedder {
+    fn embed_query<'a>(
+        &'a self,
+        _text: &'a str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
+        Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+    }
+    fn embed_documents<'a>(
+        &'a self,
+        _texts: &'a [String],
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>>
+    {
+        Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,47 +96,28 @@ pub enum YomuError {
     Network(#[from] reqwest::Error),
     #[error("storage error: {0}")]
     Storage(#[from] storage::StorageError),
-    #[error("IO error: {0}")]
+    #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    InvalidInput(String),
+    #[error("{0}")]
+    Index(#[from] indexer::IndexError),
+    #[error("internal error: {0}")]
+    Internal(String),
+    #[error("query error: {0}")]
+    Query(#[from] crate::query::QueryError),
 }
 
-#[derive(Clone)]
 pub struct Yomu {
     conn: Arc<Mutex<storage::Db>>,
-    embedder: Option<Arc<dyn Embed>>,
+    embedder: OnceLock<Option<Arc<dyn Embed>>>,
     root: PathBuf,
     embed_budget: u32,
-    auto_indexed: Arc<AtomicBool>,
-    auto_index_failures: Arc<AtomicU32>,
-    tool_router: ToolRouter<Self>,
 }
 
-#[derive(Deserialize, JsonSchema)]
-pub struct ExplorerParams {
-    /// Natural language query describing what you're looking for. Examples: "form validation logic", "authentication hooks", "button component with loading state"
-    pub query: String,
-    /// Maximum number of results to return (default: 10)
-    pub limit: Option<u32>,
-    /// Number of results to skip (default: 0)
-    pub offset: Option<u32>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct ImpactParams {
-    /// File path to analyze, relative to project root. Example: "src/hooks/useAuth.ts"
-    pub target: String,
-    /// Filter to dependents that reference this specific symbol. Example: "useAuth"
-    pub symbol: Option<String>,
-    /// Maximum depth for transitive dependency traversal (default: 3, max: 10)
-    pub depth: Option<u32>,
-}
-
-#[tool_router]
 impl Yomu {
     pub fn new() -> Result<Self, YomuError> {
-        let cwd = std::env::current_dir().map_err(|e| {
-            std::io::Error::new(e.kind(), format!("cannot determine current directory: {e}"))
-        })?;
+        let cwd = std::env::current_dir()?;
         let root = config::detect_root(&cwd);
         Self::with_root(root)
     }
@@ -118,94 +127,91 @@ impl Yomu {
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let http = Client::builder().build()?;
-
-        let embedder: Option<Arc<dyn Embed>> = match Embedder::from_env(http) {
-            Ok(e) => Some(Arc::new(e) as _),
-            Err(e) => {
-                tracing::warn!("Embedder unavailable: {e}. explorer and index tools will not work.");
-                None
-            }
-        };
-
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            embedder,
+            embedder: OnceLock::new(),
             root,
             embed_budget: parse_embed_budget(),
-            auto_indexed: Arc::new(AtomicBool::new(false)),
-            auto_index_failures: Arc::new(AtomicU32::new(0)),
-            tool_router: Self::tool_router(),
         })
     }
 
-    #[tool(
-        name = "explorer",
-        description = "Semantic code search for frontend projects. Finds components, hooks, types, and patterns by meaning, not just text matching. Automatically builds the index on first use. Returns ranked results with full code chunks, file imports, and sibling definitions."
-    )]
-    async fn explorer(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(conn: storage::Db, root: PathBuf, embedder: Option<Arc<dyn Embed>>) -> Self {
+        let embedder_lock = OnceLock::new();
+        let _ = embedder_lock.set(embedder);
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            embedder: embedder_lock,
+            root,
+            embed_budget: parse_embed_budget(),
+        }
+    }
+
+    pub async fn search(
         &self,
-        Parameters(params): Parameters<ExplorerParams>,
-    ) -> Result<CallToolResult, McpError> {
-        if params.query.is_empty() {
-            return Err(McpError::invalid_params("query must not be empty", None));
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<String, YomuError> {
+        if query.is_empty() {
+            return Err(YomuError::InvalidInput("query must not be empty".into()));
+        }
+        if query.len() > MAX_QUERY_LENGTH {
+            return Err(YomuError::InvalidInput(format!(
+                "query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
+            )));
         }
 
-        let embedder = self.require_embedder()?;
-        let limit = params.limit.unwrap_or(10).min(100);
-        let offset = params.offset.unwrap_or(0).min(500);
-        if params.limit.is_some_and(|l| l > 100) || params.offset.is_some_and(|o| o > 500) {
-            tracing::debug!(limit, offset, "Parameters clamped to maximum");
-        }
+        let embedder = self.get_embedder();
+        let limit = limit.min(MAX_SEARCH_LIMIT);
+        let offset = offset.min(MAX_SEARCH_OFFSET);
 
-        tracing::debug!(query = %params.query, limit, offset, "explorer search request");
+        tracing::debug!(query, limit, offset, "search request");
 
-        let type_hints = query::extract_type_hints(&params.query);
-        let hints_ref = if type_hints.is_empty() { None } else { Some(type_hints.as_slice()) };
+        let type_hints = query::extract_type_hints(query);
+        let hints_ref = if type_hints.is_empty() {
+            None
+        } else {
+            Some(type_hints.as_slice())
+        };
 
         let stats = self.with_db(storage::get_stats).await?;
         let state = determine_index_state(&stats);
-        let embed_error = self.ensure_indexed(embedder, state, hints_ref).await?;
+        let index_notes = self.ensure_indexed(embedder, state, hints_ref).await?;
 
         let outcome =
-            query::search(Arc::clone(&self.conn), embedder, &params.query, limit, offset)
-                .await
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            query::search(Arc::clone(&self.conn), embedder, query, limit, offset).await?;
+
+        let mut notes: Vec<String> = Vec::new();
+        if let Some(msg) = index_notes {
+            notes.push(msg);
+        }
+        if outcome.degraded {
+            notes.push(
+                "embedding API unavailable, results from text search only".into(),
+            );
+        }
 
         if outcome.results.is_empty() {
             let stats = self.with_db(storage::get_stats).await?;
-            let mut msg = match embed_error {
-                Some(ref err) => format!(
-                    "{}\n\nNote: embedding failed: {err}",
-                    format_no_results_message(&stats)
-                ),
-                None => format_no_results_message(&stats),
-            };
-            if outcome.degraded {
-                msg.push_str("\n\nNote: embedding API was unavailable. Results are text-only — retry later for semantic search.");
+            let mut msg = format_no_results_message(&stats);
+            for note in &notes {
+                msg.push_str(&format!("\n\nNote: {note}"));
             }
-            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+            return Ok(msg);
         }
 
-        let (imports_map, siblings_map) = self.fetch_enrichment_context(&outcome.results).await?;
-        let mut text = format_results_grouped(&outcome.results, &imports_map, &siblings_map);
-        if outcome.degraded {
-            text.push_str("\n---\nNote: Results from text search only (embedding API unavailable). Semantic ranking is reduced.\n");
+        let ctx = self.fetch_enrichment_context(&outcome.results).await?;
+        let mut text = format_results_grouped(&outcome.results, &ctx);
+        for note in &notes {
+            text.push_str(&format!("\n---\nNote: {note}\n"));
         }
-        Ok(CallToolResult::success(vec![Content::text(text)]))
+        Ok(text)
     }
 
-    #[tool(
-        name = "index",
-        description = "Update the chunk index incrementally. Parses new or changed frontend files (TS, TSX, JS, CSS, HTML) into AST chunks and builds the import graph. No API calls — runs in ~2s. Embedding happens automatically through explorer. Usually not needed — explorer auto-indexes on first use."
-    )]
-    async fn index(&self) -> Result<CallToolResult, McpError> {
-        let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        self.auto_index_failures.store(0, Ordering::SeqCst);
-        self.auto_indexed.store(false, Ordering::SeqCst);
+    pub async fn index(&self) -> Result<String, YomuError> {
+        let chunk_result =
+            indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await?;
 
         let stats = self.with_db(storage::get_stats).await?;
         let mut text = format!(
@@ -215,26 +221,15 @@ impl Yomu {
             chunk_result.files_skipped,
             chunk_result.files_errored,
         );
-        if stats.embedded_chunks < stats.total_chunks {
-            text.push_str(&format!(
-                "\n\nEmbedding coverage: {}/{} chunks ({}%). Use explorer to incrementally embed more.",
-                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
-            ));
+        if let Some(note) = format_coverage_note(&stats) {
+            text.push_str(&note);
         }
-        Ok(CallToolResult::success(vec![Content::text(text)]))
+        Ok(text)
     }
 
-    #[tool(
-        name = "rebuild",
-        description = "Rebuild the chunk index from scratch. Re-parses all frontend files regardless of whether they changed. Use when the index seems corrupted or after upgrading yomu. No API calls."
-    )]
-    async fn rebuild(&self) -> Result<CallToolResult, McpError> {
-        let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        self.auto_index_failures.store(0, Ordering::SeqCst);
-        self.auto_indexed.store(false, Ordering::SeqCst);
+    pub async fn rebuild(&self) -> Result<String, YomuError> {
+        let chunk_result =
+            indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root).await?;
 
         let stats = self.with_db(storage::get_stats).await?;
         let mut text = format!(
@@ -243,219 +238,227 @@ impl Yomu {
             chunk_result.chunks_created,
             chunk_result.files_errored,
         );
-        if stats.embedded_chunks < stats.total_chunks {
-            text.push_str(&format!(
-                "\n\nEmbedding coverage: {}/{} chunks ({}%). Use explorer to incrementally embed more.",
-                stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
-            ));
+        if let Some(note) = format_coverage_note(&stats) {
+            text.push_str(&note);
         }
-        Ok(CallToolResult::success(vec![Content::text(text)]))
+        Ok(text)
     }
 
-    #[tool(
-        name = "impact",
-        description = "Analyze the impact of changes to a file or symbol. Shows which files depend on the target, both directly and transitively. Use the symbol parameter to filter to a specific export. Requires an existing index."
-    )]
-    async fn impact(
+    pub async fn impact(
         &self,
-        Parameters(params): Parameters<ImpactParams>,
-    ) -> Result<CallToolResult, McpError> {
-        if params.target.is_empty() {
-            return Err(McpError::invalid_params("target must not be empty", None));
+        target: &str,
+        symbol: Option<&str>,
+        depth: u32,
+    ) -> Result<String, YomuError> {
+        if target.is_empty() {
+            return Err(YomuError::InvalidInput("target must not be empty".into()));
         }
 
         let stats = self.with_db(storage::get_stats).await?;
         if stats.total_chunks == 0 {
-            return Ok(CallToolResult::success(vec![Content::text(
-                "Index is empty. Run the `index` tool first, or use `explorer` which auto-indexes on first use.",
-            )]));
+            return Err(YomuError::InvalidInput(
+                "index is empty — run `yomu index` first, or use `yomu search` which auto-indexes"
+                    .into(),
+            ));
         }
 
-        let (file_path, parsed_symbol) = parse_impact_target(&params.target);
-        let symbol_filter = params.symbol.as_deref().or(parsed_symbol);
-        let max_depth = params.depth.unwrap_or(3).min(10);
-        let file_path_owned = file_path.to_string();
+        let (file_path, parsed_symbol) = parse_impact_target(target);
 
-        let dependents = self
+        if file_path.contains("..") || std::path::Path::new(file_path).is_absolute() {
+            return Err(YomuError::InvalidInput(
+                "target path must be relative and must not contain '..'".into(),
+            ));
+        }
+
+        let symbol_filter = symbol.or(parsed_symbol);
+        let max_depth = depth.min(MAX_IMPACT_DEPTH);
+        let fp = file_path.to_string();
+        let sym_owned = symbol_filter.map(|s| s.to_string());
+
+        let (file_in_index, dependents, symbol_refs) = self
             .with_db(move |conn| {
-                storage::get_transitive_dependents(conn, &file_path_owned, max_depth)
+                let exists = storage::file_exists_in_index(conn, &fp)?;
+                let dependents =
+                    storage::get_transitive_dependents(conn, &fp, max_depth)?;
+                let refs = match &sym_owned {
+                    Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
+                    None => vec![],
+                };
+                Ok((exists, dependents, refs))
             })
             .await?;
 
         if dependents.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
-                "No dependents found for `{}`.",
-                params.target
-            ))]));
+            return Ok(if file_in_index {
+                format!("No dependents found for `{}`.", target)
+            } else {
+                format!(
+                    "`{}` not found in index. Run `yomu index` to update.",
+                    file_path
+                )
+            });
         }
 
-        let text = if let Some(symbol) = symbol_filter {
-            let file_path_owned = file_path.to_string();
-            let symbol_owned = symbol.to_string();
-            let filtered = self
-                .with_db(move |conn| {
-                    storage::get_symbol_dependents(conn, &file_path_owned, &symbol_owned)
-                })
-                .await?;
-
-            format_impact_results(&params.target, &filtered, &dependents)
+        let text = if symbol_filter.is_some() {
+            format_impact_results(target, &symbol_refs, &dependents)
         } else {
-            format_impact_all(&params.target, &dependents)
+            format_impact_all(target, &dependents)
         };
 
-        Ok(CallToolResult::success(vec![Content::text(text)]))
+        Ok(text)
     }
 
-    #[tool(
-        name = "status",
-        description = "Show index statistics: number of indexed files, chunks, embedded chunks, references, and last update time."
-    )]
-    async fn status(&self) -> Result<CallToolResult, McpError> {
-        let stats = self.with_db(storage::get_stats).await?;
-        let ref_count = self.with_db(storage::get_reference_count).await?;
+    pub async fn status(&self) -> Result<String, YomuError> {
+        let (stats, ref_count) = self
+            .with_db(|conn| {
+                let stats = storage::get_stats(conn)?;
+                let ref_count = storage::get_reference_count(conn)?;
+                Ok((stats, ref_count))
+            })
+            .await?;
 
-        let text = format!(
-            "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}/{} ({}%)\n  References: {}\n  Last indexed: {}",
+        Ok(format!(
+            "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}\n  References: {}\n  Last indexed: {}",
             stats.total_files,
             stats.total_chunks,
-            stats.embedded_chunks,
-            stats.total_chunks,
-            stats.embed_percentage(),
+            format_coverage(&stats),
             ref_count,
             stats.last_indexed_at.as_deref().unwrap_or("never")
-        );
-        Ok(CallToolResult::success(vec![Content::text(text)]))
+        ))
     }
 }
 
 impl Yomu {
-    /// Auto-index if needed and run incremental embedding.
-    /// Returns embed error message if embedding failed but search can still proceed.
     async fn ensure_indexed(
         &self,
         embedder: &dyn Embed,
         state: IndexState,
         type_hints: Option<&[storage::ChunkType]>,
-    ) -> Result<Option<String>, McpError> {
-        let needs_embed = match state {
-            IndexState::Empty => self.handle_empty_index().await?,
+    ) -> Result<Option<String>, YomuError> {
+        let (needs_embed, rechunk_note) = match state {
+            IndexState::Empty => (self.handle_empty_index().await?, None),
             IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
-                self.rechunk_if_stale(false).await;
-                true
+                let note = self.rechunk_if_stale().await;
+                (true, note)
             }
             IndexState::FullyEmbedded => self.handle_fully_embedded().await?,
         };
 
-        if needs_embed
-            && let Err(e) = indexer::run_incremental_embed(
+        let embed_note = if needs_embed {
+            match indexer::run_incremental_embed(
                 Arc::clone(&self.conn),
                 embedder,
                 self.embed_budget,
                 type_hints,
             )
             .await
-        {
-            tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
-            return Ok(Some(e.to_string()));
-        }
+            {
+                Ok(_) => None,
+                Err(e @ indexer::IndexError::Storage(_)) => return Err(e.into()),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
+                    Some(format!("embedding failed: {e}"))
+                }
+            }
+        } else {
+            None
+        };
 
-        Ok(None)
+        let notes: Vec<&str> = [rechunk_note.as_deref(), embed_note.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+
+        Ok(if notes.is_empty() {
+            None
+        } else {
+            Some(notes.join("; "))
+        })
     }
 
-    async fn handle_empty_index(&self) -> Result<bool, McpError> {
-        if self.auto_index_failures.load(Ordering::SeqCst) >= 3
-            || self
-                .auto_indexed
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_err()
-        {
-            return Ok(false);
-        }
-
+    async fn handle_empty_index(&self) -> Result<bool, YomuError> {
         tracing::info!("Index is empty, running chunk-only index");
-        if let Err(e) = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await {
-            let failures = self.auto_index_failures.fetch_add(1, Ordering::SeqCst) + 1;
-            if failures >= 3 {
-                tracing::warn!(failures, "Auto-index failed {failures} times, disabling retries");
-            } else {
-                self.auto_indexed.store(false, Ordering::SeqCst);
-            }
-            return Err(McpError::internal_error(e.to_string(), None));
-        }
-        self.auto_index_failures.store(0, Ordering::SeqCst);
+        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await?;
         Ok(true)
     }
 
-    async fn rechunk_if_stale(&self, default_on_error: bool) {
-        let fresh = self.check_index_fresh(default_on_error).await;
-        if !fresh
-            && let Err(e) = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await
-        {
-            tracing::warn!(error = %e, "Re-chunking failed, proceeding with existing chunks");
+    async fn try_rechunk(&self) -> Option<String> {
+        match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await {
+            Ok(_) => None,
+            Err(e) => Some(format!("re-chunking failed: {e}")),
         }
     }
 
-    async fn handle_fully_embedded(&self) -> Result<bool, McpError> {
-        let fresh = self.check_index_fresh(true).await;
-        if fresh {
-            return Ok(false);
+    async fn rechunk_if_stale(&self) -> Option<String> {
+        if self.check_index_fresh().await {
+            return None;
         }
-        self.rechunk_if_stale(true).await;
+        self.try_rechunk().await
+    }
+
+    async fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
+        if self.check_index_fresh().await {
+            return Ok((false, None));
+        }
+        let note = self.try_rechunk().await;
         let stats = self.with_db(storage::get_stats).await?;
-        Ok(stats.embedded_chunks < stats.total_chunks)
+        Ok((stats.embedded_chunks < stats.total_chunks, note))
     }
 
-    async fn check_index_fresh(&self, default_on_error: bool) -> bool {
-        match self.with_db(|conn| storage::is_index_fresh(conn, 60)).await {
+    async fn check_index_fresh(&self) -> bool {
+        match self
+            .with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS))
+            .await
+        {
             Ok(fresh) => fresh,
             Err(e) => {
-                tracing::warn!(error = %e, "Failed to check index freshness");
-                default_on_error
+                tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");
+                false
             }
         }
     }
 
-    fn require_embedder(&self) -> Result<&dyn Embed, McpError> {
-        self.embedder.as_deref().ok_or_else(|| {
-            McpError::internal_error(
-                "GEMINI_API_KEY not set. Get one at https://aistudio.google.com/apikey",
-                None,
-            )
-        })
+    fn get_embedder(&self) -> &dyn Embed {
+        static NOOP: NoOpEmbedder = NoOpEmbedder;
+        self.embedder
+            .get_or_init(|| {
+                let http = match Client::builder().build() {
+                    Ok(h) => h,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "HTTP client init failed, embedder unavailable");
+                        return None;
+                    }
+                };
+                Embedder::from_env(http)
+                    .ok()
+                    .map(|e| Arc::new(e) as Arc<dyn Embed>)
+            })
+            .as_deref()
+            .unwrap_or(&NOOP)
     }
 
     async fn fetch_enrichment_context(
         &self,
         results: &[storage::SearchResult],
-    ) -> Result<
-        (
-            std::collections::HashMap<String, String>,
-            std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
-        ),
-        McpError,
-    > {
-        let conn = Arc::clone(&self.conn);
+    ) -> Result<EnrichmentContext, YomuError> {
         let unique_paths: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
+            let mut seen = HashSet::new();
             results
                 .iter()
                 .filter(|r| seen.insert(&r.chunk.file_path))
                 .map(|r| r.chunk.file_path.clone())
                 .collect()
         };
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock();
+        self.with_db(move |conn| {
             let path_refs: Vec<&str> = unique_paths.iter().map(|s| s.as_str()).collect();
-            let imports = storage::get_file_contexts(&conn, &path_refs)?;
-            let siblings = storage::get_file_siblings(&conn, &path_refs)?;
-            Ok::<_, storage::StorageError>((imports, siblings))
+            let imports = storage::get_file_contexts(conn, &path_refs)?;
+            let siblings = storage::get_file_siblings(conn, &path_refs)?;
+            Ok(EnrichmentContext { imports, siblings })
         })
         .await
-        .map_err(|e| McpError::internal_error(format!("internal task failed: {e}"), None))?
-        .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
-    async fn with_db<T, F>(&self, f: F) -> Result<T, McpError>
+    async fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
     where
         F: FnOnce(&storage::Db) -> Result<T, storage::StorageError> + Send + 'static,
         T: Send + 'static,
@@ -466,8 +469,8 @@ impl Yomu {
             f(&conn)
         })
         .await
-        .map_err(|e| McpError::internal_error(format!("internal task failed: {e}"), None))?
-        .map_err(|e| McpError::internal_error(e.to_string(), None))
+        .map_err(|e| YomuError::Internal(format!("task join failed: {e}")))?
+        .map_err(YomuError::from)
     }
 }
 
@@ -485,181 +488,5 @@ fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
     (target, None)
 }
 
-fn format_dependents_by_depth(
-    output: &mut String,
-    dependents: &[storage::Dependent],
-    heading_prefix: &str,
-) {
-    let mut current_depth = 0;
-    for dep in dependents {
-        if dep.depth != current_depth {
-            current_depth = dep.depth;
-            output.push_str(&format!("{heading_prefix} Depth {}\n", current_depth));
-        }
-        output.push_str(&format!("- {}\n", dep.file_path));
-    }
-}
-
-fn format_impact_all(target: &str, dependents: &[storage::Dependent]) -> String {
-    let mut output = format!("## Impact analysis: `{}`\n\n", target);
-    format_dependents_by_depth(&mut output, dependents, "###");
-    output.push_str(&format!(
-        "\nTotal: {} dependent file(s)\n",
-        dependents.len()
-    ));
-    output
-}
-
-fn format_impact_results(
-    target: &str,
-    symbol_refs: &[String],
-    all_dependents: &[storage::Dependent],
-) -> String {
-    let mut output = format!("## Impact analysis: `{}`\n\n", target);
-
-    if !symbol_refs.is_empty() {
-        output.push_str("### Direct symbol references\n");
-        for f in symbol_refs {
-            output.push_str(&format!("- {}\n", f));
-        }
-    }
-
-    output.push_str("\n### All transitive dependents\n");
-    format_dependents_by_depth(&mut output, all_dependents, "####");
-    output.push_str(&format!(
-        "\nTotal: {} dependent file(s)\n",
-        all_dependents.len()
-    ));
-    output
-}
-
-fn format_results_grouped(
-    results: &[storage::SearchResult],
-    imports_map: &std::collections::HashMap<String, String>,
-    siblings_map: &std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
-) -> String {
-    let mut groups: std::collections::HashMap<&str, Vec<(usize, &storage::SearchResult)>> =
-        std::collections::HashMap::new();
-    for (i, result) in results.iter().enumerate() {
-        groups
-            .entry(&result.chunk.file_path)
-            .or_default()
-            .push((i, result));
-    }
-
-    let mut sorted: Vec<_> = groups.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        let best = |items: &[(usize, &storage::SearchResult)]| {
-            items
-                .iter()
-                .map(|(_, r)| r.score)
-                .fold(f32::NEG_INFINITY, f32::max)
-        };
-        best(&b.1)
-            .partial_cmp(&best(&a.1))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut output = String::new();
-    for (file_path, chunks) in &sorted {
-        format_file_group(&mut output, file_path, chunks, imports_map, siblings_map);
-    }
-    output
-}
-
-fn format_imports_line(imports_map: &std::collections::HashMap<String, String>, file_path: &str) -> Option<String> {
-    let imports_text = imports_map.get(file_path)?;
-    let items: Vec<&str> = imports_text.split('\n').filter(|s| !s.is_empty()).collect();
-    if items.is_empty() { return None; }
-    Some(format!("Imports: {}\n", items.join(", ")))
-}
-
-fn format_siblings_line(
-    siblings_map: &std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
-    file_path: &str,
-    result_ranges: &std::collections::HashSet<(u32, u32)>,
-) -> Option<String> {
-    let siblings = siblings_map.get(file_path)?;
-    let filtered: Vec<String> = siblings
-        .iter()
-        .filter(|s| !result_ranges.contains(&(s.start_line, s.end_line)))
-        .map(|s| {
-            let name = s.name.as_deref().unwrap_or("(unnamed)");
-            format!("{} [{}]", name, s.chunk_type.as_str())
-        })
-        .collect();
-    if filtered.is_empty() { return None; }
-    Some(format!("Siblings: {}\n", filtered.join(", ")))
-}
-
-fn format_file_group(
-    output: &mut String,
-    file_path: &str,
-    chunks: &[(usize, &storage::SearchResult)],
-    imports_map: &std::collections::HashMap<String, String>,
-    siblings_map: &std::collections::HashMap<String, Vec<storage::SiblingInfo>>,
-) {
-    output.push_str(&format!("## {}\n", file_path));
-
-    if let Some(line) = format_imports_line(imports_map, file_path) {
-        output.push_str(&line);
-    }
-
-    let result_ranges: std::collections::HashSet<(u32, u32)> = chunks
-        .iter()
-        .map(|(_, r)| (r.chunk.start_line, r.chunk.end_line))
-        .collect();
-    if let Some(line) = format_siblings_line(siblings_map, file_path, &result_ranges) {
-        output.push_str(&line);
-    }
-
-    output.push('\n');
-
-    for (rank, result) in chunks {
-        let chunk = &result.chunk;
-        let name = chunk.name.as_deref().unwrap_or("(unnamed)");
-        let score_label = format!("(similarity: {:.2})", result.score);
-        output.push_str(&format!(
-            "{}. {} [{}] — {}:{} {}\n",
-            rank + 1,
-            name,
-            chunk.chunk_type.as_str(),
-            chunk.start_line,
-            chunk.end_line,
-            score_label,
-        ));
-        output.push_str(&chunk.content);
-        output.push_str("\n\n");
-    }
-}
-
-#[tool_handler]
-impl ServerHandler for Yomu {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "yomu: Semantic code search for frontend projects (TS, TSX, JS, CSS, HTML). \
-                 Prefer 'explorer' over grep/glob when: (1) you don't know exact names or keywords, \
-                 (2) you want to find code by concept (e.g. \"form validation\", \"auth flow\"), \
-                 (3) you need to discover related components/hooks/types across the codebase. \
-                 Use grep/glob instead when you need exact string matching or known file paths. \
-                 'explorer' auto-indexes on first use and incrementally embeds chunks each call. \
-                 Results include full code, imports, and sibling chunks. Use limit/offset for pagination. \
-                 'impact' analyzes which files depend on a given file or symbol — use it to understand \
-                 the blast radius before modifying code. Pass target=\"src/hooks/useAuth.ts\" for file-level \
-                 analysis, or add symbol=\"useAuth\" to filter to a specific export. \
-                 'index' updates the chunk index incrementally (no API calls, ~2s). Usually not needed — \
-                 explorer auto-indexes on first use. \
-                 'rebuild' re-parses all files from scratch — use after upgrading yomu or if index seems corrupted. \
-                 'status' shows index statistics including embedding coverage."
-                    .into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests;
-

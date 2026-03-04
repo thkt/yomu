@@ -23,13 +23,24 @@ read packages/ai/src/ui/process-ui-message-stream.ts → Now I have context.
 **With yomu:**
 
 ```
-explorer("streaming chat hooks")
+yomu search "streaming chat hooks"
 
-  #1  useChat [hook] — packages/react/src/use-chat.ts:58
-      Full function body, imports, sibling type definitions included.
+## packages/react/src/use-chat.ts
+Imports: @ai-sdk/provider-utils, @ai-sdk/ui-utils
+Siblings: UseChatOptions [type_def], UseChatHelpers [type_def]
 
-  #2  useStreamableValue [hook] — packages/rsc/src/streamable-value/...
-  #3  useSharedChatContext [hook] — examples/ai-e2e-next/.../chat-context.tsx
+1. useChat [hook] — 58:210 (similarity: 0.85)
+export function useChat({ api, ...options }: UseChatOptions): UseChatHelpers {
+  ...full function body...
+}
+
+## packages/rsc/src/streamable-value/use-streamable-value.ts
+2. useStreamableValue [hook] — 12:45 (similarity: 0.72)
+...
+
+## examples/ai-e2e-next/.../chat-context.tsx
+3. useSharedChatContext [hook] — 8:22 (similarity: 0.68)
+...
 ```
 
 1 call. The implementation is the first result — out of 130 files that contain "useChat", and 9,015 total chunks in the index.
@@ -68,28 +79,19 @@ cargo build --release
 
 ### Configure
 
-You need a [Gemini API key](https://aistudio.google.com/apikey) (free tier works).
+For semantic search, set a [Gemini API key](https://aistudio.google.com/apikey) (free tier works):
 
-Add to your MCP client config (e.g. Claude Code `~/.claude/.mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "yomu": {
-      "command": "yomu",
-      "env": {
-        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
-      }
-    }
-  }
-}
+```sh
+export GEMINI_API_KEY="your-key-here"
 ```
 
-No manual indexing. `explorer` auto-indexes on first call.
+Without an API key, `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without a key.
 
-## Tools
+No manual indexing. `search` auto-indexes on first call.
 
-### `explorer` — Search by concept
+## Commands
+
+### `yomu search <query>` — Search by concept
 
 Returns ranked results with full context. Each result includes:
 
@@ -100,24 +102,40 @@ Returns ranked results with full context. Each result includes:
 | Sibling defs   | Other functions/types in the same file          |
 | Chunk type     | component / hook / type_def / css_rule          |
 
-### `impact` — Blast radius of a change
+Options: `--limit` (default: 10, max: 100), `--offset` (default: 0, max: 500)
+
+### `yomu impact <target>` — Blast radius of a change
 
 Shows which files depend on a target file or symbol.
 
 ```
-> impact("packages/ai/src/ui/ui-messages.ts:UIMessage", depth=2)
+$ yomu impact "packages/ai/src/ui/ui-messages.ts" --symbol UIMessage --depth 2
 
-  Direct symbol references: 34 files
-  Depth 1: 37 files
-  Depth 2: 18 files
-  Total: 55 dependent files
+## Impact analysis: `packages/ai/src/ui/ui-messages.ts`
+
+### Direct symbol references
+- packages/ai/src/ui/process-ui-message-stream.ts
+- packages/react/src/use-chat.ts
+  ...34 files
+
+### All transitive dependents
+#### Depth 1
+- packages/ai/src/ui/process-ui-message-stream.ts
+  ...37 files
+#### Depth 2
+- packages/react/src/use-chat.ts
+  ...18 files
+
+Total: 55 dependent file(s)
 ```
 
 Real output from vercel/ai. One call replaces manually tracing imports.
 
-### `index` / `rebuild` / `status`
+Options: `--symbol` (filter to specific export), `--depth` (default: 3, max: 10)
 
-- `index` — Update the chunk index. No API calls, ~2.5s on 3,535 files. Usually not needed — `explorer` auto-indexes.
+### `yomu index` / `yomu rebuild` / `yomu status`
+
+- `index` — Update the chunk index. No API calls, ~2.5s on 3,535 files. Usually not needed — `search` auto-indexes.
 - `rebuild` — Full re-parse from scratch.
 - `status` — Files, chunks, embedding coverage, references.
 
@@ -129,7 +147,7 @@ Source files → tree-sitter AST → Semantic chunks → Gemini embeddings → H
 
 **Indexing** — tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. The import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls.
 
-**Embedding** — Chunks are embedded incrementally via Gemini (free tier). 50 chunks per `explorer` call, prioritized by import count — the most-used code gets searchable first. No upfront build required.
+**Embedding** — Chunks are embedded incrementally via Gemini (free tier). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required.
 
 **Search** — Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Results are reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test files are pushed down.
 
@@ -148,17 +166,17 @@ Other files fall back to character-based chunking with overlap.
 
 - **Gemini free-tier rate limits** — 100 RPM, 1,500 requests/day. Heavy usage across projects can exhaust the daily quota (resets midnight Pacific Time).
 - **SCSS/Sass not supported** — Only plain CSS.
-- **Cold start** — First `explorer` call takes a few seconds for chunking + initial embedding.
+- **Cold start** — First `search` call takes a few seconds for chunking + initial embedding.
 - **Large files skipped** — Files over 1 MB are excluded from indexing.
 
 ## Architecture
 
 ```
 src/
-├── main.rs              MCP server (stdio transport)
+├── main.rs              CLI entry point (clap)
 ├── lib.rs               Crate root, public API
 ├── config.rs            Runtime configuration
-├── tools/               MCP tool handlers (explorer, index, rebuild, impact, status)
+├── tools/               Application facade — orchestrates indexer, query, storage per command
 ├── indexer/
 │   ├── mod.rs           Orchestration: incremental index, embed budget
 │   ├── chunker/         tree-sitter AST → semantic chunks
@@ -176,4 +194,4 @@ Single binary, zero runtime dependencies. SQLite and sqlite-vec are statically l
 
 ## License
 
-Apache-2.0
+MIT
