@@ -47,6 +47,25 @@ export function useChat({ api, ...options }: UseChatOptions): UseChatHelpers {
 
 Each result includes the full code body, file imports, and sibling definitions. No follow-up reads needed.
 
+## Why not just grep?
+
+[Claude Code's developers found](https://zenn.dev/acntechjp/articles/c1296f425baf03) that agentic search — letting the model use glob and grep iteratively — outperformed RAG for code navigation. They're right. When the agent can retry with different keywords, read directory structures, and refine its search, grep works remarkably well.
+
+yomu doesn't compete with that workflow. It **reduces the iterations**:
+
+| Approach              | Calls | Context window cost                       |
+| --------------------- | ----- | ----------------------------------------- |
+| grep/glob (iterative) | 3–5   | Each miss adds noise                      |
+| yomu search           | 1     | Code + imports + siblings in one response |
+
+The classic RAG problems — index sync lag, stale embeddings, cold starts — are addressed:
+
+- **No sync lag** — Every `search` checks index freshness and re-chunks automatically if files changed
+- **No embedding required** — FTS5 full-text fallback works without any API key
+- **Incremental embedding** — 50 chunks per search call, most-imported files first. No upfront build
+
+grep is the right tool when you know the name. yomu is for the moment before that — when you know the concept but not the identifier.
+
 ## When to use yomu (and when not to)
 
 **Use yomu when:**
