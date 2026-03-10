@@ -1,6 +1,6 @@
-# yomu
+**English** | [日本語](README.ja.md)
 
-[日本語](README.ja.md)
+# yomu
 
 Frontend code search for AI agents. Find code by concept when you don't know the name.
 

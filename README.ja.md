@@ -1,6 +1,6 @@
-# yomu
+[English](README.md) | **日本語**
 
-[English](README.md)
+# yomu
 
 AIエージェント向けフロントエンドコード検索。名前がわからなくても、概念でコードを見つけられます。
 
