@@ -4,8 +4,8 @@ use std::time::Duration;
 use reqwest::Client;
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
-const EMBED_PATH: &str = "/models/gemini-embedding-001:embedContent";
-const BATCH_PATH: &str = "/models/gemini-embedding-001:batchEmbedContents";
+const EMBED_PATH: &str = "/models/gemini-embedding-2-preview:embedContent";
+const BATCH_PATH: &str = "/models/gemini-embedding-2-preview:batchEmbedContents";
 
 pub use crate::storage::EMBEDDING_DIMS;
 const MAX_RETRIES: u32 = 5;
@@ -37,7 +37,7 @@ type EmbedFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = Result<T, Emb
 /// Implementations MUST return vectors of exactly [`EMBEDDING_DIMS`] elements.
 /// Returning vectors of other lengths may cause storage layer errors or corrupted search results.
 pub trait Embed: Send + Sync {
-    /// Embed a single query string (uses RETRIEVAL_QUERY task type).
+    /// Embed a single query string (uses CODE_RETRIEVAL_QUERY task type).
     fn embed_query<'a>(&'a self, text: &'a str) -> EmbedFuture<'a, Vec<f32>>;
     /// Embed multiple documents in batch (uses RETRIEVAL_DOCUMENT task type).
     fn embed_documents<'a>(&'a self, texts: &'a [String]) -> EmbedFuture<'a, Vec<Vec<f32>>>;
@@ -167,9 +167,9 @@ impl Embed for Embedder {
     fn embed_query<'a>(&'a self, text: &'a str) -> EmbedFuture<'a, Vec<f32>> {
         Box::pin(async move {
             let body = serde_json::json!({
-                "model": "models/gemini-embedding-001",
+                "model": "models/gemini-embedding-2-preview",
                 "content": { "parts": [{ "text": text }] },
-                "taskType": "RETRIEVAL_QUERY",
+                "taskType": "CODE_RETRIEVAL_QUERY",
                 "outputDimensionality": EMBEDDING_DIMS
             });
 
@@ -191,7 +191,7 @@ impl Embed for Embedder {
                     .iter()
                     .map(|text| {
                         serde_json::json!({
-                            "model": "models/gemini-embedding-001",
+                            "model": "models/gemini-embedding-2-preview",
                             "content": { "parts": [{ "text": text }] },
                             "taskType": "RETRIEVAL_DOCUMENT",
                             "outputDimensionality": EMBEDDING_DIMS
