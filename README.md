@@ -10,11 +10,11 @@ You need to find the chat streaming hook in [vercel/ai](https://github.com/verce
 
 Typical agent workflow:
 
-```
-glob "**/chat*"       → 12 files. None are it (it's called use-chat.ts).
-grep "stream.*hook"   → 0 files.
-grep "chat"           → too many results. Try reading a few...
-read packages/react/src/use-chat.ts  → Found it. What does it import?
+```sh
+glob "**/chat*"                                      → 12 files. None are it (it's called use-chat.ts).
+grep "stream.*hook"                                  → 0 files.
+grep "chat"                                          → too many results. Try reading a few...
+read packages/react/src/use-chat.ts                  → Found it. What does it import?
 read packages/ai/src/ui/process-ui-message-stream.ts → Now I have context.
 ```
 
@@ -22,7 +22,7 @@ read packages/ai/src/ui/process-ui-message-stream.ts → Now I have context.
 
 With yomu:
 
-```
+```sh
 yomu search "streaming chat hooks"
 
 ## packages/react/src/use-chat.ts
@@ -123,7 +123,7 @@ Options: `--limit` (default: 10, max: 100), `--offset` (default: 0, max: 500)
 
 Shows which files depend on a target file or symbol.
 
-```
+```sh
 $ yomu impact "packages/ai/src/ui/ui-messages.ts" --symbol UIMessage --depth 2
 
 ## Impact analysis: `packages/ai/src/ui/ui-messages.ts`
@@ -158,7 +158,7 @@ Options: `--symbol` (filter to specific export), `--depth` (default: 3, max: 10)
 
 ## How it works
 
-```
+```text
 Source files → tree-sitter AST → Semantic chunks → Gemini embeddings → Hybrid search
 ```
 
@@ -190,7 +190,7 @@ Other files fall back to character-based chunking with overlap.
 
 ## Architecture
 
-```
+```text
 src/
 ├── main.rs              CLI entry point (clap)
 ├── lib.rs               Crate root, public API
