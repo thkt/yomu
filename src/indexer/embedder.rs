@@ -29,7 +29,7 @@ pub enum EmbedError {
 
 type EmbedFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = Result<T, EmbedError>> + Send + 'a>>;
 
-/// Text embedding provider. Returns [`EMBEDDING_DIMS`]-dimensional f32 vectors.
+/// Code embedding provider. Returns [`EMBEDDING_DIMS`]-dimensional f32 vectors.
 ///
 /// Object-safe: methods return boxed futures so `dyn Embed` can be used.
 ///
