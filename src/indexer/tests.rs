@@ -31,11 +31,13 @@ async fn run_index_with_mock_embedder() {
     std::fs::write(
         src_dir.join("Button.tsx"),
         "function Button() { return <div/>; }",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         src_dir.join("App.tsx"),
         "function App() { return <main/>; }",
-    ).unwrap();
+    )
+    .unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -66,11 +68,15 @@ async fn run_index_skips_unchanged_files() {
     let conn = Arc::new(Mutex::new(conn));
 
     // First run: processes file
-    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
     assert_eq!(r1.files_processed, 1);
 
     // Second run: skips unchanged file
-    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
     assert_eq!(r2.files_processed, 0);
     assert_eq!(r2.files_skipped, 1);
 }
@@ -86,10 +92,14 @@ async fn run_index_force_reindexes() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
 
     // Force reindex
-    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true).await.unwrap();
+    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true)
+        .await
+        .unwrap();
     assert_eq!(r2.files_processed, 1);
     assert_eq!(r2.files_skipped, 0);
 }
@@ -107,15 +117,24 @@ async fn run_index_removes_deleted_file_chunks() {
     let conn = Arc::new(Mutex::new(conn));
 
     // Index both files
-    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
     assert_eq!(r1.files_processed, 2);
-    assert_eq!(storage::get_stats(&conn.lock().unwrap()).unwrap().total_files, 2);
+    assert_eq!(
+        storage::get_stats(&conn.lock().unwrap())
+            .unwrap()
+            .total_files,
+        2
+    );
 
     // Delete B.tsx from disk
     std::fs::remove_file(src_dir.join("B.tsx")).unwrap();
 
     // Re-index: should remove orphaned B.tsx chunks
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
@@ -194,13 +213,21 @@ async fn run_index_stores_imports_in_file_context() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
+        .await
+        .unwrap();
 
     let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
     let imports = &contexts["src/App.tsx"];
-    assert!(imports.contains("import { useState } from 'react'"), "expected useState import, got: {imports}");
-    assert!(imports.contains("import { useAuth } from './useAuth'"), "expected useAuth import, got: {imports}");
+    assert!(
+        imports.contains("import { useState } from 'react'"),
+        "expected useState import, got: {imports}"
+    );
+    assert!(
+        imports.contains("import { useAuth } from './useAuth'"),
+        "expected useAuth import, got: {imports}"
+    );
 }
 
 #[tokio::test]
@@ -211,17 +238,21 @@ async fn run_chunk_only_index_stores_chunks_without_embeddings() {
     std::fs::write(
         src_dir.join("App.tsx"),
         "import { Button } from './Button';\nfunction App() { return <Button/>; }",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         src_dir.join("Button.tsx"),
         "export function Button() { return <div/>; }",
-    ).unwrap();
+    )
+    .unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
+    let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
+        .await
+        .unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -233,7 +264,10 @@ async fn run_chunk_only_index_stores_chunks_without_embeddings() {
     assert_eq!(stats.embedded_chunks, 0);
 
     let ref_count = storage::get_reference_count(&conn.lock().unwrap()).unwrap();
-    assert!(ref_count >= 1, "expected at least 1 reference from App→Button, got {ref_count}");
+    assert!(
+        ref_count >= 1,
+        "expected at least 1 reference from App→Button, got {ref_count}"
+    );
 }
 
 #[tokio::test]
@@ -245,20 +279,23 @@ async fn run_incremental_embed_within_budget() {
         std::fs::write(
             src_dir.join(name),
             format!("function {}() {{ return 1; }}", &name[..1]),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
+    run_chunk_only_index(Arc::clone(&conn), dir.path())
+        .await
+        .unwrap();
     let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
-    let result = run_incremental_embed(
-        Arc::clone(&conn), &MockEmbedder, 50, None,
-    ).await.unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
+        .await
+        .unwrap();
 
     assert!(result.chunks_embedded >= 3);
     assert_eq!(result.files_completed, 3);
@@ -277,18 +314,21 @@ async fn run_incremental_embed_exhausts_budget() {
         std::fs::write(
             src_dir.join(format!("F{i}.tsx")),
             format!("function F{i}() {{ return {i}; }}"),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
+    run_chunk_only_index(Arc::clone(&conn), dir.path())
+        .await
+        .unwrap();
 
-    let result = run_incremental_embed(
-        Arc::clone(&conn), &MockEmbedder, 2, None,
-    ).await.unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 2, None)
+        .await
+        .unwrap();
 
     assert!(result.budget_exhausted);
     assert!(result.chunks_embedded <= 2);
@@ -304,33 +344,47 @@ async fn run_incremental_embed_prioritizes_type_hints() {
     let conn = storage::open_db(&db_path).unwrap();
 
     storage::replace_file_chunks_only(
-        &conn, "src/types.tsx",
+        &conn,
+        "src/types.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::TypeDef,
             name: Some("AuthConfig"),
             content: "interface AuthConfig {}",
-            start_line: 1, end_line: 3,
+            start_line: 1,
+            end_line: 3,
         }],
-        "h1", "", &[],
-    ).unwrap();
+        "h1",
+        "",
+        &[],
+    )
+    .unwrap();
 
     storage::replace_file_chunks_only(
-        &conn, "src/useAuth.tsx",
+        &conn,
+        "src/useAuth.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Hook,
             name: Some("useAuth"),
             content: "function useAuth() {}",
-            start_line: 1, end_line: 3,
+            start_line: 1,
+            end_line: 3,
         }],
-        "h2", "", &[],
-    ).unwrap();
+        "h2",
+        "",
+        &[],
+    )
+    .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_incremental_embed(
-        Arc::clone(&conn), &MockEmbedder, 1,
+        Arc::clone(&conn),
+        &MockEmbedder,
+        1,
         Some(&[storage::ChunkType::Hook]),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.files_completed, 1);
     assert!(result.chunks_embedded >= 1);
@@ -338,13 +392,19 @@ async fn run_incremental_embed_prioritizes_type_hints() {
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert!(stats.embedded_chunks >= 1);
 
-    let hook_embedded: bool = conn.lock().unwrap().query_row(
-        "SELECT EXISTS(
+    let hook_embedded: bool = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS(
             SELECT 1 FROM vec_chunks v
             INNER JOIN chunks c ON c.id = v.chunk_id
             WHERE c.file_path = 'src/useAuth.tsx'
-        )", [], |row| row.get(0),
-    ).unwrap();
+        )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert!(hook_embedded, "hook file should be embedded first");
 }
 
@@ -355,31 +415,41 @@ async fn run_incremental_embed_none_hints_preserves_order() {
     let conn = storage::open_db(&db_path).unwrap();
 
     storage::replace_file_chunks_only(
-        &conn, "src/B.tsx",
+        &conn,
+        "src/B.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("B"),
             content: "function B() {}",
-            start_line: 1, end_line: 3,
+            start_line: 1,
+            end_line: 3,
         }],
-        "h1", "", &[],
-    ).unwrap();
+        "h1",
+        "",
+        &[],
+    )
+    .unwrap();
     storage::replace_file_chunks_only(
-        &conn, "src/A.tsx",
+        &conn,
+        "src/A.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("A"),
             content: "function A() {}",
-            start_line: 1, end_line: 3,
+            start_line: 1,
+            end_line: 3,
         }],
-        "h2", "", &[],
-    ).unwrap();
+        "h2",
+        "",
+        &[],
+    )
+    .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_incremental_embed(
-        Arc::clone(&conn), &MockEmbedder, 50, None,
-    ).await.unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
+        .await
+        .unwrap();
 
     assert_eq!(result.files_completed, 2);
     assert!(result.chunks_embedded >= 2);
@@ -414,9 +484,18 @@ async fn run_incremental_embed_aborts_after_consecutive_failures() {
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_incremental_embed(Arc::clone(&conn), &FailingEmbedder::all_fail(500, "mock failure"), 50, None).await;
+    let result = run_incremental_embed(
+        Arc::clone(&conn),
+        &FailingEmbedder::all_fail(500, "mock failure"),
+        50,
+        None,
+    )
+    .await;
 
-    assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
+    assert!(
+        result.is_err(),
+        "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures"
+    );
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("mock failure"), "got: {err_msg}");
 }
@@ -439,9 +518,18 @@ async fn embed_and_store_aborts_after_consecutive_failures() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(Arc::clone(&conn), dir.path(), &FailingEmbedder::all_fail(500, "mock failure"), false).await;
+    let result = run_index(
+        Arc::clone(&conn),
+        dir.path(),
+        &FailingEmbedder::all_fail(500, "mock failure"),
+        false,
+    )
+    .await;
 
-    assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
+    assert!(
+        result.is_err(),
+        "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures"
+    );
 }
 
 #[test]
@@ -450,34 +538,47 @@ fn order_files_for_embedding_most_imported_first() {
 
     // B is imported by A, so B should come first
     storage::replace_file_chunks_only(
-        &conn, "src/A.tsx",
+        &conn,
+        "src/A.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("A"),
             content: "function A() {}",
-            start_line: 1, end_line: 1,
+            start_line: 1,
+            end_line: 1,
         }],
-        "h1", "", &[storage::Reference {
+        "h1",
+        "",
+        &[storage::Reference {
             source_file: "src/A.tsx".to_string(),
             target_file: "src/B.tsx".to_string(),
             symbol_name: Some("B".to_string()),
             ref_kind: storage::RefKind::Named,
         }],
-    ).unwrap();
+    )
+    .unwrap();
     storage::replace_file_chunks_only(
-        &conn, "src/B.tsx",
+        &conn,
+        "src/B.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("B"),
             content: "function B() {}",
-            start_line: 1, end_line: 1,
+            start_line: 1,
+            end_line: 1,
         }],
-        "h2", "", &[],
-    ).unwrap();
+        "h2",
+        "",
+        &[],
+    )
+    .unwrap();
 
     let ordered = order_files_for_embedding(&conn, None).unwrap();
     assert_eq!(ordered.len(), 2);
-    assert_eq!(ordered[0], "src/B.tsx", "most-imported file should come first");
+    assert_eq!(
+        ordered[0], "src/B.tsx",
+        "most-imported file should come first"
+    );
     assert_eq!(ordered[1], "src/A.tsx");
 }
 
@@ -486,30 +587,41 @@ fn order_files_for_embedding_type_hints_prioritize() {
     let (conn, _dir) = test_db();
 
     storage::replace_file_chunks_only(
-        &conn, "src/types.tsx",
+        &conn,
+        "src/types.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::TypeDef,
             name: Some("Config"),
             content: "interface Config {}",
-            start_line: 1, end_line: 1,
+            start_line: 1,
+            end_line: 1,
         }],
-        "h1", "", &[],
-    ).unwrap();
+        "h1",
+        "",
+        &[],
+    )
+    .unwrap();
     storage::replace_file_chunks_only(
-        &conn, "src/App.tsx",
+        &conn,
+        "src/App.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("App"),
             content: "function App() {}",
-            start_line: 1, end_line: 1,
+            start_line: 1,
+            end_line: 1,
         }],
-        "h2", "", &[],
-    ).unwrap();
+        "h2",
+        "",
+        &[],
+    )
+    .unwrap();
 
-    let ordered = order_files_for_embedding(
-        &conn, Some(&[storage::ChunkType::TypeDef]),
-    ).unwrap();
-    assert_eq!(ordered[0], "src/types.tsx", "type hint file should be prioritized");
+    let ordered = order_files_for_embedding(&conn, Some(&[storage::ChunkType::TypeDef])).unwrap();
+    assert_eq!(
+        ordered[0], "src/types.tsx",
+        "type hint file should be prioritized"
+    );
 }
 
 #[test]
@@ -517,15 +629,20 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
     let (conn, _dir) = test_db();
 
     storage::replace_file_chunks_only(
-        &conn, "src/A.tsx",
+        &conn,
+        "src/A.tsx",
         &[storage::NewChunk {
             chunk_type: &storage::ChunkType::Component,
             name: Some("A"),
             content: "function A() {}",
-            start_line: 1, end_line: 1,
+            start_line: 1,
+            end_line: 1,
         }],
-        "h1", "", &[],
-    ).unwrap();
+        "h1",
+        "",
+        &[],
+    )
+    .unwrap();
 
     let ordered = order_files_for_embedding(&conn, Some(&[])).unwrap();
     assert_eq!(ordered.len(), 1);

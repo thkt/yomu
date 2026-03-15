@@ -10,7 +10,9 @@ pub(super) struct EnrichmentContext {
 pub(super) fn format_coverage(stats: &storage::IndexStatus) -> String {
     format!(
         "{}/{} chunks ({}%)",
-        stats.embedded_chunks, stats.total_chunks, stats.embed_percentage()
+        stats.embedded_chunks,
+        stats.total_chunks,
+        stats.embed_percentage()
     )
 }
 
@@ -88,8 +90,7 @@ pub(super) fn format_results_grouped(
     results: &[storage::SearchResult],
     ctx: &EnrichmentContext,
 ) -> String {
-    let mut groups: HashMap<&str, Vec<(usize, &storage::SearchResult)>> =
-        HashMap::new();
+    let mut groups: HashMap<&str, Vec<(usize, &storage::SearchResult)>> = HashMap::new();
     for (i, result) in results.iter().enumerate() {
         groups
             .entry(&result.chunk.file_path)

@@ -2,10 +2,10 @@ pub mod chunker;
 pub mod embedder;
 pub mod walker;
 
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use sha2::{Digest, Sha256};
 
 use crate::resolver::Resolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
@@ -176,8 +176,7 @@ async fn remove_orphans(
             let conn = conn.lock().unwrap();
             storage::get_all_file_paths(&conn)
         })
-        .await
-        ?
+        .await?
     }?;
 
     let orphans: Vec<_> = indexed_paths
@@ -199,8 +198,7 @@ async fn remove_orphans(
         tracing::info!(removed = orphans.len(), "Removed orphaned file chunks");
         Ok::<_, StorageError>(())
     })
-    .await
-    ?;
+    .await?;
     Ok(result?)
 }
 
@@ -272,7 +270,10 @@ fn classify_embed_error(
         "Embedding failed, skipping file",
     );
     if *consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-        tracing::error!(consecutive_errors = *consecutive_errors, "Too many consecutive embedding failures, aborting");
+        tracing::error!(
+            consecutive_errors = *consecutive_errors,
+            "Too many consecutive embedding failures, aborting"
+        );
         EmbedFailure::Abort(e)
     } else {
         EmbedFailure::Skip
@@ -287,7 +288,15 @@ fn store_file_data(
 ) -> Result<(), StorageError> {
     let new_chunks = pf.to_new_chunks();
     let conn = conn.lock().unwrap();
-    storage::replace_file_chunks(&conn, &pf.rel_path, &new_chunks, &embeddings, &pf.hash, &pf.imports_text, &refs)
+    storage::replace_file_chunks(
+        &conn,
+        &pf.rel_path,
+        &new_chunks,
+        &embeddings,
+        &pf.hash,
+        &pf.imports_text,
+        &refs,
+    )
 }
 
 async fn embed_and_store(
@@ -369,7 +378,11 @@ async fn run_chunk_only_index_inner(
     force: bool,
 ) -> Result<IndexResult, IndexError> {
     let files = walker::walk_frontend_files(root);
-    tracing::info!(file_count = files.len(), force, "Starting chunk-only indexing");
+    tracing::info!(
+        file_count = files.len(),
+        force,
+        "Starting chunk-only indexing"
+    );
 
     let current_rel_paths: std::collections::HashSet<String> =
         files.iter().map(|f| to_rel_path(root, f)).collect();
@@ -415,14 +428,25 @@ async fn run_chunk_only_index_inner(
             }
             storage::fts_set_automerge(&conn_guard, true)?;
 
-            Ok::<_, IndexError>((files_processed, chunks_created, files_skipped, files_errored))
+            Ok::<_, IndexError>((
+                files_processed,
+                chunks_created,
+                files_skipped,
+                files_errored,
+            ))
         })
         .await?
     }?;
 
     remove_orphans(&conn, current_rel_paths).await?;
 
-    tracing::info!(files_processed, chunks_created, files_skipped, files_errored, "Chunk-only indexing complete");
+    tracing::info!(
+        files_processed,
+        chunks_created,
+        files_skipped,
+        files_errored,
+        "Chunk-only indexing complete"
+    );
 
     Ok(IndexResult {
         files_processed,
@@ -488,8 +512,7 @@ pub async fn run_incremental_embed(
     for file_path in &ordered_files {
         let (chunk_ids, texts) = {
             let conn_guard = conn.lock().unwrap();
-            let pairs =
-                storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
+            let pairs = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
             let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
             let texts: Vec<String> = pairs.into_iter().map(|(_, t)| t).collect();
             (ids, texts)
@@ -529,7 +552,10 @@ pub async fn run_incremental_embed(
                 "Embedding count mismatch, skipping file"
             );
             if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-                tracing::error!(consecutive_errors, "Too many consecutive failures in incremental embed, aborting");
+                tracing::error!(
+                    consecutive_errors,
+                    "Too many consecutive failures in incremental embed, aborting"
+                );
                 break;
             }
             continue;
@@ -537,10 +563,7 @@ pub async fn run_incremental_embed(
 
         tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
 
-        let pairs: Vec<(i64, Vec<f32>)> = chunk_ids
-            .into_iter()
-            .zip(embeddings)
-            .collect();
+        let pairs: Vec<(i64, Vec<f32>)> = chunk_ids.into_iter().zip(embeddings).collect();
 
         let n = pairs.len() as u32;
         let conn_clone = Arc::clone(&conn);
@@ -559,7 +582,12 @@ pub async fn run_incremental_embed(
         }
     }
 
-    tracing::info!(chunks_embedded, files_completed, budget_exhausted, "Incremental embedding complete");
+    tracing::info!(
+        chunks_embedded,
+        files_completed,
+        budget_exhausted,
+        "Incremental embedding complete"
+    );
 
     Ok(EmbedResult {
         chunks_embedded,
@@ -577,7 +605,10 @@ pub async fn run_index(
 ) -> Result<IndexResult, IndexError> {
     let files = walker::walk_frontend_files(root);
     if files.len() > LARGE_PROJECT_THRESHOLD {
-        tracing::warn!(count = files.len(), "Large number of files detected — indexing may be slow");
+        tracing::warn!(
+            count = files.len(),
+            "Large number of files detected — indexing may be slow"
+        );
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
 
@@ -587,11 +618,9 @@ pub async fn run_index(
     let (pending, files_skipped, mut files_errored) = {
         let conn = Arc::clone(&conn);
         let root = root.to_owned();
-        let result = tokio::task::spawn_blocking(move || {
-            collect_pending_files(&conn, &root, &files, force)
-        })
-        .await
-        ?;
+        let result =
+            tokio::task::spawn_blocking(move || collect_pending_files(&conn, &root, &files, force))
+                .await?;
         result?
     };
 
@@ -602,7 +631,13 @@ pub async fn run_index(
         embed_and_store(&conn, embedder, pending, &resolver).await?;
     files_errored += embed_errors;
 
-    tracing::info!(files_processed, chunks_created, files_skipped, files_errored, "Indexing complete");
+    tracing::info!(
+        files_processed,
+        chunks_created,
+        files_skipped,
+        files_errored,
+        "Indexing complete"
+    );
 
     Ok(IndexResult {
         files_processed,

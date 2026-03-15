@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use yomu::tools::{Yomu, YomuError, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET};
+use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
@@ -63,12 +63,18 @@ async fn main() -> ExitCode {
     };
 
     let result = match cli.command {
-        Command::Search { query, limit, offset } => yomu.search(&query, limit, offset).await,
+        Command::Search {
+            query,
+            limit,
+            offset,
+        } => yomu.search(&query, limit, offset).await,
         Command::Index => yomu.index().await,
         Command::Rebuild => yomu.rebuild().await,
-        Command::Impact { target, symbol, depth } => {
-            yomu.impact(&target, symbol.as_deref(), depth).await
-        }
+        Command::Impact {
+            target,
+            symbol,
+            depth,
+        } => yomu.impact(&target, symbol.as_deref(), depth).await,
         Command::Status => yomu.status().await,
     };
 
@@ -89,9 +95,8 @@ fn exit_code_for(e: &YomuError) -> ExitCode {
         YomuError::InvalidInput(_) => ExitCode::from(2),
         YomuError::Network(_) => ExitCode::from(3),
         YomuError::Internal(_) => ExitCode::from(4),
-        YomuError::Storage(_)
-        | YomuError::Io(_)
-        | YomuError::Index(_)
-        | YomuError::Query(_) => ExitCode::FAILURE,
+        YomuError::Storage(_) | YomuError::Io(_) | YomuError::Index(_) | YomuError::Query(_) => {
+            ExitCode::FAILURE
+        }
     }
 }

@@ -1,10 +1,10 @@
 mod format;
 
+use reqwest::Client;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
-use reqwest::Client;
 
 use crate::config;
 use crate::indexer::{self, embedder::Embed, embedder::EmbedError, embedder::Embedder};
@@ -12,8 +12,8 @@ use crate::query;
 use crate::storage;
 
 use format::{
-    format_coverage, format_coverage_note, format_impact_all, format_impact_results,
-    format_no_results_message, format_results_grouped, EnrichmentContext,
+    EnrichmentContext, format_coverage, format_coverage_note, format_impact_all,
+    format_impact_results, format_no_results_message, format_results_grouped,
 };
 
 const DEFAULT_EMBED_BUDGET: u32 = 50;
@@ -145,12 +145,7 @@ impl Yomu {
         }
     }
 
-    pub async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        offset: u32,
-    ) -> Result<String, YomuError> {
+    pub async fn search(&self, query: &str, limit: u32, offset: u32) -> Result<String, YomuError> {
         if query.is_empty() {
             return Err(YomuError::InvalidInput("query must not be empty".into()));
         }
@@ -177,17 +172,14 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let index_notes = self.ensure_indexed(embedder, state, hints_ref).await?;
 
-        let outcome =
-            query::search(Arc::clone(&self.conn), embedder, query, limit, offset).await?;
+        let outcome = query::search(Arc::clone(&self.conn), embedder, query, limit, offset).await?;
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
             notes.push(msg);
         }
         if outcome.degraded {
-            notes.push(
-                "embedding API unavailable, results from text search only".into(),
-            );
+            notes.push("embedding API unavailable, results from text search only".into());
         }
 
         if outcome.results.is_empty() {
@@ -232,9 +224,7 @@ impl Yomu {
         let stats = self.with_db(storage::get_stats).await?;
         let mut text = format!(
             "Rebuild complete: {} files chunked, {} chunks created, {} errors",
-            chunk_result.files_processed,
-            chunk_result.chunks_created,
-            chunk_result.files_errored,
+            chunk_result.files_processed, chunk_result.chunks_created, chunk_result.files_errored,
         );
         if let Some(note) = format_coverage_note(&stats) {
             text.push_str(&note);
@@ -276,8 +266,7 @@ impl Yomu {
         let (file_in_index, dependents, symbol_refs) = self
             .with_db(move |conn| {
                 let exists = storage::file_exists_in_index(conn, &fp)?;
-                let dependents =
-                    storage::get_transitive_dependents(conn, &fp, max_depth)?;
+                let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
                 let refs = match &sym_owned {
                     Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
                     None => vec![],

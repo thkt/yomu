@@ -125,10 +125,7 @@ impl Resolver {
                 }
             };
 
-            let ext = current
-                .rsplit('.')
-                .next()
-                .unwrap_or("ts");
+            let ext = current.rsplit('.').next().unwrap_or("ts");
             let reexports = parse_reexports(&content, ext);
 
             let mut found_next = false;

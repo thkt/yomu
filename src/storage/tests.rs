@@ -115,20 +115,47 @@ fn get_stats_returns_counts() {
     let embedding = vec![0.0_f32; 768];
 
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 5 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 5,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "code", start_line: 6, end_line: 10 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useA"),
+            content: "code",
+            start_line: 6,
+            end_line: 10,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
     insert_chunk(
-        &conn, "src/B.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code", start_line: 1, end_line: 3 },
-        "h2", &embedding,
-    ).unwrap();
+        &conn,
+        "src/B.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h2",
+        &embedding,
+    )
+    .unwrap();
 
     let stats = get_stats(&conn).unwrap();
     assert_eq!(stats.total_chunks, 3);
@@ -140,9 +167,48 @@ fn get_all_file_paths_returns_distinct_paths() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
 
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 }, "h1", &embedding).unwrap();
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "code", start_line: 4, end_line: 6 }, "h1", &embedding).unwrap();
-    insert_chunk(&conn, "src/B.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code", start_line: 1, end_line: 3 }, "h2", &embedding).unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useA"),
+            content: "code",
+            start_line: 4,
+            end_line: 6,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/B.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h2",
+        &embedding,
+    )
+    .unwrap();
 
     let paths = get_all_file_paths(&conn).unwrap();
     assert_eq!(paths.len(), 2);
@@ -155,8 +221,34 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
 
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 }, "h1", &embedding).unwrap();
-    insert_chunk(&conn, "src/B.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code", start_line: 1, end_line: 3 }, "h2", &embedding).unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/B.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h2",
+        &embedding,
+    )
+    .unwrap();
 
     delete_file_chunks(&conn, "src/A.tsx").unwrap();
 
@@ -175,18 +267,48 @@ fn replace_file_chunks_replaces_existing() {
     let embedding = vec![0.0_f32; 768];
 
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "old code", start_line: 1, end_line: 5 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "old code",
+            start_line: 1,
+            end_line: 5,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
 
     let new_chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "new code", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "more code", start_line: 4, end_line: 8 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useA"),
+            content: "new code",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "more code",
+            start_line: 4,
+            end_line: 8,
+        },
     ];
     let embeddings = vec![embedding.clone(), embedding.clone()];
 
-    replace_file_chunks(&conn, "src/A.tsx", &new_chunks, &embeddings, "h2", "import { x } from 'y'", &[]).unwrap();
+    replace_file_chunks(
+        &conn,
+        "src/A.tsx",
+        &new_chunks,
+        &embeddings,
+        "h2",
+        "import { x } from 'y'",
+        &[],
+    )
+    .unwrap();
 
     let stats = get_stats(&conn).unwrap();
     assert_eq!(stats.total_chunks, 2);
@@ -202,8 +324,34 @@ fn search_similar_returns_ordered_results() {
     let mut emb_b = vec![0.0_f32; 768];
     emb_b[1] = 1.0;
 
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code a", start_line: 1, end_line: 3 }, "h1", &emb_a).unwrap();
-    insert_chunk(&conn, "src/B.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code b", start_line: 1, end_line: 3 }, "h2", &emb_b).unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code a",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &emb_a,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/B.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "code b",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h2",
+        &emb_b,
+    )
+    .unwrap();
 
     let results = search_similar(&conn, &emb_a, 10, 0).unwrap();
     assert_eq!(results.len(), 2);
@@ -238,30 +386,63 @@ fn chunk_type_from_db_unknown_defaults_to_other() {
 fn delete_file_chunks_also_removes_file_context() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 5 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("A"),
+        content: "code",
+        start_line: 1,
+        end_line: 5,
+    }];
     let embeddings = vec![embedding];
-    replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "import React from 'react'", &[]).unwrap();
+    replace_file_chunks(
+        &conn,
+        "src/A.tsx",
+        &chunks,
+        &embeddings,
+        "h1",
+        "import React from 'react'",
+        &[],
+    )
+    .unwrap();
 
     let contexts = get_file_contexts(&conn, &["src/A.tsx"]).unwrap();
-    assert_eq!(contexts.len(), 1, "pre-condition: file_context should exist");
+    assert_eq!(
+        contexts.len(),
+        1,
+        "pre-condition: file_context should exist"
+    );
 
     delete_file_chunks(&conn, "src/A.tsx").unwrap();
 
     let contexts = get_file_contexts(&conn, &["src/A.tsx"]).unwrap();
-    assert!(contexts.is_empty(), "file_context should be removed after delete: {contexts:?}");
+    assert!(
+        contexts.is_empty(),
+        "file_context should be removed after delete: {contexts:?}"
+    );
 }
 
 #[test]
 fn replace_file_chunks_stores_file_context() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "code", start_line: 1, end_line: 5 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("App"),
+        content: "code",
+        start_line: 1,
+        end_line: 5,
+    }];
     let embeddings = vec![embedding];
-    replace_file_chunks(&conn, "src/App.tsx", &chunks, &embeddings, "h1", "import { useState } from 'react'", &[]).unwrap();
+    replace_file_chunks(
+        &conn,
+        "src/App.tsx",
+        &chunks,
+        &embeddings,
+        "h1",
+        "import { useState } from 'react'",
+        &[],
+    )
+    .unwrap();
 
     let contexts = get_file_contexts(&conn, &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
@@ -286,9 +467,48 @@ fn get_file_contexts_returns_empty_for_empty_input() {
 fn get_file_siblings_returns_all_chunks_for_file() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "code", start_line: 1, end_line: 5 }, "h1", &embedding).unwrap();
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "code", start_line: 6, end_line: 10 }, "h1", &embedding).unwrap();
-    insert_chunk(&conn, "src/B.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("Button"), content: "code", start_line: 1, end_line: 3 }, "h2", &embedding).unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("App"),
+            content: "code",
+            start_line: 1,
+            end_line: 5,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "code",
+            start_line: 6,
+            end_line: 10,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/B.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Button"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h2",
+        &embedding,
+    )
+    .unwrap();
 
     let siblings = get_file_siblings(&conn, &["src/A.tsx"]).unwrap();
     assert_eq!(siblings.len(), 1);
@@ -309,9 +529,24 @@ fn get_file_siblings_returns_empty_for_empty_input() {
 fn replace_file_references_stores_refs() {
     let (conn, _dir) = test_db();
     let refs = vec![
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: Some("Button".into()), ref_kind: RefKind::Named },
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/C.tsx".into(), symbol_name: None, ref_kind: RefKind::Namespace },
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/D.tsx".into(), symbol_name: Some("useAuth".into()), ref_kind: RefKind::Named },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: Some("Button".into()),
+            ref_kind: RefKind::Named,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/C.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Namespace,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/D.tsx".into(),
+            symbol_name: Some("useAuth".into()),
+            ref_kind: RefKind::Named,
+        },
     ];
     replace_file_references(&conn, "src/A.tsx", &refs).unwrap();
 
@@ -323,15 +558,40 @@ fn replace_file_references_stores_refs() {
 fn replace_file_references_replaces_existing() {
     let (conn, _dir) = test_db();
     let old_refs = vec![
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: Some("B".into()), ref_kind: RefKind::Named },
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/C.tsx".into(), symbol_name: None, ref_kind: RefKind::Default },
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/D.tsx".into(), symbol_name: Some("D".into()), ref_kind: RefKind::Named },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: Some("B".into()),
+            ref_kind: RefKind::Named,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/C.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Default,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/D.tsx".into(),
+            symbol_name: Some("D".into()),
+            ref_kind: RefKind::Named,
+        },
     ];
     replace_file_references(&conn, "src/A.tsx", &old_refs).unwrap();
 
     let new_refs = vec![
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/E.tsx".into(), symbol_name: Some("E".into()), ref_kind: RefKind::Named },
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/F.tsx".into(), symbol_name: None, ref_kind: RefKind::TypeOnly },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/E.tsx".into(),
+            symbol_name: Some("E".into()),
+            ref_kind: RefKind::Named,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/F.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::TypeOnly,
+        },
     ];
     replace_file_references(&conn, "src/A.tsx", &new_refs).unwrap();
 
@@ -347,15 +607,22 @@ fn replace_file_references_replaces_existing() {
 fn delete_file_chunks_also_removes_references() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; 768];
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 5 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("A"),
+        content: "code",
+        start_line: 1,
+        end_line: 5,
+    }];
     let embeddings = vec![embedding];
     replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "", &[]).unwrap();
 
-    let refs = vec![
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: Some("B".into()), ref_kind: RefKind::Named },
-    ];
+    let refs = vec![Reference {
+        source_file: "src/A.tsx".into(),
+        target_file: "src/B.tsx".into(),
+        symbol_name: Some("B".into()),
+        ref_kind: RefKind::Named,
+    }];
     replace_file_references(&conn, "src/A.tsx", &refs).unwrap();
 
     delete_file_chunks(&conn, "src/A.tsx").unwrap();
@@ -367,32 +634,82 @@ fn delete_file_chunks_also_removes_references() {
 #[test]
 fn get_transitive_dependents_chain() {
     let (conn, _dir) = test_db();
-    replace_file_references(&conn, "src/A.tsx", &[
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/B.tsx", &[
-        Reference { source_file: "src/B.tsx".into(), target_file: "src/C.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/C.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
 
     let deps = get_transitive_dependents(&conn, "src/C.tsx", 3).unwrap();
     assert_eq!(deps.len(), 2);
-    assert_eq!(deps[0], Dependent { file_path: "src/B.tsx".into(), depth: 1 });
-    assert_eq!(deps[1], Dependent { file_path: "src/A.tsx".into(), depth: 2 });
+    assert_eq!(
+        deps[0],
+        Dependent {
+            file_path: "src/B.tsx".into(),
+            depth: 1
+        }
+    );
+    assert_eq!(
+        deps[1],
+        Dependent {
+            file_path: "src/A.tsx".into(),
+            depth: 2
+        }
+    );
 }
 
 #[test]
 fn get_transitive_dependents_circular() {
     let (conn, _dir) = test_db();
-    replace_file_references(&conn, "src/A.tsx", &[
-        Reference { source_file: "src/A.tsx".into(), target_file: "src/B.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/B.tsx", &[
-        Reference { source_file: "src/B.tsx".into(), target_file: "src/A.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/A.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
 
     let deps = get_transitive_dependents(&conn, "src/A.tsx", 5).unwrap();
     assert_eq!(deps.len(), 1);
-    assert_eq!(deps[0], Dependent { file_path: "src/B.tsx".into(), depth: 1 });
+    assert_eq!(
+        deps[0],
+        Dependent {
+            file_path: "src/B.tsx".into(),
+            depth: 1
+        }
+    );
 }
 
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
@@ -415,15 +732,39 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Button"), content: "function Button() {}", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useClick"), content: "function useClick() {}", start_line: 5, end_line: 8 },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Button"),
+            content: "function Button() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useClick"),
+            content: "function useClick() {}",
+            start_line: 5,
+            end_line: 8,
+        },
     ];
     let refs: Vec<Reference> = vec![];
 
-    replace_file_chunks_only(&conn, "src/Button.tsx", &chunks, "hash_a", "import React from 'react'", &refs).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/Button.tsx",
+        &chunks,
+        "hash_a",
+        "import React from 'react'",
+        &refs,
+    )
+    .unwrap();
 
     let chunk_count: u32 = conn
-        .query_row("SELECT COUNT(*) FROM chunks WHERE file_path = 'src/Button.tsx'", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path = 'src/Button.tsx'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(chunk_count, 2);
 
@@ -433,7 +774,11 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
     assert_eq!(contexts["src/Button.tsx"], "import React from 'react'");
 
     let last: String = conn
-        .query_row("SELECT value FROM index_meta WHERE key = 'last_indexed_at'", [], |row| row.get(0))
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'last_indexed_at'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert!(!last.is_empty());
 }
@@ -444,26 +789,47 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
     insert_chunk(
-        &conn, "src/App.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("App"), content: "old code", start_line: 1, end_line: 5 },
-        "hash_old", &embedding,
-    ).unwrap();
+        &conn,
+        "src/App.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("App"),
+            content: "old code",
+            start_line: 1,
+            end_line: 5,
+        },
+        "hash_old",
+        &embedding,
+    )
+    .unwrap();
     assert_eq!(vec_chunks_count(&conn), 1);
 
-    let new_chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("AppV2"), content: "new code", start_line: 1, end_line: 3 },
-    ];
+    let new_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("AppV2"),
+        content: "new code",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[]).unwrap();
 
     assert_eq!(vec_chunks_count(&conn), 0);
 
     let chunk_count: u32 = conn
-        .query_row("SELECT COUNT(*) FROM chunks WHERE file_path = 'src/App.tsx'", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path = 'src/App.tsx'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(chunk_count, 1);
 
     let name: String = conn
-        .query_row("SELECT name FROM chunks WHERE file_path = 'src/App.tsx'", [], |row| row.get(0))
+        .query_row(
+            "SELECT name FROM chunks WHERE file_path = 'src/App.tsx'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(name, "AppV2");
 }
@@ -473,8 +839,20 @@ fn add_embeddings_inserts_into_vec_chunks() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Card"), content: "function Card() {}", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useCard"), content: "function useCard() {}", start_line: 5, end_line: 8 },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Card"),
+            content: "function Card() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useCard"),
+            content: "function useCard() {}",
+            start_line: 5,
+            end_line: 8,
+        },
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[]).unwrap();
     assert_eq!(vec_chunks_count(&conn), 0);
@@ -498,9 +876,13 @@ fn add_embeddings_inserts_into_vec_chunks() {
 fn add_embeddings_skips_already_embedded() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Modal"), content: "function Modal() {}", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Modal"),
+        content: "function Modal() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[]).unwrap();
 
     let ids = get_chunk_ids(&conn, "src/Modal.tsx");
@@ -523,20 +905,45 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
 
     let chunks_b = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code b", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useB"), content: "code b2", start_line: 5, end_line: 8 },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "code b",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useB"),
+            content: "code b2",
+            start_line: 5,
+            end_line: 8,
+        },
     ];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
 
-    let chunks_c = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("C"), content: "code c", start_line: 1, end_line: 3 },
-    ];
+    let chunks_c = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("C"),
+        content: "code c",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/C.tsx", &chunks_c, "h3", "", &[]).unwrap();
 
     let unembedded = get_unembedded_file_paths(&conn).unwrap();
@@ -557,9 +964,13 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
 fn needs_embedding_returns_true_for_chunk_only_file() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Nav"), content: "function Nav() {}", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Nav"),
+        content: "function Nav() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[]).unwrap();
 
     assert!(needs_embedding(&conn, "src/Nav.tsx", "hash_nav").unwrap());
@@ -571,10 +982,19 @@ fn needs_embedding_returns_false_for_fully_embedded() {
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
     insert_chunk(
-        &conn, "src/Footer.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("Footer"), content: "function Footer() {}", start_line: 1, end_line: 3 },
-        "hash_footer", &embedding,
-    ).unwrap();
+        &conn,
+        "src/Footer.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Footer"),
+            content: "function Footer() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        "hash_footer",
+        &embedding,
+    )
+    .unwrap();
 
     assert!(!needs_embedding(&conn, "src/Footer.tsx", "hash_footer").unwrap());
 }
@@ -585,10 +1005,19 @@ fn needs_embedding_returns_true_when_hash_changed() {
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
     insert_chunk(
-        &conn, "src/Header.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("Header"), content: "function Header() {}", start_line: 1, end_line: 3 },
-        "hash_v1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/Header.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Header"),
+            content: "function Header() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        "hash_v1",
+        &embedding,
+    )
+    .unwrap();
 
     assert!(needs_embedding(&conn, "src/Header.tsx", "hash_v2").unwrap());
 }
@@ -599,19 +1028,41 @@ fn get_stats_reports_embedded_vs_total_chunks() {
     let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
 
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "code", start_line: 5, end_line: 8 },
-        "h1", &embedding,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useA"),
+            content: "code",
+            start_line: 5,
+            end_line: 8,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
 
-    let chunks_b = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("B"), content: "code b", start_line: 1, end_line: 3 },
-    ];
+    let chunks_b = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("B"),
+        content: "code b",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
 
     let stats = get_stats(&conn).unwrap();
@@ -625,23 +1076,62 @@ fn get_stats_reports_embedded_vs_total_chunks() {
 fn get_files_by_import_count_returns_most_imported_first() {
     let (conn, _dir) = test_db();
 
-    for (path, hash) in [("src/utils.tsx", "h1"), ("src/Button.tsx", "h2"), ("src/App.tsx", "h3")] {
-        let chunks = vec![
-            NewChunk { chunk_type: &ChunkType::Component, name: Some("X"), content: "code", start_line: 1, end_line: 3 },
-        ];
+    for (path, hash) in [
+        ("src/utils.tsx", "h1"),
+        ("src/Button.tsx", "h2"),
+        ("src/App.tsx", "h3"),
+    ] {
+        let chunks = vec![NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("X"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
     }
 
-    replace_file_references(&conn, "src/App.tsx", &[
-        Reference { source_file: "src/App.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: Some("format".into()), ref_kind: RefKind::Named },
-        Reference { source_file: "src/App.tsx".into(), target_file: "src/Button.tsx".into(), symbol_name: Some("Button".into()), ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/Button.tsx", &[
-        Reference { source_file: "src/Button.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: Some("cn".into()), ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/Other.tsx", &[
-        Reference { source_file: "src/Other.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: None, ref_kind: RefKind::Namespace },
-    ]).unwrap();
+    replace_file_references(
+        &conn,
+        "src/App.tsx",
+        &[
+            Reference {
+                source_file: "src/App.tsx".into(),
+                target_file: "src/utils.tsx".into(),
+                symbol_name: Some("format".into()),
+                ref_kind: RefKind::Named,
+            },
+            Reference {
+                source_file: "src/App.tsx".into(),
+                target_file: "src/Button.tsx".into(),
+                symbol_name: Some("Button".into()),
+                ref_kind: RefKind::Named,
+            },
+        ],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/Button.tsx",
+        &[Reference {
+            source_file: "src/Button.tsx".into(),
+            target_file: "src/utils.tsx".into(),
+            symbol_name: Some("cn".into()),
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/Other.tsx",
+        &[Reference {
+            source_file: "src/Other.tsx".into(),
+            target_file: "src/utils.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Namespace,
+        }],
+    )
+    .unwrap();
 
     let ordered = get_files_by_import_count(&conn).unwrap();
 
@@ -657,8 +1147,20 @@ fn search_by_name_matches_keyword() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "function useAuth() {}", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("LoginForm"), content: "function LoginForm() {}", start_line: 5, end_line: 10 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("LoginForm"),
+            content: "function LoginForm() {}",
+            start_line: 5,
+            end_line: 10,
+        },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -675,12 +1177,31 @@ fn search_by_name_filters_by_type() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useBtn"), content: "function useBtn() {}", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("BtnGroup"), content: "function BtnGroup() {}", start_line: 5, end_line: 10 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useBtn"),
+            content: "function useBtn() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("BtnGroup"),
+            content: "function BtnGroup() {}",
+            start_line: 5,
+            end_line: 10,
+        },
     ];
     replace_file_chunks_only(&conn, "src/btn.tsx", &chunks, "h1", "", &[]).unwrap();
 
-    let results = search_by_name(&conn, &["btn"], Some(&[ChunkType::Hook]), &HashSet::new(), 10).unwrap();
+    let results = search_by_name(
+        &conn,
+        &["btn"],
+        Some(&[ChunkType::Hook]),
+        &HashSet::new(),
+        10,
+    )
+    .unwrap();
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("useBtn"));
@@ -692,8 +1213,20 @@ fn search_by_name_excludes_ids() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "function useAuth() {}", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuthProvider"), content: "function useAuthProvider() {}", start_line: 5, end_line: 10 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuthProvider"),
+            content: "function useAuthProvider() {}",
+            start_line: 5,
+            end_line: 10,
+        },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -712,21 +1245,33 @@ fn get_files_by_import_count_boosts_hook_component_files() {
     let (conn, _dir) = test_db();
 
     // Hook file: 0 import refs
-    let hook_chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "function useAuth() {}", start_line: 1, end_line: 3 },
-    ];
+    let hook_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useAuth"),
+        content: "function useAuth() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/useAuth.tsx", &hook_chunks, "h1", "", &[]).unwrap();
 
     // TypeDef file: 0 import refs
-    let typedef_chunks = vec![
-        NewChunk { chunk_type: &ChunkType::TypeDef, name: Some("AuthConfig"), content: "interface AuthConfig {}", start_line: 1, end_line: 3 },
-    ];
+    let typedef_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::TypeDef,
+        name: Some("AuthConfig"),
+        content: "interface AuthConfig {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/types.tsx", &typedef_chunks, "h2", "", &[]).unwrap();
 
     // Component file: 0 import refs
-    let comp_chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("LoginButton"), content: "function LoginButton() {}", start_line: 1, end_line: 3 },
-    ];
+    let comp_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("LoginButton"),
+        content: "function LoginButton() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/LoginButton.tsx", &comp_chunks, "h3", "", &[]).unwrap();
 
     let ordered = get_files_by_import_count(&conn).unwrap();
@@ -735,10 +1280,19 @@ fn get_files_by_import_count_boosts_hook_component_files() {
     assert_eq!(ordered.len(), 3);
     // First two should be hook or component files (both have +3 boost)
     let boosted: Vec<&str> = ordered.iter().take(2).map(|s| s.as_str()).collect();
-    assert!(boosted.contains(&"src/useAuth.tsx"), "hook file should be boosted: {ordered:?}");
-    assert!(boosted.contains(&"src/LoginButton.tsx"), "component file should be boosted: {ordered:?}");
+    assert!(
+        boosted.contains(&"src/useAuth.tsx"),
+        "hook file should be boosted: {ordered:?}"
+    );
+    assert!(
+        boosted.contains(&"src/LoginButton.tsx"),
+        "component file should be boosted: {ordered:?}"
+    );
     // Last should be typedef
-    assert_eq!(ordered[2], "src/types.tsx", "typedef file should be last: {ordered:?}");
+    assert_eq!(
+        ordered[2], "src/types.tsx",
+        "typedef file should be last: {ordered:?}"
+    );
 }
 
 #[test]
@@ -747,7 +1301,20 @@ fn search_similar_sets_semantic_match_source() {
     let mut emb = vec![0.0_f32; 768];
     emb[0] = 1.0;
 
-    insert_chunk(&conn, "src/A.tsx", &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 }, "h1", &emb).unwrap();
+    insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &emb,
+    )
+    .unwrap();
 
     let results = search_similar(&conn, &emb, 10, 0).unwrap();
     assert_eq!(results.len(), 1);
@@ -758,9 +1325,13 @@ fn search_similar_sets_semantic_match_source() {
 fn search_by_name_empty_keywords_returns_empty() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "code", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useAuth"),
+        content: "code",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
     let results = search_by_name(&conn, &[], None, &HashSet::new(), 10).unwrap();
@@ -774,33 +1345,52 @@ fn search_similar_sets_initial_score() {
     emb[0] = 1.0;
 
     insert_chunk(
-        &conn, "src/A.tsx",
-        &NewChunk { chunk_type: &ChunkType::Component, name: Some("A"), content: "code", start_line: 1, end_line: 3 },
-        "h1", &emb,
-    ).unwrap();
+        &conn,
+        "src/A.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &emb,
+    )
+    .unwrap();
 
     let results = search_similar(&conn, &emb, 10, 0).unwrap();
     assert_eq!(results.len(), 1);
 
     // score should be initialized to 1.0 / (1.0 + distance)
     let expected_score = 1.0 / (1.0 + results[0].distance);
-    assert!((results[0].score - expected_score).abs() < 1e-6,
-        "expected score {expected_score}, got {}", results[0].score);
+    assert!(
+        (results[0].score - expected_score).abs() < 1e-6,
+        "expected score {expected_score}, got {}",
+        results[0].score
+    );
 }
 
 #[test]
 fn search_by_name_sets_base_score() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuth"), content: "function useAuth() {}", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useAuth"),
+        content: "function useAuth() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
     let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
-    assert!((results[0].score - 0.5).abs() < 1e-6,
-        "NameMatch score should be 0.5, got {}", results[0].score);
+    assert!(
+        (results[0].score - 0.5).abs() < 1e-6,
+        "NameMatch score should be 0.5, got {}",
+        results[0].score
+    );
 }
 
 #[test]
@@ -808,26 +1398,66 @@ fn get_import_counts_returns_correct_counts() {
     let (conn, _dir) = test_db();
 
     // Set up files with references
-    for (path, hash) in [("src/utils.tsx", "h1"), ("src/Button.tsx", "h2"), ("src/App.tsx", "h3")] {
-        let chunks = vec![
-            NewChunk { chunk_type: &ChunkType::Component, name: Some("X"), content: "code", start_line: 1, end_line: 3 },
-        ];
+    for (path, hash) in [
+        ("src/utils.tsx", "h1"),
+        ("src/Button.tsx", "h2"),
+        ("src/App.tsx", "h3"),
+    ] {
+        let chunks = vec![NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("X"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
     }
 
     // utils is imported 3 times, Button 1 time, App 0 times
-    replace_file_references(&conn, "src/App.tsx", &[
-        Reference { source_file: "src/App.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-        Reference { source_file: "src/App.tsx".into(), target_file: "src/Button.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/Button.tsx", &[
-        Reference { source_file: "src/Button.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
-    replace_file_references(&conn, "src/Other.tsx", &[
-        Reference { source_file: "src/Other.tsx".into(), target_file: "src/utils.tsx".into(), symbol_name: None, ref_kind: RefKind::Named },
-    ]).unwrap();
+    replace_file_references(
+        &conn,
+        "src/App.tsx",
+        &[
+            Reference {
+                source_file: "src/App.tsx".into(),
+                target_file: "src/utils.tsx".into(),
+                symbol_name: None,
+                ref_kind: RefKind::Named,
+            },
+            Reference {
+                source_file: "src/App.tsx".into(),
+                target_file: "src/Button.tsx".into(),
+                symbol_name: None,
+                ref_kind: RefKind::Named,
+            },
+        ],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/Button.tsx",
+        &[Reference {
+            source_file: "src/Button.tsx".into(),
+            target_file: "src/utils.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/Other.tsx",
+        &[Reference {
+            source_file: "src/Other.tsx".into(),
+            target_file: "src/utils.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
 
-    let counts = get_import_counts(&conn, &["src/utils.tsx", "src/Button.tsx", "src/App.tsx"]).unwrap();
+    let counts =
+        get_import_counts(&conn, &["src/utils.tsx", "src/Button.tsx", "src/App.tsx"]).unwrap();
 
     assert_eq!(counts.len(), 3);
     assert_eq!(counts["src/utils.tsx"], 3);
@@ -847,9 +1477,27 @@ fn search_by_name_respects_limit() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuthA"), content: "code", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuthB"), content: "code", start_line: 5, end_line: 8 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useAuthC"), content: "code", start_line: 10, end_line: 13 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuthA"),
+            content: "code",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuthB"),
+            content: "code",
+            start_line: 5,
+            end_line: 8,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuthC"),
+            content: "code",
+            start_line: 10,
+            end_line: 13,
+        },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -862,9 +1510,13 @@ fn search_by_name_matches_file_path() {
     let (conn, _dir) = test_db();
 
     // Chunk with no name but file_path contains "fetch"
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "export default {}", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: None,
+        content: "export default {}",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[]).unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
@@ -877,19 +1529,31 @@ fn search_by_name_matches_name_or_path() {
     let (conn, _dir) = test_db();
 
     // Named chunk in unrelated path
-    let named = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "code", start_line: 1, end_line: 3 },
-    ];
+    let named = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useFetch"),
+        content: "code",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[]).unwrap();
 
     // Unnamed chunk in path containing keyword
-    let path_match = vec![
-        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "code", start_line: 1, end_line: 3 },
-    ];
+    let path_match = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: None,
+        content: "code",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[]).unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(results.len(), 2, "should match both name and path: {results:?}");
+    assert_eq!(
+        results.len(),
+        2,
+        "should match both name and path: {results:?}"
+    );
 }
 
 #[test]
@@ -897,13 +1561,32 @@ fn search_by_name_path_match_respects_type_filter() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Other, name: None, content: "helper", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Chart"), content: "component", start_line: 5, end_line: 10 },
+        NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: None,
+            content: "helper",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Chart"),
+            content: "component",
+            start_line: 5,
+            end_line: 10,
+        },
     ];
     replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[]).unwrap();
 
     // Filter to components only — path match on "chart" should return only the component
-    let results = search_by_name(&conn, &["chart"], Some(&[ChunkType::Component]), &HashSet::new(), 10).unwrap();
+    let results = search_by_name(
+        &conn,
+        &["chart"],
+        Some(&[ChunkType::Component]),
+        &HashSet::new(),
+        10,
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.chunk_type, ChunkType::Component);
 }
@@ -916,7 +1599,8 @@ fn fts5_available() {
         "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(content);
          INSERT INTO _fts5_test(content) VALUES ('hello world');
          DROP TABLE _fts5_test;",
-    ).expect("FTS5 should be available");
+    )
+    .expect("FTS5 should be available");
 }
 
 #[test]
@@ -924,8 +1608,20 @@ fn search_by_content_matches_code() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "function useFetch() { const [loading, setLoading] = useState(false); }", start_line: 1, end_line: 5 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("Button"), content: "function Button({ label }) { return <button>{label}</button>; }", start_line: 7, end_line: 10 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useFetch"),
+            content: "function useFetch() { const [loading, setLoading] = useState(false); }",
+            start_line: 1,
+            end_line: 5,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Button"),
+            content: "function Button({ label }) { return <button>{label}</button>; }",
+            start_line: 7,
+            end_line: 10,
+        },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -940,8 +1636,20 @@ fn search_by_content_excludes_ids() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useA"), content: "function useA() { fetch('/api'); }", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useB"), content: "function useB() { fetch('/data'); }", start_line: 5, end_line: 7 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useA"),
+            content: "function useA() { fetch('/api'); }",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useB"),
+            content: "function useB() { fetch('/data'); }",
+            start_line: 5,
+            end_line: 7,
+        },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -965,9 +1673,13 @@ fn search_by_content_empty_keywords_returns_empty() {
 fn fts_chunks_deleted_with_file() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useX"), content: "function useX() { return state; }", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useX"),
+        content: "function useX() { return state; }",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
 
     // Should find it before delete
@@ -989,18 +1701,29 @@ fn fts5_migration_from_v2() {
     let conn = open_db(&db_path).unwrap();
 
     // Insert a chunk (schema is v3, fts_chunks populated via insert_chunk_row)
-    let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useX"), content: "function useX() { return loading; }", start_line: 1, end_line: 3 },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useX"),
+        content: "function useX() { return loading; }",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
 
     // Simulate a v2 DB by clearing fts_chunks and rolling back schema_version
     conn.execute_batch("DELETE FROM fts_chunks").unwrap();
-    conn.execute("UPDATE index_meta SET value = '2' WHERE key = 'schema_version'", []).unwrap();
+    conn.execute(
+        "UPDATE index_meta SET value = '2' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
 
     // Verify FTS5 is empty
     let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
-    assert!(results.is_empty(), "fts_chunks should be empty before migration");
+    assert!(
+        results.is_empty(),
+        "fts_chunks should be empty before migration"
+    );
 
     // Re-init triggers migration v2→v3
     drop(conn);
@@ -1016,15 +1739,13 @@ fn fts5_migration_from_v2() {
 fn fts5_handles_special_characters_in_content() {
     let (conn, _dir) = test_db();
 
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("App"),
-            content: "function App() { return <div className={`container ${active}`}>{data?.name}</div>; }",
-            start_line: 1,
-            end_line: 3,
-        },
-    ];
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("App"),
+        content: "function App() { return <div className={`container ${active}`}>{data?.name}</div>; }",
+        start_line: 1,
+        end_line: 3,
+    }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
 
     // Search for terms within JSX/template literal content
@@ -1038,13 +1759,32 @@ fn search_by_content_respects_type_filter() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
-        NewChunk { chunk_type: &ChunkType::Hook, name: Some("useFetch"), content: "function useFetch() { fetch('/api'); }", start_line: 1, end_line: 3 },
-        NewChunk { chunk_type: &ChunkType::Component, name: Some("FetchBtn"), content: "function FetchBtn() { onClick(() => fetch('/btn')); }", start_line: 5, end_line: 8 },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useFetch"),
+            content: "function useFetch() { fetch('/api'); }",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("FetchBtn"),
+            content: "function FetchBtn() { onClick(() => fetch('/btn')); }",
+            start_line: 5,
+            end_line: 8,
+        },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
 
     // Filter to hooks only
-    let results = search_by_content(&conn, &["fetch"], Some(&[ChunkType::Hook]), &HashSet::new(), 10).unwrap();
+    let results = search_by_content(
+        &conn,
+        &["fetch"],
+        Some(&[ChunkType::Hook]),
+        &HashSet::new(),
+        10,
+    )
+    .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
 }

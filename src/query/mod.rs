@@ -76,19 +76,34 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
     }
 
     const ING_DENY: &[&str] = &[
-        "string", "bring", "thing", "nothing", "something", "everything",
-        "ring", "king", "spring", "swing", "sing", "sting", "wing",
+        "string",
+        "bring",
+        "thing",
+        "nothing",
+        "something",
+        "everything",
+        "ring",
+        "king",
+        "spring",
+        "swing",
+        "sing",
+        "sting",
+        "wing",
     ];
     const S_DENY: &[&str] = &[
-        "class", "this", "alias", "canvas", "focus", "status", "bus",
-        "process", "address", "access", "express", "progress",
+        "class", "this", "alias", "canvas", "focus", "status", "bus", "process", "address",
+        "access", "express", "progress",
     ];
 
     let mut all = base.clone();
     for kw in &base {
         let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str()) {
             Some(&kw[..kw.len() - 3])
-        } else if kw.len() > 3 && kw.ends_with('s') && !kw.ends_with("ss") && !S_DENY.contains(&kw.as_str()) {
+        } else if kw.len() > 3
+            && kw.ends_with('s')
+            && !kw.ends_with("ss")
+            && !S_DENY.contains(&kw.as_str())
+        {
             Some(&kw[..kw.len() - 1])
         } else {
             None
@@ -130,12 +145,7 @@ fn keyword_hit_ratio(
     if keywords.is_empty() {
         return 0.0;
     }
-    let name_lower = result
-        .chunk
-        .name
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase();
+    let name_lower = result.chunk.name.as_deref().unwrap_or("").to_lowercase();
     let path_lower = result.chunk.file_path.to_lowercase();
     let content_lower;
     let content_ref = if check_content {
@@ -223,7 +233,12 @@ pub struct RerankContext<'a> {
 
 impl Default for RerankContext<'_> {
     fn default() -> Self {
-        Self { type_hints: &[], keywords: &[], keyword_idfs: &[], embed_coverage: 1.0 }
+        Self {
+            type_hints: &[],
+            keywords: &[],
+            keyword_idfs: &[],
+            embed_coverage: 1.0,
+        }
     }
 }
 
@@ -267,13 +282,12 @@ pub fn rerank(
             0.0
         };
 
-        let type_bonus = if !ctx.type_hints.is_empty()
-            && ctx.type_hints.contains(&result.chunk.chunk_type)
-        {
-            TYPE_HINT_BONUS
-        } else {
-            0.0
-        };
+        let type_bonus =
+            if !ctx.type_hints.is_empty() && ctx.type_hints.contains(&result.chunk.chunk_type) {
+                TYPE_HINT_BONUS
+            } else {
+                0.0
+            };
 
         let ic = import_counts
             .get(&result.chunk.file_path)
@@ -320,14 +334,30 @@ fn search_pipeline(
     let fallback_limit = limit * 3;
 
     if !keywords.is_empty() {
-        let type_filter = if type_hints.is_empty() { None } else { Some(type_hints.as_slice()) };
+        let type_filter = if type_hints.is_empty() {
+            None
+        } else {
+            Some(type_hints.as_slice())
+        };
 
         let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
-        let name_results = storage::search_by_name(conn, &keyword_refs, type_filter, &exclude_ids, fallback_limit)?;
+        let name_results = storage::search_by_name(
+            conn,
+            &keyword_refs,
+            type_filter,
+            &exclude_ids,
+            fallback_limit,
+        )?;
         results.extend(name_results);
 
         let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
-        let content_results = storage::search_by_content(conn, &keyword_refs, type_filter, &exclude_ids, fallback_limit)?;
+        let content_results = storage::search_by_content(
+            conn,
+            &keyword_refs,
+            type_filter,
+            &exclude_ids,
+            fallback_limit,
+        )?;
         results.extend(content_results);
     }
 
@@ -340,7 +370,10 @@ fn search_pipeline(
 
     let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs)?;
     let total = stats.total_chunks.max(1) as f32;
-    let keyword_idfs: Vec<f32> = dfs.iter().map(|&df| (total / (df.max(1) as f32)).ln()).collect();
+    let keyword_idfs: Vec<f32> = dfs
+        .iter()
+        .map(|&df| (total / (df.max(1) as f32)).ln())
+        .collect();
 
     let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
     let import_counts = storage::get_import_counts(conn, &file_paths)?;
@@ -375,10 +408,19 @@ pub async fn search(
 
     let results = tokio::task::spawn_blocking(move || {
         let conn = conn.lock().unwrap();
-        search_pipeline(&conn, &query_owned, query_embedding.as_deref(), limit, offset)
+        search_pipeline(
+            &conn,
+            &query_owned,
+            query_embedding.as_deref(),
+            limit,
+            offset,
+        )
     })
     .await?;
-    Ok(SearchOutcome { results: results?, degraded })
+    Ok(SearchOutcome {
+        results: results?,
+        degraded,
+    })
 }
 
 #[cfg(test)]

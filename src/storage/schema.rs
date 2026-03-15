@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use rusqlite::ffi::sqlite3_auto_extension;
 use sqlite_vec::sqlite3_vec_init;
 
-use super::{StorageError, EMBEDDING_DIMS};
+use super::{EMBEDDING_DIMS, StorageError};
 
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     static INIT: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
@@ -27,12 +27,10 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
         if rc == 0 { Ok(()) } else { Err(rc) }
     });
     if let Err(rc) = init_result {
-        return Err(StorageError::Io(std::io::Error::other(
-            format!(
-                "sqlite-vec extension failed to register (sqlite3 rc={rc}). \
+        return Err(StorageError::Io(std::io::Error::other(format!(
+            "sqlite-vec extension failed to register (sqlite3 rc={rc}). \
                  This is a process-level initialization error that cannot be retried."
-            ),
-        )));
+        ))));
     }
 
     if let Some(parent) = path.parent() {
@@ -44,7 +42,8 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
         Err(
             ref e @ rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error {
-                    code: rusqlite::ffi::ErrorCode::CannotOpen | rusqlite::ffi::ErrorCode::SystemIoFailure,
+                    code:
+                        rusqlite::ffi::ErrorCode::CannotOpen | rusqlite::ffi::ErrorCode::SystemIoFailure,
                     ..
                 },
                 _,
@@ -120,7 +119,7 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
             content,
             content_rowid='rowid'
-        )"
+        )",
     )?;
 
     let stored: u32 = match conn.query_row(
@@ -156,7 +155,7 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
         fts_set_automerge(conn, false)?;
         conn.execute_batch(
             "INSERT OR IGNORE INTO fts_chunks(rowid, content)
-             SELECT id, content FROM chunks"
+             SELECT id, content FROM chunks",
         )?;
         fts_optimize(conn)?;
         fts_set_automerge(conn, true)?;

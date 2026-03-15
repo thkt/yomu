@@ -1,8 +1,8 @@
 use rusqlite::Connection;
 
-use super::{sql_placeholders, ChunkType, StorageError};
 #[cfg(test)]
 use super::Reference;
+use super::{ChunkType, StorageError, sql_placeholders};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
@@ -68,18 +68,13 @@ pub fn get_symbol_dependents(
 }
 
 pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
-    let count: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM file_references",
-        [],
-        |row| row.get(0),
-    )?;
+    let count: u32 =
+        conn.query_row("SELECT COUNT(*) FROM file_references", [], |row| row.get(0))?;
     Ok(count)
 }
 
 /// Returns un-embedded file paths ordered by import count (most-imported first).
-pub fn get_files_by_import_count(
-    conn: &Connection,
-) -> Result<Vec<String>, StorageError> {
+pub fn get_files_by_import_count(conn: &Connection) -> Result<Vec<String>, StorageError> {
     let sql = format!(
         "SELECT c.file_path
          FROM chunks c
@@ -117,7 +112,9 @@ pub fn get_import_counts(
              FROM file_references
              GROUP BY target_file
          ) cnt ON cnt.target_file = fp.path",
-        file_paths.iter().enumerate()
+        file_paths
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("SELECT ?{} AS value", i + 1))
             .collect::<Vec<_>>()
             .join(" UNION ALL ")
@@ -210,7 +207,12 @@ pub fn replace_file_references(
         tx.execute(
             "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
+            rusqlite::params![
+                r.source_file,
+                r.target_file,
+                r.symbol_name,
+                r.ref_kind.as_str()
+            ],
         )?;
     }
     tx.commit()?;
@@ -222,9 +224,8 @@ pub fn get_dependents(
     conn: &Connection,
     target_file: &str,
 ) -> Result<Vec<Dependent>, StorageError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1")?;
     let rows = stmt.query_map([target_file], |row| {
         Ok(Dependent {
             file_path: row.get(0)?,

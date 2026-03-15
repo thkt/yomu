@@ -106,9 +106,8 @@ fn extract_export_source(node: &tree_sitter::Node, source: &str) -> Option<Strin
 
 fn has_star_export(node: &tree_sitter::Node) -> bool {
     let mut cursor = node.walk();
-    node.children(&mut cursor).any(|c| {
-        c.kind() == "*" || (c.kind() == "namespace_export")
-    })
+    node.children(&mut cursor)
+        .any(|c| c.kind() == "*" || (c.kind() == "namespace_export"))
 }
 
 /// Intermediate chunk representation produced by the chunker.
@@ -145,9 +144,21 @@ pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
     match extension {
         "tsx" | "jsx" => chunk_tsx(source),
         "ts" | "js" | "mjs" => chunk_ts(source),
-        "css" => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_css(source) },
-        "html" => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_html(source) },
-        _ => FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) },
+        "css" => FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_css(source),
+        },
+        "html" => FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_html(source),
+        },
+        _ => FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_fallback(source),
+        },
     }
 }
 
@@ -162,14 +173,22 @@ fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
 
 fn chunk_tsx(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TSX.into()) else {
-        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_fallback(source),
+        };
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
 
 fn chunk_ts(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) else {
-        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_fallback(source),
+        };
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
@@ -198,7 +217,11 @@ fn chunk_with_ast(
 fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) -> FileChunks {
     let Some(tree) = parser.parse(source, None) else {
         tracing::warn!("AST parse failed, using fallback chunker");
-        return FileChunks { imports: vec![], parsed_imports: vec![], chunks: chunk_fallback(source) };
+        return FileChunks {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks: chunk_fallback(source),
+        };
     };
     let root = tree.root_node();
     let imports = extract_imports_from_ast(&root, source);
@@ -209,9 +232,17 @@ fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) ->
         .filter_map(|node| classify_js_node(&node, source))
         .collect();
     if chunks.is_empty() {
-        return FileChunks { imports, parsed_imports, chunks: chunk_fallback(source) };
+        return FileChunks {
+            imports,
+            parsed_imports,
+            chunks: chunk_fallback(source),
+        };
     }
-    FileChunks { imports, parsed_imports, chunks }
+    FileChunks {
+        imports,
+        parsed_imports,
+        chunks,
+    }
 }
 
 fn extract_parsed_imports(root: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {
@@ -525,9 +556,9 @@ fn extract_name(node: &tree_sitter::Node, source: &str) -> Option<String> {
 
 fn classify_function(name: Option<&str>) -> ChunkType {
     match name {
-        Some(n) if n.starts_with("use")
-            && n.len() > 3
-            && n.as_bytes()[3].is_ascii_uppercase() => ChunkType::Hook,
+        Some(n) if n.starts_with("use") && n.len() > 3 && n.as_bytes()[3].is_ascii_uppercase() => {
+            ChunkType::Hook
+        }
         Some(n) if n.as_bytes().first().is_some_and(|b| b.is_ascii_uppercase()) => {
             ChunkType::Component
         }
@@ -594,7 +625,9 @@ fn classify_test_call(
     source: &str,
 ) -> Option<(ChunkType, Option<String>)> {
     let mut inner = call.walk();
-    let fn_node = call.children(&mut inner).find(|c| c.kind() == "identifier")?;
+    let fn_node = call
+        .children(&mut inner)
+        .find(|c| c.kind() == "identifier")?;
     let fn_name = &source[fn_node.byte_range()];
     if !matches!(fn_name, "describe" | "it" | "test") {
         return None;
@@ -612,4 +645,3 @@ fn classify_test_call(
 
 #[cfg(test)]
 mod tests;
-

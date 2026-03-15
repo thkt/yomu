@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-const FRONTEND_EXTENSIONS: &[&str] = &[
-    "ts", "tsx", "js", "jsx", "mjs", "css", "html",
-];
+const FRONTEND_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html"];
 
 const EXCLUDED_DIRS: &[&str] = &[
-    "node_modules", "dist", "build", "target",
-    "storybook-static", "coverage", "out",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    "storybook-static",
+    "coverage",
+    "out",
 ];
 
 /// Walk `root` recursively, collecting files with frontend extensions.

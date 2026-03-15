@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rusqlite::Connection;
 
 use super::{
-    f32_as_bytes, sql_placeholders, Chunk, ChunkType, MatchSource, SearchResult, StorageError,
+    Chunk, ChunkType, MatchSource, SearchResult, StorageError, f32_as_bytes, sql_placeholders,
 };
 
 pub fn search_similar(
@@ -69,10 +69,12 @@ pub fn search_by_name(
 
     let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     for k in keywords {
-        all_params.push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
+        all_params
+            .push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
     }
     for k in keywords {
-        all_params.push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
+        all_params
+            .push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
     }
 
     append_type_filter(&mut sql, &mut all_params, "chunk_type", type_filter);
@@ -81,10 +83,8 @@ pub fn search_by_name(
     all_params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params
-        .iter()
-        .map(|b| b.as_ref())
-        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        all_params.iter().map(|b| b.as_ref()).collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(SearchResult {
@@ -141,8 +141,7 @@ pub fn search_by_content(
     params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(SearchResult {
@@ -196,7 +195,10 @@ fn append_type_filter(
     if let Some(types) = types
         && !types.is_empty()
     {
-        sql.push_str(&format!(" AND {column} IN ({})", sql_placeholders(types.len())));
+        sql.push_str(&format!(
+            " AND {column} IN ({})",
+            sql_placeholders(types.len())
+        ));
         for t in types {
             params.push(Box::new(t.as_str().to_string()));
         }
@@ -210,7 +212,10 @@ fn append_exclude_ids(
     exclude_ids: &HashSet<i64>,
 ) {
     if !exclude_ids.is_empty() {
-        sql.push_str(&format!(" AND {column} NOT IN ({})", sql_placeholders(exclude_ids.len())));
+        sql.push_str(&format!(
+            " AND {column} NOT IN ({})",
+            sql_placeholders(exclude_ids.len())
+        ));
         for id in exclude_ids {
             params.push(Box::new(*id));
         }

@@ -27,7 +27,8 @@ pub enum EmbedError {
     BadResponse,
 }
 
-type EmbedFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = Result<T, EmbedError>> + Send + 'a>>;
+type EmbedFuture<'a, T> =
+    Pin<Box<dyn std::future::Future<Output = Result<T, EmbedError>> + Send + 'a>>;
 
 /// Code embedding provider. Returns [`EMBEDDING_DIMS`]-dimensional f32 vectors.
 ///
@@ -74,14 +75,24 @@ impl Embedder {
         }
         let embed_url = format!("{DEFAULT_BASE_URL}{EMBED_PATH}");
         let batch_url = format!("{DEFAULT_BASE_URL}{BATCH_PATH}");
-        Ok(Self { http, api_key, embed_url, batch_url })
+        Ok(Self {
+            http,
+            api_key,
+            embed_url,
+            batch_url,
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn with_base_url(http: Client, api_key: String, base_url: String) -> Self {
         let embed_url = format!("{base_url}{EMBED_PATH}");
         let batch_url = format!("{base_url}{BATCH_PATH}");
-        Self { http, api_key, embed_url, batch_url }
+        Self {
+            http,
+            api_key,
+            embed_url,
+            batch_url,
+        }
     }
 
     async fn post_with_retry(
@@ -251,7 +262,11 @@ fn parse_single_embedding(json: &serde_json::Value) -> Result<Vec<f32>, EmbedErr
         .ok_or(EmbedError::BadResponse)?;
     let values = parse_values(arr)?;
     if values.len() != EMBEDDING_DIMS as usize {
-        tracing::warn!(expected = EMBEDDING_DIMS, actual = values.len(), "unexpected embedding dimension");
+        tracing::warn!(
+            expected = EMBEDDING_DIMS,
+            actual = values.len(),
+            "unexpected embedding dimension"
+        );
         return Err(EmbedError::BadResponse);
     }
     Ok(values)
@@ -272,7 +287,11 @@ fn parse_batch_embeddings(json: &serde_json::Value) -> Result<Vec<Vec<f32>>, Emb
                 .ok_or(EmbedError::BadResponse)?;
             let values = parse_values(vals)?;
             if values.len() != EMBEDDING_DIMS as usize {
-                tracing::warn!(expected = EMBEDDING_DIMS, actual = values.len(), "unexpected embedding dimension");
+                tracing::warn!(
+                    expected = EMBEDDING_DIMS,
+                    actual = values.len(),
+                    "unexpected embedding dimension"
+                );
                 return Err(EmbedError::BadResponse);
             }
             Ok(values)
@@ -291,11 +310,19 @@ pub(crate) struct FailingEmbedder {
 #[cfg(any(test, feature = "test-support"))]
 impl FailingEmbedder {
     pub fn all_fail(status: u16, message: &'static str) -> Self {
-        Self { status, message, docs_fail: true }
+        Self {
+            status,
+            message,
+            docs_fail: true,
+        }
     }
 
     pub fn query_only(status: u16, message: &'static str) -> Self {
-        Self { status, message, docs_fail: false }
+        Self {
+            status,
+            message,
+            docs_fail: false,
+        }
     }
 }
 
@@ -305,7 +332,10 @@ impl Embed for FailingEmbedder {
         let status = self.status;
         let message = self.message;
         Box::pin(async move {
-            Err(EmbedError::Api { status, message: message.into() })
+            Err(EmbedError::Api {
+                status,
+                message: message.into(),
+            })
         })
     }
 
@@ -314,7 +344,10 @@ impl Embed for FailingEmbedder {
             let status = self.status;
             let message = self.message;
             Box::pin(async move {
-                Err(EmbedError::Api { status, message: message.into() })
+                Err(EmbedError::Api {
+                    status,
+                    message: message.into(),
+                })
             })
         } else {
             Box::pin(async { Ok(vec![]) })
@@ -358,8 +391,8 @@ impl Embed for MockEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn from_env_returns_error_without_api_key() {
@@ -535,7 +568,12 @@ mod tests {
     async fn embed_query_returns_768_dims() {
         let embedder = Embedder::from_env(Client::new()).unwrap();
         let embedding = embedder.embed_query("authentication logic").await.unwrap();
-        assert_eq!(embedding.len(), 768, "expected 768 dims, got {}", embedding.len());
+        assert_eq!(
+            embedding.len(),
+            768,
+            "expected 768 dims, got {}",
+            embedding.len()
+        );
     }
 
     #[tokio::test]

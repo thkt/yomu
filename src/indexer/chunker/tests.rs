@@ -165,7 +165,11 @@ fn chunk_fallback_produces_overlapping_chunks() {
         .collect::<Vec<_>>()
         .join("\n");
     let chunks = chunk_fallback(&source);
-    assert!(chunks.len() >= 2, "expected overlapping chunks, got {}", chunks.len());
+    assert!(
+        chunks.len() >= 2,
+        "expected overlapping chunks, got {}",
+        chunks.len()
+    );
     assert!(
         chunks[1].start_line < chunks[0].end_line,
         "expected overlap: chunk[1].start={} < chunk[0].end={}",

@@ -57,7 +57,10 @@ impl ChunkType {
             "test_case" => Self::TestCase,
             "other" => Self::Other,
             other => {
-                tracing::warn!(chunk_type = other, "Unknown chunk_type in DB, defaulting to Other");
+                tracing::warn!(
+                    chunk_type = other,
+                    "Unknown chunk_type in DB, defaulting to Other"
+                );
                 Self::Other
             }
         }
@@ -204,7 +207,12 @@ fn write_file_metadata(
         tx.execute(
             "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![r.source_file, r.target_file, r.symbol_name, r.ref_kind.as_str()],
+            rusqlite::params![
+                r.source_file,
+                r.target_file,
+                r.symbol_name,
+                r.ref_kind.as_str()
+            ],
         )?;
     }
 
@@ -274,23 +282,15 @@ pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, 
 }
 
 pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
-    let total_chunks: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM chunks",
-        [],
-        |row| row.get(0),
-    )?;
+    let total_chunks: u32 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
 
-    let total_files: u32 = conn.query_row(
-        "SELECT COUNT(DISTINCT file_path) FROM chunks",
-        [],
-        |row| row.get(0),
-    )?;
+    let total_files: u32 =
+        conn.query_row("SELECT COUNT(DISTINCT file_path) FROM chunks", [], |row| {
+            row.get(0)
+        })?;
 
-    let embedded_chunks: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM vec_chunks",
-        [],
-        |row| row.get(0),
-    )?;
+    let embedded_chunks: u32 =
+        conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))?;
 
     let last_indexed_at: Option<String> = match conn.query_row(
         "SELECT value FROM index_meta WHERE key = 'last_indexed_at'",
@@ -385,7 +385,9 @@ pub struct Reference {
 }
 
 pub fn sql_placeholders(count: usize) -> String {
-    std::iter::repeat_n("?", count).collect::<Vec<_>>().join(",")
+    std::iter::repeat_n("?", count)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(test)]

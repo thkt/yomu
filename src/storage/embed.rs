@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use rusqlite::Connection;
 
-use super::{check_embedding_dims, f32_as_bytes, sql_placeholders, ChunkType, StorageError};
+use super::{ChunkType, StorageError, check_embedding_dims, f32_as_bytes, sql_placeholders};
 
 pub fn add_embeddings(
     conn: &Connection,
@@ -19,8 +19,7 @@ pub fn add_embeddings(
         .iter()
         .map(|(id, _)| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
         .collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let existing: HashSet<i64> = stmt
         .query_map(param_refs.as_slice(), |row| row.get::<_, i64>(0))?
@@ -47,9 +46,7 @@ pub fn add_embeddings(
     Ok(inserted)
 }
 
-pub fn get_unembedded_file_paths(
-    conn: &Connection,
-) -> Result<Vec<(String, u32)>, StorageError> {
+pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT c.file_path, COUNT(*) as chunk_count
          FROM chunks c
@@ -91,18 +88,17 @@ pub fn get_files_with_chunk_types(
     let sql = format!(
         "SELECT DISTINCT file_path FROM chunks WHERE chunk_type IN ({type_ph}) AND file_path IN ({file_ph})"
     );
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::with_capacity(types.len() + files.len());
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+        Vec::with_capacity(types.len() + files.len());
     for t in types {
         params.push(Box::new(t.as_str().to_string()));
     }
     for f in files {
         params.push(Box::new(f.clone()));
     }
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 

@@ -51,7 +51,10 @@ async fn benchmark_chunk_only_index() {
     eprintln!("=== Chunk-only index benchmark ===");
     eprintln!("  Files:      {}", stats.total_files);
     eprintln!("  Chunks:     {}", stats.total_chunks);
-    eprintln!("  Embedded:   {}/{}", stats.embedded_chunks, stats.total_chunks);
+    eprintln!(
+        "  Embedded:   {}/{}",
+        stats.embedded_chunks, stats.total_chunks
+    );
     eprintln!("  References: {}", ref_count);
     eprintln!("  Time:       {:.1}s", chunk_time.as_secs_f64());
     eprintln!();
@@ -84,13 +87,7 @@ async fn benchmark_incremental_embed() {
     };
 
     let start = Instant::now();
-    let result = yomu::indexer::run_incremental_embed(
-        Arc::clone(&conn),
-        &embedder,
-        50,
-        None,
-    )
-    .await;
+    let result = yomu::indexer::run_incremental_embed(Arc::clone(&conn), &embedder, 50, None).await;
     let embed_time = start.elapsed();
 
     let stats = {
@@ -101,7 +98,10 @@ async fn benchmark_incremental_embed() {
     eprintln!();
     eprintln!("=== Incremental embed benchmark (budget=50) ===");
     eprintln!("  Result:     {:?}", result.map(|_| "ok"));
-    eprintln!("  Embedded:   {}/{}", stats.embedded_chunks, stats.total_chunks);
+    eprintln!(
+        "  Embedded:   {}/{}",
+        stats.embedded_chunks, stats.total_chunks
+    );
     eprintln!("  Coverage:   {}%", stats.embed_percentage());
     eprintln!("  Time:       {:.1}s", embed_time.as_secs_f64());
     eprintln!();
@@ -161,20 +161,16 @@ async fn benchmark_explorer_query() {
 
     for query in &queries {
         let start = Instant::now();
-        let results = yomu::query::search(
-            Arc::clone(&conn2),
-            &embedder,
-            query,
-            5,
-            0,
-        )
-        .await;
+        let results = yomu::query::search(Arc::clone(&conn2), &embedder, query, 5, 0).await;
         let search_time = start.elapsed();
 
         match results {
             Ok(outcome) => {
                 eprintln!();
-                eprintln!("=== explorer(\"{query}\") — {:.0}ms ===", search_time.as_millis());
+                eprintln!(
+                    "=== explorer(\"{query}\") — {:.0}ms ===",
+                    search_time.as_millis()
+                );
                 for r in &outcome.results {
                     let name = r.chunk.name.as_deref().unwrap_or("(unnamed)");
                     let ctype = format!("{:?}", r.chunk.chunk_type).to_lowercase();
@@ -252,7 +248,8 @@ async fn benchmark_impact_query() {
 
         let dependents = yomu::storage::get_transitive_dependents(&conn, file, *depth).unwrap();
         // Group by depth
-        let mut by_depth: std::collections::BTreeMap<u32, Vec<&str>> = std::collections::BTreeMap::new();
+        let mut by_depth: std::collections::BTreeMap<u32, Vec<&str>> =
+            std::collections::BTreeMap::new();
         for d in &dependents {
             by_depth.entry(d.depth).or_default().push(&d.file_path);
         }

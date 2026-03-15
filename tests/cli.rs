@@ -9,7 +9,10 @@ fn version_flag() {
     let output = yomu_cmd().arg("--version").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with("yomu "), "expected 'yomu <version>', got: {stdout}");
+    assert!(
+        stdout.starts_with("yomu "),
+        "expected 'yomu <version>', got: {stdout}"
+    );
 }
 
 #[test]
@@ -17,8 +20,14 @@ fn help_flag() {
     let output = yomu_cmd().arg("--help").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("search"), "help should mention search command");
-    assert!(stdout.contains("impact"), "help should mention impact command");
+    assert!(
+        stdout.contains("search"),
+        "help should mention search command"
+    );
+    assert!(
+        stdout.contains("impact"),
+        "help should mention impact command"
+    );
 }
 
 #[test]
@@ -29,7 +38,10 @@ fn search_limit_out_of_range() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("0") || stderr.contains("invalid"), "should reject limit=0: {stderr}");
+    assert!(
+        stderr.contains("0") || stderr.contains("invalid"),
+        "should reject limit=0: {stderr}"
+    );
 }
 
 #[test]
@@ -40,7 +52,10 @@ fn search_limit_too_large() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("999") || stderr.contains("invalid"), "should reject limit=999: {stderr}");
+    assert!(
+        stderr.contains("999") || stderr.contains("invalid"),
+        "should reject limit=999: {stderr}"
+    );
 }
 
 #[test]
@@ -64,13 +79,13 @@ fn impact_depth_too_large() {
 #[test]
 fn search_default_limit_accepted() {
     // Default limit=10 should be valid (command may fail for other reasons like no project root)
-    let output = yomu_cmd()
-        .args(["search", "test"])
-        .output()
-        .unwrap();
+    let output = yomu_cmd().args(["search", "test"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should NOT fail due to argument validation
-    assert!(!stderr.contains("invalid value"), "default limit should be accepted: {stderr}");
+    assert!(
+        !stderr.contains("invalid value"),
+        "default limit should be accepted: {stderr}"
+    );
 }
 
 #[test]
@@ -89,7 +104,8 @@ fn index_then_status_then_search() {
     std::fs::write(
         src.join("Button.tsx"),
         "export function Button() { return <button>Click</button>; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     // git init so yomu detects project root
     Command::new("git")
         .args(["init"])
@@ -104,8 +120,15 @@ fn index_then_status_then_search() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "index failed: {}", String::from_utf8_lossy(&output.stderr));
-    assert!(stdout.contains("1 files chunked"), "expected 1 file: {stdout}");
+    assert!(
+        output.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 files chunked"),
+        "expected 1 file: {stdout}"
+    );
 
     // status
     let output = yomu_cmd()
@@ -114,7 +137,11 @@ fn index_then_status_then_search() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "status failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(stdout.contains("Files: 1"), "expected Files: 1: {stdout}");
     assert!(stdout.contains("Chunks:"), "expected Chunks line: {stdout}");
 
@@ -126,6 +153,13 @@ fn index_then_status_then_search() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "search failed: {}", String::from_utf8_lossy(&output.stderr));
-    assert!(stdout.contains("Button"), "expected Button in results: {stdout}");
+    assert!(
+        output.status.success(),
+        "search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Button"),
+        "expected Button in results: {stdout}"
+    );
 }
