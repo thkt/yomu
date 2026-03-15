@@ -3,9 +3,7 @@ mod format;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
-
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use reqwest::Client;
 
 use crate::config;
@@ -430,6 +428,10 @@ impl Yomu {
                     }
                 };
                 Embedder::from_env(http)
+                    .map_err(|e| {
+                        tracing::info!(error = %e, "Embedder unavailable, using text search only");
+                        e
+                    })
                     .ok()
                     .map(|e| Arc::new(e) as Arc<dyn Embed>)
             })
@@ -465,7 +467,7 @@ impl Yomu {
     {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock();
+            let conn = conn.lock().unwrap();
             f(&conn)
         })
         .await

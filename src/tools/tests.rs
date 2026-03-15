@@ -1,30 +1,7 @@
 use super::*;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 
-use crate::indexer::embedder::EmbedError;
-
-struct FailingEmbedder;
-
-impl crate::indexer::embedder::Embed for FailingEmbedder {
-    fn embed_query<'a>(
-        &'a self,
-        _text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(EmbedError::Api { status: 500, message: "service unavailable".into() })
-        })
-    }
-    fn embed_documents<'a>(
-        &'a self,
-        _texts: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(EmbedError::Api { status: 500, message: "service unavailable".into() })
-        })
-    }
-}
+use crate::indexer::embedder::FailingEmbedder;
 
 fn test_db() -> (storage::Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -119,7 +96,7 @@ async fn search_auto_indexes_empty_db() {
     assert!(!text.contains("No results found"), "expected results after auto-index, got: {text}");
     assert!(text.contains("Button"), "expected Button in results, got: {text}");
 
-    let stats = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert!(stats.total_chunks > 0, "expected chunks after auto-index");
     assert!(stats.embedded_chunks > 0, "expected embeddings after auto-index");
 }
@@ -134,7 +111,7 @@ async fn search_hybrid_flow_empty_db() {
     let text = y.search("button component", 10, 0).await.unwrap();
     assert!(text.contains("Button"), "expected Button in results: {text}");
 
-    let stats = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert!(stats.total_chunks > 0, "expected chunks after hybrid index");
     assert!(stats.embedded_chunks > 0, "expected embeddings after hybrid index");
 }
@@ -149,7 +126,7 @@ async fn search_incremental_embeds_chunked_only() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).await.unwrap();
 
     {
-        let c = y.conn.lock();
+        let c = y.conn.lock().unwrap();
         let stats = storage::get_stats(&c).unwrap();
         assert!(stats.total_chunks > 0, "should have chunks");
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
@@ -159,7 +136,7 @@ async fn search_incremental_embeds_chunked_only() {
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
-        let c = y.conn.lock();
+        let c = y.conn.lock().unwrap();
         let stats = storage::get_stats(&c).unwrap();
         assert!(stats.embedded_chunks > 0, "expected embeddings after incremental embed");
     }
@@ -207,7 +184,7 @@ async fn search_degraded_empty_results_shows_note() {
         "h1", "", &[],
     ).unwrap();
 
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(Arc::new(FailingEmbedder)));
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(Arc::new(FailingEmbedder::all_fail(500, "service unavailable"))));
 
     let text = y.search("zzzznonexistent", 10, 0).await.unwrap();
     assert!(text.contains("No results found"), "expected no results: {text}");
@@ -231,7 +208,7 @@ async fn search_degraded_with_results_shows_note() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder)),
+        Some(Arc::new(FailingEmbedder::all_fail(500, "service unavailable"))),
     );
 
     let result = y_failing.search("Button", 10, 0).await.unwrap();
@@ -470,7 +447,7 @@ async fn index_chunks_without_embedding() {
     assert!(text.contains("complete"), "expected completion: {text}");
     assert!(text.contains("Embedding coverage:"), "should show coverage gap: {text}");
 
-    let stats = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert!(stats.total_chunks > 0, "should have chunks");
     assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
 }
@@ -480,7 +457,7 @@ async fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
     y.index().await.unwrap();
 
-    let chunks_before = { let c = y.conn.lock(); storage::get_stats(&c).unwrap().total_chunks };
+    let chunks_before = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap().total_chunks };
     assert!(chunks_before > 0, "should have chunks after index");
 
     std::fs::write(dir.path().join("src/B.tsx"), "export function B() { return <span/>; }").unwrap();
@@ -488,7 +465,7 @@ async fn rebuild_re_parses_all_files() {
     let text = y.rebuild().await.unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
 
-    let chunks_after = { let c = y.conn.lock(); storage::get_stats(&c).unwrap().total_chunks };
+    let chunks_after = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap().total_chunks };
     assert!(chunks_after > chunks_before, "rebuild should pick up new file: {chunks_before} -> {chunks_after}");
 }
 
@@ -546,7 +523,7 @@ async fn status_shows_embedded_total() {
 async fn impact_lists_dependents() {
     let (y, _dir) = test_yomu();
     {
-        let conn = y.conn.lock();
+        let conn = y.conn.lock().unwrap();
         seed_index(&conn);
         storage::replace_file_references(&conn, "src/A.tsx", &[
             storage::Reference { source_file: "src/A.tsx".into(), target_file: "src/hooks/useAuth.ts".into(), symbol_name: Some("useAuth".into()), ref_kind: storage::RefKind::Named },
@@ -567,7 +544,7 @@ async fn impact_lists_dependents() {
 async fn impact_filters_by_symbol() {
     let (y, _dir) = test_yomu();
     {
-        let conn = y.conn.lock();
+        let conn = y.conn.lock().unwrap();
         seed_index(&conn);
         storage::replace_file_references(&conn, "src/A.tsx", &[
             storage::Reference { source_file: "src/A.tsx".into(), target_file: "src/hooks/useAuth.ts".into(), symbol_name: Some("useAuth".into()), ref_kind: storage::RefKind::Named },
@@ -600,7 +577,7 @@ async fn impact_errors_on_empty_index() {
 async fn impact_distinguishes_missing_file() {
     let (y, _dir) = test_yomu();
     {
-        let conn = y.conn.lock();
+        let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
     let text = y.impact("src/nonexistent.tsx", None, 3).await.unwrap();
@@ -611,7 +588,7 @@ async fn impact_distinguishes_missing_file() {
 async fn impact_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     {
-        let conn = y.conn.lock();
+        let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
     let err = y.impact("../etc/passwd", None, 3).await.unwrap_err();
@@ -622,7 +599,7 @@ async fn impact_rejects_path_traversal() {
 async fn impact_symbol_flag_overrides_colon_syntax() {
     let (y, _dir) = test_yomu();
     {
-        let conn = y.conn.lock();
+        let conn = y.conn.lock().unwrap();
         seed_index(&conn);
         storage::replace_file_references(&conn, "src/A.tsx", &[
             storage::Reference { source_file: "src/A.tsx".into(), target_file: "src/hooks/useAuth.ts".into(), symbol_name: Some("useAuth".into()), ref_kind: storage::RefKind::Named },
@@ -757,14 +734,14 @@ async fn ensure_indexed_partially_embedded_triggers_embed() {
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).await.unwrap();
 
-    let stats_before = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats_before = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert!(stats_before.total_chunks > 0, "should have chunks");
     assert_eq!(stats_before.embedded_chunks, 0, "should have no embeddings yet");
 
     let result = y.search("App component", 10, 0).await.unwrap();
     assert!(result.contains("App"), "should find App after embedding: {result}");
 
-    let stats_after = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats_after = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert!(stats_after.embedded_chunks > 0, "should have embeddings after search");
 }
 
@@ -780,7 +757,7 @@ async fn ensure_indexed_fully_embedded_skips_embed() {
         &crate::indexer::embedder::MockEmbedder, false,
     ).await.unwrap();
 
-    let stats = { let c = y.conn.lock(); storage::get_stats(&c).unwrap() };
+    let stats = { let c = y.conn.lock().unwrap(); storage::get_stats(&c).unwrap() };
     assert_eq!(stats.embedded_chunks, stats.total_chunks, "should be fully embedded");
 
     let result = y.search("Button", 10, 0).await.unwrap();
@@ -804,7 +781,7 @@ async fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder)),
+        Some(Arc::new(FailingEmbedder::all_fail(500, "service unavailable"))),
     );
 
     let result = y_failing.search("Card", 10, 0).await.unwrap();

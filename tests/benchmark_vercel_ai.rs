@@ -30,7 +30,7 @@ async fn benchmark_chunk_only_index() {
 
     let db_path = db_dir.join("index.db");
     let conn = yomu::storage::open_db(&db_path).unwrap();
-    let conn = Arc::new(parking_lot::Mutex::new(conn));
+    let conn = Arc::new(std::sync::Mutex::new(conn));
 
     let start = Instant::now();
     yomu::indexer::run_chunk_only_index(Arc::clone(&conn), &root)
@@ -39,11 +39,11 @@ async fn benchmark_chunk_only_index() {
     let chunk_time = start.elapsed();
 
     let stats = {
-        let c = conn.lock();
+        let c = conn.lock().unwrap();
         yomu::storage::get_stats(&c).unwrap()
     };
     let ref_count = {
-        let c = conn.lock();
+        let c = conn.lock().unwrap();
         yomu::storage::get_reference_count(&c).unwrap()
     };
 
@@ -72,7 +72,7 @@ async fn benchmark_incremental_embed() {
     }
 
     let conn = yomu::storage::open_db(&db_path).unwrap();
-    let conn = Arc::new(parking_lot::Mutex::new(conn));
+    let conn = Arc::new(std::sync::Mutex::new(conn));
 
     let http = reqwest::Client::new();
     let embedder = match yomu::indexer::embedder::Embedder::from_env(http) {
@@ -94,7 +94,7 @@ async fn benchmark_incremental_embed() {
     let embed_time = start.elapsed();
 
     let stats = {
-        let c = conn.lock();
+        let c = conn.lock().unwrap();
         yomu::storage::get_stats(&c).unwrap()
     };
 
@@ -142,7 +142,7 @@ async fn benchmark_explorer_query() {
             return;
         }
     };
-    let conn2 = Arc::new(parking_lot::Mutex::new(conn2));
+    let conn2 = Arc::new(std::sync::Mutex::new(conn2));
 
     let http = reqwest::Client::new();
     let embedder = match yomu::indexer::embedder::Embedder::from_env(http) {

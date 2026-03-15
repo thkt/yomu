@@ -280,6 +280,48 @@ fn parse_batch_embeddings(json: &serde_json::Value) -> Result<Vec<Vec<f32>>, Emb
         .collect()
 }
 
+/// Embedder that always fails with a configurable error. For tests.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) struct FailingEmbedder {
+    status: u16,
+    message: &'static str,
+    docs_fail: bool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FailingEmbedder {
+    pub fn all_fail(status: u16, message: &'static str) -> Self {
+        Self { status, message, docs_fail: true }
+    }
+
+    pub fn query_only(status: u16, message: &'static str) -> Self {
+        Self { status, message, docs_fail: false }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Embed for FailingEmbedder {
+    fn embed_query<'a>(&'a self, _text: &'a str) -> EmbedFuture<'a, Vec<f32>> {
+        let status = self.status;
+        let message = self.message;
+        Box::pin(async move {
+            Err(EmbedError::Api { status, message: message.into() })
+        })
+    }
+
+    fn embed_documents<'a>(&'a self, _texts: &'a [String]) -> EmbedFuture<'a, Vec<Vec<f32>>> {
+        if self.docs_fail {
+            let status = self.status;
+            let message = self.message;
+            Box::pin(async move {
+                Err(EmbedError::Api { status, message: message.into() })
+            })
+        } else {
+            Box::pin(async { Ok(vec![]) })
+        }
+    }
+}
+
 /// Mock embedder returning deterministic vectors for offline tests.
 ///
 /// - `embed_query` returns a unit vector (v[0] = 1.0) for meaningful distance tests.

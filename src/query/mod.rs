@@ -1,7 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Arc;
-
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::indexer::embedder::{Embed, EmbedError};
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
@@ -208,24 +206,37 @@ fn is_test_path(path: &str) -> bool {
         || path.contains("/e2e/")
 }
 
-/// 1.0 at >=9% coverage, scaling down to 0.4 at 0%.
+/// Confidence weight for semantic search scores.
+/// Reaches 1.0 at 9% embedding coverage — below this, text-match scores
+/// are boosted relative to vector scores to compensate for sparse embeddings.
+/// At 0% coverage: 0.4 (semantic results still shown but heavily discounted).
 fn semantic_confidence(embed_coverage: f32) -> f32 {
     (embed_coverage.sqrt() * 2.0 + 0.4).min(1.0)
 }
 
+pub struct RerankContext<'a> {
+    pub type_hints: &'a [storage::ChunkType],
+    pub keywords: &'a [String],
+    pub keyword_idfs: &'a [f32],
+    pub embed_coverage: f32,
+}
+
+impl Default for RerankContext<'_> {
+    fn default() -> Self {
+        Self { type_hints: &[], keywords: &[], keyword_idfs: &[], embed_coverage: 1.0 }
+    }
+}
+
 pub fn rerank(
     results: &mut [storage::SearchResult],
-    type_hints: &[storage::ChunkType],
+    ctx: &RerankContext<'_>,
     import_counts: &std::collections::HashMap<String, u32>,
-    keywords: &[String],
-    keyword_idfs: &[f32],
-    embed_coverage: f32,
 ) {
     if results.is_empty() {
         return;
     }
 
-    let confidence = semantic_confidence(embed_coverage);
+    let confidence = semantic_confidence(ctx.embed_coverage);
 
     let mut counts: Vec<u32> = import_counts.values().copied().filter(|&c| c > 0).collect();
     counts.sort_unstable();
@@ -235,17 +246,17 @@ pub fn rerank(
         counts[counts.len().saturating_sub(counts.len() / 4 + 1)]
     };
 
-    let query_wants_tests = type_hints.contains(&storage::ChunkType::TestCase);
+    let query_wants_tests = ctx.type_hints.contains(&storage::ChunkType::TestCase);
 
     for result in results.iter_mut() {
         let base = match result.match_source {
             storage::MatchSource::Semantic => 1.0 / (1.0 + result.distance) * confidence,
             storage::MatchSource::NameMatch => {
-                let ratio = keyword_hit_ratio(result, keywords, keyword_idfs, false);
+                let ratio = keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, false);
                 NAME_MATCH_BASE + NAME_MATCH_RATIO_WEIGHT * ratio
             }
             storage::MatchSource::ContentMatch => {
-                let ratio = keyword_hit_ratio(result, keywords, keyword_idfs, true);
+                let ratio = keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, true);
                 CONTENT_MATCH_BASE + CONTENT_MATCH_RATIO_WEIGHT * ratio
             }
         };
@@ -256,8 +267,8 @@ pub fn rerank(
             0.0
         };
 
-        let type_bonus = if !type_hints.is_empty()
-            && type_hints.contains(&result.chunk.chunk_type)
+        let type_bonus = if !ctx.type_hints.is_empty()
+            && ctx.type_hints.contains(&result.chunk.chunk_type)
         {
             TYPE_HINT_BONUS
         } else {
@@ -333,7 +344,13 @@ fn search_pipeline(
 
     let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
     let import_counts = storage::get_import_counts(conn, &file_paths)?;
-    rerank(&mut results, &type_hints, &import_counts, &keywords, &keyword_idfs, embed_coverage);
+    let ctx = RerankContext {
+        type_hints: &type_hints,
+        keywords: &keywords,
+        keyword_idfs: &keyword_idfs,
+        embed_coverage,
+    };
+    rerank(&mut results, &ctx, &import_counts);
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     results.truncate(limit as usize);
 
@@ -357,7 +374,7 @@ pub async fn search(
     let query_owned = query.to_string();
 
     let results = tokio::task::spawn_blocking(move || {
-        let conn = conn.lock();
+        let conn = conn.lock().unwrap();
         search_pipeline(&conn, &query_owned, query_embedding.as_deref(), limit, offset)
     })
     .await?;

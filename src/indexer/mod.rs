@@ -3,10 +3,8 @@ pub mod embedder;
 pub mod walker;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 
 use crate::resolver::Resolver;
@@ -154,7 +152,7 @@ fn collect_pending_files(
     let mut files_errored = 0u32;
 
     for file_path in files {
-        let conn_guard = conn.lock();
+        let conn_guard = conn.lock().unwrap();
         match process_file(&conn_guard, root, file_path, force)? {
             FileAction::Process(pf) => {
                 drop(conn_guard);
@@ -175,7 +173,7 @@ async fn remove_orphans(
     let indexed_paths = {
         let conn = Arc::clone(conn);
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock();
+            let conn = conn.lock().unwrap();
             storage::get_all_file_paths(&conn)
         })
         .await
@@ -192,7 +190,7 @@ async fn remove_orphans(
 
     let conn = Arc::clone(conn);
     let result = tokio::task::spawn_blocking(move || {
-        let conn = conn.lock();
+        let conn = conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         for orphan in &orphans {
             storage::delete_file_chunks_in(&tx, orphan)?;
@@ -288,7 +286,7 @@ fn store_file_data(
     refs: Vec<Reference>,
 ) -> Result<(), StorageError> {
     let new_chunks = pf.to_new_chunks();
-    let conn = conn.lock();
+    let conn = conn.lock().unwrap();
     storage::replace_file_chunks(&conn, &pf.rel_path, &new_chunks, &embeddings, &pf.hash, &pf.imports_text, &refs)
 }
 
@@ -376,46 +374,51 @@ async fn run_chunk_only_index_inner(
     let current_rel_paths: std::collections::HashSet<String> =
         files.iter().map(|f| to_rel_path(root, f)).collect();
 
-    let mut files_processed = 0u32;
-    let mut chunks_created = 0u32;
-    let mut files_skipped = 0u32;
-    let mut files_errored = 0u32;
-
     let resolver = Resolver::new(root);
+    let root_owned = root.to_owned();
 
-    storage::fts_set_automerge(&conn.lock(), false)?;
+    let (files_processed, chunks_created, files_skipped, files_errored) = {
+        let conn = Arc::clone(&conn);
+        tokio::task::spawn_blocking(move || {
+            let mut files_processed = 0u32;
+            let mut chunks_created = 0u32;
+            let mut files_skipped = 0u32;
+            let mut files_errored = 0u32;
 
-    for file_path in &files {
-        let conn_guard = conn.lock();
-        match process_file(&conn_guard, root, file_path, force)? {
-            FileAction::Process(pf) => {
-                let n = pf.raw_chunks.len() as u32;
-                let new_chunks = pf.to_new_chunks();
-                let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
-                storage::replace_file_chunks_only(
-                    &conn_guard,
-                    &pf.rel_path,
-                    &new_chunks,
-                    &pf.hash,
-                    &pf.imports_text,
-                    &refs,
-                )?;
-                drop(conn_guard);
-                chunks_created += n;
-                files_processed += 1;
+            let conn_guard = conn.lock().unwrap();
+            storage::fts_set_automerge(&conn_guard, false)?;
+
+            for file_path in &files {
+                match process_file(&conn_guard, &root_owned, file_path, force)? {
+                    FileAction::Process(pf) => {
+                        let n = pf.raw_chunks.len() as u32;
+                        let new_chunks = pf.to_new_chunks();
+                        let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
+                        storage::replace_file_chunks_only(
+                            &conn_guard,
+                            &pf.rel_path,
+                            &new_chunks,
+                            &pf.hash,
+                            &pf.imports_text,
+                            &refs,
+                        )?;
+                        chunks_created += n;
+                        files_processed += 1;
+                    }
+                    FileAction::Skip => files_skipped += 1,
+                    FileAction::Error => files_errored += 1,
+                }
             }
-            FileAction::Skip => files_skipped += 1,
-            FileAction::Error => files_errored += 1,
-        }
-    }
 
-    {
-        let conn_guard = conn.lock();
-        if files_processed > 0 {
-            storage::fts_optimize(&conn_guard)?;
-        }
-        storage::fts_set_automerge(&conn_guard, true)?;
-    }
+            if files_processed > 0 {
+                storage::fts_optimize(&conn_guard)?;
+            }
+            storage::fts_set_automerge(&conn_guard, true)?;
+
+            Ok::<_, IndexError>((files_processed, chunks_created, files_skipped, files_errored))
+        })
+        .await?
+    }?;
 
     remove_orphans(&conn, current_rel_paths).await?;
 
@@ -465,7 +468,7 @@ pub async fn run_incremental_embed(
     type_hints: Option<&[storage::ChunkType]>,
 ) -> Result<EmbedResult, IndexError> {
     let ordered_files = {
-        let conn_guard = conn.lock();
+        let conn_guard = conn.lock().unwrap();
         order_files_for_embedding(&conn_guard, type_hints)?
     };
 
@@ -484,7 +487,7 @@ pub async fn run_incremental_embed(
 
     for file_path in &ordered_files {
         let (chunk_ids, texts) = {
-            let conn_guard = conn.lock();
+            let conn_guard = conn.lock().unwrap();
             let pairs =
                 storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
             let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
@@ -542,7 +545,7 @@ pub async fn run_incremental_embed(
         let n = pairs.len() as u32;
         let conn_clone = Arc::clone(&conn);
         tokio::task::spawn_blocking(move || {
-            let conn_guard = conn_clone.lock();
+            let conn_guard = conn_clone.lock().unwrap();
             storage::add_embeddings(&conn_guard, &pairs)
         })
         .await??;

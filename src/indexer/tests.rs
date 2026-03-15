@@ -1,5 +1,4 @@
 use super::*;
-use std::pin::Pin;
 #[test]
 fn file_hash_is_deterministic() {
     let h1 = file_hash("hello world");
@@ -50,7 +49,7 @@ async fn run_index_with_mock_embedder() {
     assert!(result.chunks_created >= 2);
     assert_eq!(result.files_errored, 0);
 
-    let stats = storage::get_stats(&conn.lock()).unwrap();
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 2);
     assert!(stats.total_chunks >= 2);
 }
@@ -110,14 +109,14 @@ async fn run_index_removes_deleted_file_chunks() {
     // Index both files
     let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
     assert_eq!(r1.files_processed, 2);
-    assert_eq!(storage::get_stats(&conn.lock()).unwrap().total_files, 2);
+    assert_eq!(storage::get_stats(&conn.lock().unwrap()).unwrap().total_files, 2);
 
     // Delete B.tsx from disk
     std::fs::remove_file(src_dir.join("B.tsx")).unwrap();
 
     // Re-index: should remove orphaned B.tsx chunks
     run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
-    let stats = storage::get_stats(&conn.lock()).unwrap();
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
 
@@ -197,7 +196,7 @@ async fn run_index_stores_imports_in_file_context() {
 
     run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).await.unwrap();
 
-    let contexts = storage::get_file_contexts(&conn.lock(), &["src/App.tsx"]).unwrap();
+    let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
     let imports = &contexts["src/App.tsx"];
     assert!(imports.contains("import { useState } from 'react'"), "expected useState import, got: {imports}");
@@ -228,12 +227,12 @@ async fn run_chunk_only_index_stores_chunks_without_embeddings() {
     assert!(result.chunks_created >= 2);
     assert_eq!(result.files_errored, 0);
 
-    let stats = storage::get_stats(&conn.lock()).unwrap();
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 2);
     assert!(stats.total_chunks >= 2);
     assert_eq!(stats.embedded_chunks, 0);
 
-    let ref_count = storage::get_reference_count(&conn.lock()).unwrap();
+    let ref_count = storage::get_reference_count(&conn.lock().unwrap()).unwrap();
     assert!(ref_count >= 1, "expected at least 1 reference from App→Button, got {ref_count}");
 }
 
@@ -254,7 +253,7 @@ async fn run_incremental_embed_within_budget() {
     let conn = Arc::new(Mutex::new(conn));
 
     run_chunk_only_index(Arc::clone(&conn), dir.path()).await.unwrap();
-    let stats_before = storage::get_stats(&conn.lock()).unwrap();
+    let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
     let result = run_incremental_embed(
@@ -265,7 +264,7 @@ async fn run_incremental_embed_within_budget() {
     assert_eq!(result.files_completed, 3);
     assert!(!result.budget_exhausted);
 
-    let stats_after = storage::get_stats(&conn.lock()).unwrap();
+    let stats_after = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_after.embedded_chunks, stats_after.total_chunks);
 }
 
@@ -294,7 +293,7 @@ async fn run_incremental_embed_exhausts_budget() {
     assert!(result.budget_exhausted);
     assert!(result.chunks_embedded <= 2);
 
-    let stats = storage::get_stats(&conn.lock()).unwrap();
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert!(stats.embedded_chunks < stats.total_chunks);
 }
 
@@ -336,10 +335,10 @@ async fn run_incremental_embed_prioritizes_type_hints() {
     assert_eq!(result.files_completed, 1);
     assert!(result.chunks_embedded >= 1);
 
-    let stats = storage::get_stats(&conn.lock()).unwrap();
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert!(stats.embedded_chunks >= 1);
 
-    let hook_embedded: bool = conn.lock().query_row(
+    let hook_embedded: bool = conn.lock().unwrap().query_row(
         "SELECT EXISTS(
             SELECT 1 FROM vec_chunks v
             INNER JOIN chunks c ON c.id = v.chunk_id
@@ -387,26 +386,7 @@ async fn run_incremental_embed_none_hints_preserves_order() {
     assert!(!result.budget_exhausted);
 }
 
-struct FailingEmbedder;
-
-impl Embed for FailingEmbedder {
-    fn embed_query<'a>(
-        &'a self,
-        _text: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>, embedder::EmbedError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(embedder::EmbedError::Api { status: 500, message: "mock failure".into() })
-        })
-    }
-    fn embed_documents<'a>(
-        &'a self,
-        _texts: &'a [String],
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<Vec<f32>>, embedder::EmbedError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(embedder::EmbedError::Api { status: 500, message: "mock failure".into() })
-        })
-    }
-}
+use crate::indexer::embedder::FailingEmbedder;
 
 #[tokio::test]
 async fn run_incremental_embed_aborts_after_consecutive_failures() {
@@ -434,7 +414,7 @@ async fn run_incremental_embed_aborts_after_consecutive_failures() {
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_incremental_embed(Arc::clone(&conn), &FailingEmbedder, 50, None).await;
+    let result = run_incremental_embed(Arc::clone(&conn), &FailingEmbedder::all_fail(500, "mock failure"), 50, None).await;
 
     assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
     let err_msg = result.unwrap_err().to_string();
@@ -459,7 +439,7 @@ async fn embed_and_store_aborts_after_consecutive_failures() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(Arc::clone(&conn), dir.path(), &FailingEmbedder, false).await;
+    let result = run_index(Arc::clone(&conn), dir.path(), &FailingEmbedder::all_fail(500, "mock failure"), false).await;
 
     assert!(result.is_err(), "should abort after {MAX_CONSECUTIVE_EMBED_ERRORS} consecutive failures");
 }

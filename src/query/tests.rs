@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::indexer::embedder::{Embed, EmbedError, Embedder, MockEmbedder, EMBEDDING_DIMS};
@@ -273,7 +271,7 @@ fn rerank_semantic_base_score() {
     let mut results = vec![
         make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.5, storage::MatchSource::Semantic),
     ];
-    rerank(&mut results, &[], &HashMap::new(), &[], &[], 1.0);
+    rerank(&mut results, &RerankContext::default(), &HashMap::new());
     let expected = 1.0 / (1.0 + 0.5);
     assert!((results[0].score - expected).abs() < 1e-6,
         "expected {expected}, got {}", results[0].score);
@@ -286,7 +284,7 @@ fn rerank_name_match_base_score() {
         make_result("src/A.tsx", "useAuth", storage::ChunkType::Hook, f32::INFINITY, storage::MatchSource::NameMatch),
     ];
     // 1/1 keywords match → base = 0.40 + 0.20 = 0.60, + NAME_MATCH_BONUS = 0.65
-    rerank(&mut results, &[], &HashMap::new(), &kw, &[], 1.0);
+    rerank(&mut results, &RerankContext { keywords: &kw, ..Default::default() }, &HashMap::new());
     assert!((results[0].score - 0.65).abs() < 1e-6,
         "expected 0.65, got {}", results[0].score);
 }
@@ -297,7 +295,7 @@ fn rerank_sorts_by_score_descending() {
         make_result("src/B.tsx", "B", storage::ChunkType::Component, 0.5, storage::MatchSource::Semantic),
         make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.1, storage::MatchSource::Semantic),
     ];
-    rerank(&mut results, &[], &HashMap::new(), &[], &[], 1.0);
+    rerank(&mut results, &RerankContext::default(), &HashMap::new());
     assert!(results[0].score >= results[1].score,
         "expected descending: {} >= {}", results[0].score, results[1].score);
     assert_eq!(results[0].chunk.name.as_deref(), Some("A"));
@@ -310,23 +308,12 @@ fn rerank_type_hint_bonus() {
     ];
     let mut without_hint = with_hint.clone();
 
-    rerank(&mut with_hint, &[storage::ChunkType::Hook], &HashMap::new(), &[], &[], 1.0);
-    rerank(&mut without_hint, &[], &HashMap::new(), &[], &[], 1.0);
+    rerank(&mut with_hint, &RerankContext { type_hints: &[storage::ChunkType::Hook], ..Default::default() }, &HashMap::new());
+    rerank(&mut without_hint, &RerankContext::default(), &HashMap::new());
 
     let diff = with_hint[0].score - without_hint[0].score;
     assert!((diff - 0.03).abs() < 1e-6,
         "type_hint bonus should be +0.03, got diff {diff}");
-}
-
-#[test]
-fn rerank_no_type_hint_bonus_when_empty() {
-    let mut results = vec![
-        make_result("src/A.tsx", "useAuth", storage::ChunkType::Hook, 0.5, storage::MatchSource::Semantic),
-    ];
-    let base = 1.0 / (1.0 + 0.5_f32);
-    rerank(&mut results, &[], &HashMap::new(), &[], &[], 1.0);
-    assert!((results[0].score - base).abs() < 1e-6,
-        "no bonus expected: {base} vs {}", results[0].score);
 }
 
 #[test]
@@ -339,7 +326,7 @@ fn rerank_import_rank_bonus() {
         ("src/popular.tsx".to_string(), 10u32),
         ("src/unpopular.tsx".to_string(), 1u32),
     ]);
-    rerank(&mut results, &[], &import_counts, &[], &[], 1.0);
+    rerank(&mut results, &RerankContext::default(), &import_counts);
 
     let popular = results.iter().find(|r| r.chunk.name.as_deref() == Some("Popular")).unwrap();
     let unpopular = results.iter().find(|r| r.chunk.name.as_deref() == Some("Unpopular")).unwrap();
@@ -355,8 +342,9 @@ fn rerank_test_path_penalty() {
     let mut normal_result = vec![
         make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.3, storage::MatchSource::Semantic),
     ];
-    rerank(&mut test_result, &[], &HashMap::new(), &[], &[], 1.0);
-    rerank(&mut normal_result, &[], &HashMap::new(), &[], &[], 1.0);
+    let ctx = RerankContext::default();
+    rerank(&mut test_result, &ctx, &HashMap::new());
+    rerank(&mut normal_result, &ctx, &HashMap::new());
 
     let diff = normal_result[0].score - test_result[0].score;
     assert!((diff - 0.05).abs() < 1e-6,
@@ -369,7 +357,7 @@ fn rerank_test_query_exempts_penalty() {
         make_result("src/__tests__/A.test.tsx", "testA", storage::ChunkType::TestCase, 0.3, storage::MatchSource::Semantic),
     ];
     let base = 1.0 / (1.0 + 0.3_f32) + 0.03; // base + type_hint bonus (TestCase matches)
-    rerank(&mut results, &[storage::ChunkType::TestCase], &HashMap::new(), &[], &[], 1.0);
+    rerank(&mut results, &RerankContext { type_hints: &[storage::ChunkType::TestCase], ..Default::default() }, &HashMap::new());
     assert!((results[0].score - base).abs() < 1e-6,
         "TestCase query should exempt test penalty: expected {base}, got {}", results[0].score);
 }
@@ -382,7 +370,7 @@ fn rerank_name_match_all_bonuses() {
     ];
     let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
     // 1/1 match → base=0.60, + NAME_MATCH=0.05, + TYPE_HINT=0.03, + IMPORT=0.03 = 0.71
-    rerank(&mut results, &[storage::ChunkType::Hook], &import_counts, &kw, &[], 1.0);
+    rerank(&mut results, &RerankContext { type_hints: &[storage::ChunkType::Hook], keywords: &kw, ..Default::default() }, &import_counts);
     assert!((results[0].score - 0.71).abs() < 1e-6,
         "expected 0.71, got {}", results[0].score);
 }
@@ -393,7 +381,7 @@ fn rerank_combined_bonuses_semantic() {
         make_result("src/useAuth.tsx", "useAuth", storage::ChunkType::Hook, 0.1, storage::MatchSource::Semantic),
     ];
     let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
-    rerank(&mut results, &[storage::ChunkType::Hook], &import_counts, &[], &[], 1.0);
+    rerank(&mut results, &RerankContext { type_hints: &[storage::ChunkType::Hook], ..Default::default() }, &import_counts);
 
     let base = 1.0 / (1.0 + 0.1_f32);
     let expected = base + TYPE_HINT_BONUS + IMPORT_RANK_BONUS;
@@ -407,7 +395,7 @@ fn rerank_combined_score_can_exceed_one() {
         make_result("src/useAuth.tsx", "useAuth", storage::ChunkType::Hook, 0.0, storage::MatchSource::Semantic),
     ];
     let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
-    rerank(&mut results, &[storage::ChunkType::Hook], &import_counts, &[], &[], 1.0);
+    rerank(&mut results, &RerankContext { type_hints: &[storage::ChunkType::Hook], ..Default::default() }, &import_counts);
 
     assert!(results[0].score > 1.0,
         "score can exceed 1.0 with all bonuses: {}", results[0].score);
@@ -486,7 +474,7 @@ fn rerank_low_coverage_dampens_semantic() {
     let mut results = vec![
         make_result("src/A.tsx", "A", storage::ChunkType::Component, 0.5, storage::MatchSource::Semantic),
     ];
-    rerank(&mut results, &[], &HashMap::new(), &[], &[], 0.02);
+    rerank(&mut results, &RerankContext { embed_coverage: 0.02, ..Default::default() }, &HashMap::new());
     let confidence = semantic_confidence(0.02);
     let expected = 1.0 / (1.0 + 0.5) * confidence;
     assert!((results[0].score - expected).abs() < 1e-6,
@@ -502,7 +490,7 @@ fn rerank_low_coverage_name_match_beats_semantic() {
         // Name match: 0.40 + 0.20*(1/1) + 0.05 = 0.65 (unaffected by coverage)
         make_result("src/B.tsx", "useChat", storage::ChunkType::Hook, f32::INFINITY, storage::MatchSource::NameMatch),
     ];
-    rerank(&mut results, &[], &HashMap::new(), &kw, &[], 0.02);
+    rerank(&mut results, &RerankContext { keywords: &kw, embed_coverage: 0.02, ..Default::default() }, &HashMap::new());
     assert_eq!(results[0].chunk.name.as_deref(), Some("useChat"),
         "name match should rank first at low coverage");
     assert!(results[0].score > results[1].score,
@@ -534,24 +522,7 @@ fn content_match_scores_from_content_body() {
     assert!((ratio_no_content).abs() < 1e-6, "name/path don't match → ratio=0.0, got {ratio_no_content}");
 }
 
-struct FailingEmbedder;
-
-impl Embed for FailingEmbedder {
-    fn embed_query<'a>(
-        &'a self,
-        _text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(EmbedError::Api { status: 429, message: "rate limited".into() })
-        })
-    }
-    fn embed_documents<'a>(
-        &'a self,
-        _texts: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
-        Box::pin(async { Ok(vec![]) })
-    }
-}
+use crate::indexer::embedder::FailingEmbedder;
 
 #[tokio::test]
 async fn search_degrades_on_embed_failure() {
@@ -571,7 +542,7 @@ async fn search_degrades_on_embed_failure() {
     ).unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &FailingEmbedder, "auth", 10, 0).await.unwrap();
+    let outcome = search(conn, &FailingEmbedder::query_only(429, "rate limited"), "auth", 10, 0).await.unwrap();
     assert!(outcome.degraded, "should be degraded when embed fails");
     assert!(!outcome.results.is_empty(), "should still return text-matched results");
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("AuthForm"));
