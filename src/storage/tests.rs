@@ -1788,3 +1788,87 @@ fn search_by_content_respects_type_filter() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
 }
+
+#[test]
+fn get_unembedded_chunks_for_file_returns_triple() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Card"),
+            content: "function Card() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useCard"),
+            content: "function useCard() {}",
+            start_line: 5,
+            end_line: 8,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[]).unwrap();
+
+    let triples = get_unembedded_chunks_for_file(&conn, "src/Card.tsx").unwrap();
+    assert_eq!(triples.len(), 2);
+
+    let types: Vec<&str> = triples.iter().map(|(_, _, t)| t.as_str()).collect();
+    assert!(types.contains(&"component"));
+    assert!(types.contains(&"hook"));
+
+    // Verify content is returned correctly
+    let contents: Vec<&str> = triples.iter().map(|(_, c, _)| c.as_str()).collect();
+    assert!(contents.contains(&"function Card() {}"));
+    assert!(contents.contains(&"function useCard() {}"));
+}
+
+#[test]
+fn get_unembedded_chunks_for_file_excludes_embedded() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+
+    insert_chunk(
+        &conn,
+        "src/Nav.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Nav"),
+            content: "function Nav() {}",
+            start_line: 1,
+            end_line: 3,
+        },
+        "h1",
+        &embedding,
+    )
+    .unwrap();
+
+    let triples = get_unembedded_chunks_for_file(&conn, "src/Nav.tsx").unwrap();
+    assert!(triples.is_empty());
+}
+
+#[test]
+fn get_imports_for_file_returns_stored_imports() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("App"),
+        content: "function App() {}",
+        start_line: 1,
+        end_line: 3,
+    }];
+    let imports = "import { useState } from 'react'\nimport { Button } from './Button'";
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", imports, &[]).unwrap();
+
+    let result = get_imports_for_file(&conn, "src/App.tsx").unwrap();
+    assert_eq!(result, imports);
+}
+
+#[test]
+fn get_imports_for_file_returns_empty_for_missing() {
+    let (conn, _dir) = test_db();
+    let result = get_imports_for_file(&conn, "src/nonexistent.tsx").unwrap();
+    assert!(result.is_empty());
+}

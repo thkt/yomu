@@ -249,6 +249,20 @@ fn build_references(
 const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 const RATE_LIMIT_INTERVAL: Duration = Duration::from_millis(700);
 
+/// Prepend file-level context so the embedding vector captures cross-chunk semantics.
+fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, content: &str) -> String {
+    let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
+    if !imports.is_empty() {
+        for line in imports.lines() {
+            result.push_str("// ");
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.push_str(content);
+    result
+}
+
 enum EmbedFailure {
     RateLimited(EmbedError),
     Abort(EmbedError),
@@ -312,7 +326,18 @@ async fn embed_and_store(
     let mut consecutive_errors = 0u32;
 
     for pf in pending {
-        let texts: Vec<String> = pf.raw_chunks.iter().map(|c| c.content.clone()).collect();
+        let texts: Vec<String> = pf
+            .raw_chunks
+            .iter()
+            .map(|c| {
+                enrich_for_embedding(
+                    &pf.rel_path,
+                    c.chunk_type.as_str(),
+                    &pf.imports_text,
+                    &c.content,
+                )
+            })
+            .collect();
 
         let embeddings = match embedder.embed_documents(&texts).await {
             Ok(embs) => {
@@ -512,9 +537,15 @@ pub async fn run_incremental_embed(
     for file_path in &ordered_files {
         let (chunk_ids, texts) = {
             let conn_guard = conn.lock().unwrap();
-            let pairs = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
-            let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
-            let texts: Vec<String> = pairs.into_iter().map(|(_, t)| t).collect();
+            let triples = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
+            let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
+            let ids: Vec<i64> = triples.iter().map(|(id, _, _)| *id).collect();
+            let texts: Vec<String> = triples
+                .into_iter()
+                .map(|(_, content, chunk_type)| {
+                    enrich_for_embedding(file_path, &chunk_type, &imports, &content)
+                })
+                .collect();
             (ids, texts)
         };
 

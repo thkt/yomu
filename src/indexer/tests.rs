@@ -13,6 +13,36 @@ fn file_hash_changes_with_content() {
     assert_ne!(h1, h2);
 }
 
+#[test]
+fn enrich_for_embedding_with_imports() {
+    let result = enrich_for_embedding(
+        "src/App.tsx",
+        "component",
+        "import { useState } from 'react'\nimport { Button } from './Button'",
+        "function App() {}",
+    );
+    assert!(result.starts_with("// File: src/App.tsx\n"));
+    assert!(result.contains("// Type: component\n"));
+    assert!(result.contains("// import { useState } from 'react'\n"));
+    assert!(result.contains("// import { Button } from './Button'\n"));
+    assert!(result.ends_with("function App() {}"));
+}
+
+#[test]
+fn enrich_for_embedding_without_imports() {
+    let result = enrich_for_embedding("src/utils.ts", "function", "", "function add() {}");
+    assert_eq!(
+        result,
+        "// File: src/utils.ts\n// Type: function\nfunction add() {}"
+    );
+}
+
+#[test]
+fn enrich_for_embedding_empty_content() {
+    let result = enrich_for_embedding("src/empty.ts", "other", "", "");
+    assert_eq!(result, "// File: src/empty.ts\n// Type: other\n");
+}
+
 use crate::indexer::embedder::MockEmbedder;
 
 fn test_db() -> (storage::Db, tempfile::TempDir) {

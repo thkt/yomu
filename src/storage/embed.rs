@@ -23,8 +23,7 @@ pub fn add_embeddings(
     let mut stmt = conn.prepare(&sql)?;
     let existing: HashSet<i64> = stmt
         .query_map(param_refs.as_slice(), |row| row.get::<_, i64>(0))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<HashSet<_>, _>>()?;
 
     let tx = conn.unchecked_transaction()?;
     let mut inserted = 0u32;
@@ -63,16 +62,35 @@ pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>
 pub fn get_unembedded_chunks_for_file(
     conn: &Connection,
     file_path: &str,
-) -> Result<Vec<(i64, String)>, StorageError> {
+) -> Result<Vec<(i64, String, String)>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.content FROM chunks c
+        "SELECT c.id, c.content, c.chunk_type FROM chunks c
          LEFT JOIN vec_chunks v ON c.id = v.chunk_id
          WHERE c.file_path = ?1 AND v.chunk_id IS NULL",
     )?;
     let rows = stmt.query_map([file_path], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn get_imports_for_file(
+    conn: &Connection,
+    file_path: &str,
+) -> Result<String, StorageError> {
+    match conn.query_row(
+        "SELECT imports_text FROM file_context WHERE file_path = ?1",
+        [file_path],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(text) => Ok(text),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(String::new()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub fn get_files_with_chunk_types(
