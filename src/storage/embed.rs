@@ -78,10 +78,7 @@ pub fn get_unembedded_chunks_for_file(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-pub fn get_imports_for_file(
-    conn: &Connection,
-    file_path: &str,
-) -> Result<String, StorageError> {
+pub fn get_imports_for_file(conn: &Connection, file_path: &str) -> Result<String, StorageError> {
     match conn.query_row(
         "SELECT imports_text FROM file_context WHERE file_path = ?1",
         [file_path],
