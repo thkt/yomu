@@ -424,7 +424,8 @@ fn chunk_rust_impl() {
 
 #[test]
 fn chunk_rust_impl_trait() {
-    let source = "impl Display for Config { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
+    let source =
+        "impl Display for Config { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
     let result = chunk_file(source, "rs");
     assert_eq!(result.chunks.len(), 1);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);

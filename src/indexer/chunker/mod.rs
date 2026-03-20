@@ -441,9 +441,11 @@ fn extract_rust_impl_name(node: &tree_sitter::Node, source: &str) -> Option<Stri
     match (iter.next(), iter.next()) {
         (None, _) => None,
         (Some(a), None) => Some(source[a.byte_range()].to_string()),
-        (Some(a), Some(b)) => {
-            Some(format!("{} for {}", &source[a.byte_range()], &source[b.byte_range()]))
-        }
+        (Some(a), Some(b)) => Some(format!(
+            "{} for {}",
+            &source[a.byte_range()],
+            &source[b.byte_range()]
+        )),
     }
 }
 
