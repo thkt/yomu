@@ -110,12 +110,12 @@ No manual indexing. `search` auto-indexes on first call.
 
 Returns ranked results with full context. Each result includes:
 
-| Included       | Why                                             |
-| -------------- | ----------------------------------------------- |
-| Full code body | No follow-up `read` needed                      |
-| File imports   | Dependency context without opening another file |
-| Sibling defs   | Other functions/types in the same file          |
-| Chunk type     | component / hook / type_def / css_rule          |
+| Included       | Why                                              |
+| -------------- | ------------------------------------------------ |
+| Full code body | No follow-up `read` needed                       |
+| File imports   | Dependency context without opening another file  |
+| Sibling defs   | Other functions/types in the same file           |
+| Chunk type     | component / hook / type_def / css_rule / rust_fn |
 
 Options: `--limit` (default: 10, max: 100), `--offset` (default: 0, max: 500)
 
@@ -170,12 +170,13 @@ Source files → tree-sitter AST → Semantic chunks → Gemini embeddings → H
 
 ## Supported file types
 
-| Type             | Parser      | Chunk types                                 |
-| ---------------- | ----------- | ------------------------------------------- |
-| TypeScript / TSX | tree-sitter | component, hook, type_def, test_case, other |
-| JavaScript / JSX | tree-sitter | component, hook, type_def, test_case, other |
-| CSS              | tree-sitter | css_rule (selectors, @media, @keyframes)    |
-| HTML             | tree-sitter | html_element                                |
+| Type             | Parser      | Chunk types                                            |
+| ---------------- | ----------- | ------------------------------------------------------ |
+| TypeScript / TSX | tree-sitter | component, hook, type_def, test_case, other            |
+| JavaScript / JSX | tree-sitter | component, hook, type_def, test_case, other            |
+| Rust             | tree-sitter | rust_fn, rust_struct, rust_enum, rust_trait, rust_impl |
+| CSS              | tree-sitter | css_rule (selectors, @media, @keyframes)               |
+| HTML             | tree-sitter | html_element                                           |
 
 Other files fall back to character-based chunking with overlap.
 
