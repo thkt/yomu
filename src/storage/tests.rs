@@ -368,6 +368,11 @@ fn chunk_type_roundtrip() {
         ChunkType::CssRule,
         ChunkType::HtmlElement,
         ChunkType::TestCase,
+        ChunkType::RustFn,
+        ChunkType::RustStruct,
+        ChunkType::RustEnum,
+        ChunkType::RustTrait,
+        ChunkType::RustImpl,
         ChunkType::Other,
     ];
     for variant in &variants {

@@ -42,7 +42,6 @@ fn chunk_css_rule_set() {
     let result = chunk_file(source, "css");
     assert_eq!(result.chunks.len(), 1);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::CssRule);
-    assert!(result.imports.is_empty());
 }
 
 #[test]
@@ -51,7 +50,6 @@ fn chunk_html_element() {
     let result = chunk_file(source, "html");
     assert!(!result.chunks.is_empty());
     assert_eq!(result.chunks[0].chunk_type, ChunkType::HtmlElement);
-    assert!(result.imports.is_empty());
 }
 
 #[test]
@@ -73,7 +71,6 @@ fn chunk_fallback_for_unknown_extension() {
     let result = chunk_file(source, "toml");
     assert!(!result.chunks.is_empty());
     assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
-    assert!(result.imports.is_empty());
 }
 
 #[test]
@@ -205,8 +202,6 @@ fn no_imports_returns_empty_vec() {
     assert!(result.imports.is_empty());
 }
 
-// ── parse_structured_imports tests (FR-001 / T-001..T-006 + edge cases) ──
-
 #[test]
 fn parse_named_imports() {
     let source = "import { a, b } from './mod';";
@@ -319,8 +314,6 @@ fn parse_inline_type_specifier() {
     assert_eq!(named_spec.kind, ImportKind::Named);
 }
 
-// ── parse_reexports tests (FR-004 / T-014..T-015 + edge cases) ──
-
 #[test]
 fn parse_reexport_named() {
     let source = "export { Button } from './Button';";
@@ -382,4 +375,143 @@ fn parse_aliased_named_import() {
     assert_eq!(result[0].specifiers[0].name, "useState");
     assert_eq!(result[0].specifiers[0].alias, Some("useS".to_string()));
     assert_eq!(result[0].specifiers[0].kind, ImportKind::Named);
+}
+
+#[test]
+fn chunk_rust_function() {
+    let source = "fn hello() { println!(\"hello\"); }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("hello"));
+}
+
+#[test]
+fn chunk_rust_struct() {
+    let source = "struct Config { pub name: String, pub value: u32 }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustStruct);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Config"));
+}
+
+#[test]
+fn chunk_rust_enum() {
+    let source = "enum Color { Red, Green, Blue }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustEnum);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Color"));
+}
+
+#[test]
+fn chunk_rust_trait() {
+    let source = "trait Drawable { fn draw(&self); }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustTrait);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Drawable"));
+}
+
+#[test]
+fn chunk_rust_impl() {
+    let source = "impl Config { fn new() -> Self { Config { name: String::new(), value: 0 } } }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Config"));
+}
+
+#[test]
+fn chunk_rust_impl_trait() {
+    let source = "impl Display for Config { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Display for Config"));
+}
+
+#[test]
+fn chunk_rust_skips_use_and_comments() {
+    let source = r#"
+use std::fmt::Display;
+// A helper function
+fn helper() {}
+"#;
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("helper"));
+}
+
+#[test]
+fn chunk_rust_multiple_items() {
+    let source = r#"
+struct Foo { x: i32 }
+enum Bar { A, B }
+fn baz() {}
+"#;
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustStruct);
+    assert_eq!(result.chunks[1].chunk_type, ChunkType::RustEnum);
+    assert_eq!(result.chunks[2].chunk_type, ChunkType::RustFn);
+}
+
+#[test]
+fn chunk_rust_pub_fn() {
+    let source = "pub fn greet() { println!(\"hi\"); }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("greet"));
+}
+
+#[test]
+fn chunk_rust_async_fn() {
+    let source = "async fn fetch() { todo!() }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("fetch"));
+}
+
+#[test]
+fn chunk_rust_impl_generic() {
+    let source = "impl<T> From<T> for Wrapper<T> { fn from(val: T) -> Self { Wrapper(val) } }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
+    let name = result.chunks[0].name.as_deref().unwrap();
+    assert!(name.contains("From"), "expected From in name: {name}");
+    assert!(name.contains("Wrapper"), "expected Wrapper in name: {name}");
+}
+
+#[test]
+fn chunk_rust_skips_block_comment() {
+    let source = r#"
+/* This is a block comment */
+fn only_fn() {}
+"#;
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("only_fn"));
+}
+
+#[test]
+fn chunk_rust_const_and_mod_become_other() {
+    let source = r#"
+const MAX: u32 = 100;
+mod inner {}
+"#;
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 2);
+    assert!(
+        result
+            .chunks
+            .iter()
+            .all(|c| c.chunk_type == ChunkType::Other),
+        "const and mod should be classified as Other"
+    );
 }

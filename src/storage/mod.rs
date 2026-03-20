@@ -31,6 +31,11 @@ pub enum ChunkType {
     CssRule,
     HtmlElement,
     TestCase,
+    RustFn,
+    RustStruct,
+    RustEnum,
+    RustTrait,
+    RustImpl,
     Other,
 }
 
@@ -43,6 +48,11 @@ impl ChunkType {
             Self::CssRule => "css_rule",
             Self::HtmlElement => "html_element",
             Self::TestCase => "test_case",
+            Self::RustFn => "rust_fn",
+            Self::RustStruct => "rust_struct",
+            Self::RustEnum => "rust_enum",
+            Self::RustTrait => "rust_trait",
+            Self::RustImpl => "rust_impl",
             Self::Other => "other",
         }
     }
@@ -55,6 +65,11 @@ impl ChunkType {
             "css_rule" => Self::CssRule,
             "html_element" => Self::HtmlElement,
             "test_case" => Self::TestCase,
+            "rust_fn" => Self::RustFn,
+            "rust_struct" => Self::RustStruct,
+            "rust_enum" => Self::RustEnum,
+            "rust_trait" => Self::RustTrait,
+            "rust_impl" => Self::RustImpl,
             "other" => Self::Other,
             other => {
                 tracing::warn!(
@@ -251,7 +266,6 @@ pub fn replace_file_chunks(
     Ok(())
 }
 
-/// Stores chunks without embeddings (no API calls).
 pub fn replace_file_chunks_only(
     conn: &Connection,
     file_path: &str,

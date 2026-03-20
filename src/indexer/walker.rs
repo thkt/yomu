@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-const FRONTEND_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html", "rs"];
 
 const EXCLUDED_DIRS: &[&str] = &[
     "node_modules",
@@ -13,8 +13,7 @@ const EXCLUDED_DIRS: &[&str] = &[
     "out",
 ];
 
-/// Walk `root` recursively, collecting files with frontend extensions.
-pub fn walk_frontend_files(root: &Path) -> Vec<PathBuf> {
+pub fn walk_source_files(root: &Path) -> Vec<PathBuf> {
     WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -41,7 +40,7 @@ pub fn walk_frontend_files(root: &Path) -> Vec<PathBuf> {
                 .path()
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| FRONTEND_EXTENSIONS.contains(&ext))
+                .is_some_and(|ext| SUPPORTED_EXTENSIONS.contains(&ext))
         })
         .map(|entry| entry.into_path())
         .collect()
@@ -61,6 +60,7 @@ mod tests {
             "src/entry.mjs",
             "src/styles.css",
             "public/index.html",
+            "src/lib.rs",
         ] {
             let path = dir.join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -89,11 +89,11 @@ mod tests {
     }
 
     #[test]
-    fn walk_collects_frontend_files() {
+    fn walk_collects_source_files() {
         let tmp = tempfile::tempdir().unwrap();
         setup_project(tmp.path());
 
-        let files = walk_frontend_files(tmp.path());
+        let files = walk_source_files(tmp.path());
         let names: Vec<&str> = files
             .iter()
             .map(|p| p.strip_prefix(tmp.path()).unwrap().to_str().unwrap())
@@ -109,7 +109,8 @@ mod tests {
             names.contains(&"public/index.html"),
             "missing html: {names:?}"
         );
-        assert_eq!(files.len(), 7, "expected 7 frontend files, got: {names:?}");
+        assert!(names.contains(&"src/lib.rs"), "missing rs: {names:?}");
+        assert_eq!(files.len(), 8, "expected 8 source files, got: {names:?}");
     }
 
     #[test]
@@ -117,7 +118,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_project(tmp.path());
 
-        let files = walk_frontend_files(tmp.path());
+        let files = walk_source_files(tmp.path());
         for f in &files {
             let s = f.to_str().unwrap();
             assert!(!s.contains("node_modules"), "included node_modules: {s}");

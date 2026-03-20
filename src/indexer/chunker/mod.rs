@@ -1,8 +1,5 @@
 use crate::storage::ChunkType;
 
-// ── Import structure types (FR-001) ──
-// Used by resolver (Phase 2) and indexer integration (Phase 4).
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportKind {
     Named,
@@ -24,17 +21,12 @@ pub struct ParsedImport {
     pub source: String,
 }
 
-// ── Re-export types (FR-004) ──
-
-/// Re-export entry in a barrel file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReExport {
     pub symbol_name: Option<String>,
     pub source: String,
 }
 
-/// Parse re-export statements from source code.
-/// Handles `export { X } from './Y'` and `export * from './Y'`.
 pub fn parse_reexports(source: &str, extension: &str) -> Vec<ReExport> {
     let lang = match extension {
         "tsx" | "ts" | "jsx" | "js" => tree_sitter_typescript::LANGUAGE_TSX.into(),
@@ -63,12 +55,10 @@ fn extract_reexports(root: &tree_sitter::Node, source: &str) -> Vec<ReExport> {
         if child.kind() != "export_statement" {
             continue;
         }
-        // Must have a `from` source (re-export, not local export)
         let source_str = match extract_export_source(&child, source) {
             Some(s) => s,
             None => continue,
         };
-        // Check for `export *` (namespace re-export)
         if has_star_export(&child) {
             reexports.push(ReExport {
                 symbol_name: None,
@@ -76,7 +66,6 @@ fn extract_reexports(root: &tree_sitter::Node, source: &str) -> Vec<ReExport> {
             });
             continue;
         }
-        // Check for `export { X, Y }` (named re-exports)
         if let Some(clause) = find_child_by_kind(&child, "export_clause") {
             let mut clause_cursor = clause.walk();
             for spec in clause.children(&mut clause_cursor) {
@@ -110,9 +99,6 @@ fn has_star_export(node: &tree_sitter::Node) -> bool {
         .any(|c| c.kind() == "*" || (c.kind() == "namespace_export"))
 }
 
-/// Intermediate chunk representation produced by the chunker.
-///
-/// Data flow: source code → `RawChunk` (chunker) → `NewChunk` (storage insert) → `Chunk` (storage read).
 #[derive(Debug, Clone)]
 pub struct RawChunk {
     pub chunk_type: ChunkType,
@@ -122,43 +108,31 @@ pub struct RawChunk {
     pub end_line: u32,
 }
 
-/// Chunker output with file-level context.
-///
-/// Data flow: source code → `FileChunks` (chunker) → `PendingFile` (indexer) → DB.
 #[derive(Debug, Clone)]
 pub struct FileChunks {
-    /// Raw import statement text (JS/TS only; empty for CSS/HTML/fallback).
     pub imports: Vec<String>,
-    /// Structured import data for reference graph construction (JS/TS only).
     pub parsed_imports: Vec<ParsedImport>,
     pub chunks: Vec<RawChunk>,
 }
 
-/// Split source code into semantic chunks using AST parsing.
-///
-/// Supported extensions: `tsx`, `jsx`, `ts`, `js`, `mjs`, `css`, `html`.
-/// Unknown extensions fall back to character-based splitting.
-/// Returns empty chunks if `source` is empty/whitespace-only.
-/// For JS/TS files, also extracts import statements as file-level context.
+impl FileChunks {
+    fn chunks_only(chunks: Vec<RawChunk>) -> Self {
+        Self {
+            imports: vec![],
+            parsed_imports: vec![],
+            chunks,
+        }
+    }
+}
+
 pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
     match extension {
         "tsx" | "jsx" => chunk_tsx(source),
         "ts" | "js" | "mjs" => chunk_ts(source),
-        "css" => FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_css(source),
-        },
-        "html" => FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_html(source),
-        },
-        _ => FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_fallback(source),
-        },
+        "rs" => FileChunks::chunks_only(chunk_rust(source)),
+        "css" => FileChunks::chunks_only(chunk_css(source)),
+        "html" => FileChunks::chunks_only(chunk_html(source)),
+        _ => FileChunks::chunks_only(chunk_fallback(source)),
     }
 }
 
@@ -173,22 +147,14 @@ fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
 
 fn chunk_tsx(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TSX.into()) else {
-        return FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_fallback(source),
-        };
+        return FileChunks::chunks_only(chunk_fallback(source));
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
 
 fn chunk_ts(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) else {
-        return FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_fallback(source),
-        };
+        return FileChunks::chunks_only(chunk_fallback(source));
     };
     chunk_js_like_with_imports(source, &mut parser)
 }
@@ -217,11 +183,7 @@ fn chunk_with_ast(
 fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) -> FileChunks {
     let Some(tree) = parser.parse(source, None) else {
         tracing::warn!("AST parse failed, using fallback chunker");
-        return FileChunks {
-            imports: vec![],
-            parsed_imports: vec![],
-            chunks: chunk_fallback(source),
-        };
+        return FileChunks::chunks_only(chunk_fallback(source));
     };
     let root = tree.root_node();
     let imports = extract_imports_from_ast(&root, source);
@@ -253,10 +215,6 @@ fn extract_parsed_imports(root: &tree_sitter::Node, source: &str) -> Vec<ParsedI
         .collect()
 }
 
-/// Parse structured import information from source code using tree-sitter.
-///
-/// Returns a list of parsed imports with their specifiers and source paths.
-/// Returns empty Vec if no imports found or if the file type doesn't support imports.
 #[cfg(test)]
 pub fn parse_structured_imports(source: &str, extension: &str) -> Vec<ParsedImport> {
     match extension {
@@ -325,7 +283,6 @@ fn parse_import_clause(
     for child in clause.children(&mut cursor) {
         match child.kind() {
             "identifier" => {
-                // default import: `import X from ...`
                 let name = source[child.byte_range()].to_string();
                 let kind = if is_type_import {
                     ImportKind::TypeOnly
@@ -438,13 +395,54 @@ fn classify_js_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk> 
             Some(make_chunk(source, node, chunk_type, name))
         }
         "import_statement" | "comment" => None,
-        _ => {
-            let text = &source[node.byte_range()];
-            if text.trim().is_empty() {
-                None
-            } else {
-                Some(make_chunk(source, node, ChunkType::Other, None))
-            }
+        _ => other_or_skip(source, node),
+    }
+}
+
+fn other_or_skip(source: &str, node: &tree_sitter::Node) -> Option<RawChunk> {
+    let text = &source[node.byte_range()];
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(make_chunk(source, node, ChunkType::Other, None))
+    }
+}
+
+fn chunk_rust(source: &str) -> Vec<RawChunk> {
+    let Some(mut parser) = make_parser(&tree_sitter_rust::LANGUAGE.into()) else {
+        return chunk_fallback(source);
+    };
+    chunk_with_ast(source, &mut parser, classify_rust_node)
+}
+
+fn classify_rust_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk> {
+    let chunk_type = match node.kind() {
+        "function_item" => ChunkType::RustFn,
+        "struct_item" => ChunkType::RustStruct,
+        "enum_item" => ChunkType::RustEnum,
+        "trait_item" => ChunkType::RustTrait,
+        "impl_item" => {
+            let name = extract_rust_impl_name(node, source);
+            return Some(make_chunk(source, node, ChunkType::RustImpl, name));
+        }
+        "use_declaration" | "line_comment" | "block_comment" => return None,
+        _ => return other_or_skip(source, node),
+    };
+    let name = extract_name(node, source);
+    Some(make_chunk(source, node, chunk_type, name))
+}
+
+fn extract_rust_impl_name(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    // tree-sitter-rust emits trait identifier before type identifier in impl items
+    let mut iter = node
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "type_identifier" || c.kind() == "generic_type");
+    match (iter.next(), iter.next()) {
+        (None, _) => None,
+        (Some(a), None) => Some(source[a.byte_range()].to_string()),
+        (Some(a), Some(b)) => {
+            Some(format!("{} for {}", &source[a.byte_range()], &source[b.byte_range()]))
         }
     }
 }
@@ -462,14 +460,7 @@ fn classify_css_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk>
             Some(make_chunk(source, node, ChunkType::CssRule, None))
         }
         "comment" => None,
-        _ => {
-            let text = &source[node.byte_range()];
-            if text.trim().is_empty() {
-                None
-            } else {
-                Some(make_chunk(source, node, ChunkType::Other, None))
-            }
-        }
+        _ => other_or_skip(source, node),
     }
 }
 
@@ -518,7 +509,7 @@ fn chunk_fallback(source: &str) -> Vec<RawChunk> {
             });
         }
 
-        // ~4 lines of overlap assuming ~50 chars/line for frontend code
+        // ~4 lines of overlap assuming ~50 chars/line
         const OVERLAP_LINES: usize = 4;
         if end_idx >= lines.len() {
             break;

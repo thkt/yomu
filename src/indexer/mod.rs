@@ -402,7 +402,7 @@ async fn run_chunk_only_index_inner(
     root: &Path,
     force: bool,
 ) -> Result<IndexResult, IndexError> {
-    let files = walker::walk_frontend_files(root);
+    let files = walker::walk_source_files(root);
     tracing::info!(
         file_count = files.len(),
         force,
@@ -634,7 +634,7 @@ pub async fn run_index(
     embedder: &(impl Embed + ?Sized),
     force: bool,
 ) -> Result<IndexResult, IndexError> {
-    let files = walker::walk_frontend_files(root);
+    let files = walker::walk_source_files(root);
     if files.len() > LARGE_PROJECT_THRESHOLD {
         tracing::warn!(
             count = files.len(),

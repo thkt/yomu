@@ -126,7 +126,6 @@ async fn run_index_force_reindexes() {
         .await
         .unwrap();
 
-    // Force reindex
     let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true)
         .await
         .unwrap();
@@ -677,4 +676,35 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
     let ordered = order_files_for_embedding(&conn, Some(&[])).unwrap();
     assert_eq!(ordered.len(), 1);
     assert_eq!(ordered[0], "src/A.tsx");
+}
+
+#[tokio::test]
+async fn run_chunk_only_index_handles_rust_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("lib.rs"),
+        "pub struct Config { name: String }\npub fn init() {}",
+    )
+    .unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
+        .await
+        .unwrap();
+
+    assert_eq!(result.files_processed, 1);
+    assert_eq!(result.chunks_created, 2);
+    assert_eq!(result.files_errored, 0);
+
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
+    assert_eq!(stats.total_files, 1);
+    assert_eq!(stats.total_chunks, 2);
+
+    let ref_count = storage::get_reference_count(&conn.lock().unwrap()).unwrap();
+    assert_eq!(ref_count, 0, "Rust files should have no import references");
 }
