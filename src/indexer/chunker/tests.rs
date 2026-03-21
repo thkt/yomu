@@ -541,14 +541,28 @@ fn chunk_markdown_h3_only() {
 #[test]
 fn chunk_markdown_skips_headings_in_code_fence() {
     let cases = [
-        ("## Before\n\n```bash\n# Not a heading\necho hello\n```\n\n## After", "backtick"),
-        ("## Before\n\n~~~\n# Not a heading\n~~~\n\n## After", "tilde"),
+        (
+            "## Before\n\n```bash\n# Not a heading\necho hello\n```\n\n## After",
+            "backtick",
+        ),
+        (
+            "## Before\n\n~~~\n# Not a heading\n~~~\n\n## After",
+            "tilde",
+        ),
     ];
     for (source, label) in cases {
         let result = chunk_file(source, "md");
         assert_eq!(result.chunks.len(), 2, "case: {label}");
-        assert_eq!(result.chunks[0].name.as_deref(), Some("Before"), "case: {label}");
-        assert_eq!(result.chunks[1].name.as_deref(), Some("After"), "case: {label}");
+        assert_eq!(
+            result.chunks[0].name.as_deref(),
+            Some("Before"),
+            "case: {label}"
+        );
+        assert_eq!(
+            result.chunks[1].name.as_deref(),
+            Some("After"),
+            "case: {label}"
+        );
     }
 }
 
@@ -609,7 +623,11 @@ fn chunk_markdown_rejects_invalid_headings() {
             .filter(|c| c.chunk_type == ChunkType::MdSection)
             .collect();
         assert_eq!(md_sections.len(), 1, "case: {label}");
-        assert_eq!(md_sections[0].name.as_deref(), Some("Valid"), "case: {label}");
+        assert_eq!(
+            md_sections[0].name.as_deref(),
+            Some("Valid"),
+            "case: {label}"
+        );
     }
 }
 
@@ -640,5 +658,8 @@ fn chunk_markdown_section_with_whitespace_body_kept() {
         .filter(|c| c.chunk_type == ChunkType::MdSection)
         .filter_map(|c| c.name.as_deref())
         .collect();
-    assert_eq!(names, vec!["Has content", "Whitespace body", "Also has content"]);
+    assert_eq!(
+        names,
+        vec!["Has content", "Whitespace body", "Also has content"]
+    );
 }
