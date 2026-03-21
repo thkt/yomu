@@ -516,3 +516,129 @@ mod inner {}
         "const and mod should be classified as Other"
     );
 }
+
+#[test]
+fn chunk_markdown_sections() {
+    let source = "# Title\n\nIntro text.\n\n## Installation\n\nRun `npm install`.\n\n## Usage\n\nImport the module.";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::MdSection);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Title"));
+    assert_eq!(result.chunks[1].name.as_deref(), Some("Installation"));
+    assert_eq!(result.chunks[2].name.as_deref(), Some("Usage"));
+}
+
+#[test]
+fn chunk_markdown_h3_only() {
+    let source = "### v1.0.0\n\nInitial release.\n\n### v0.9.0\n\nBeta.";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks.len(), 2);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::MdSection);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("v1.0.0"));
+    assert_eq!(result.chunks[1].name.as_deref(), Some("v0.9.0"));
+}
+
+#[test]
+fn chunk_markdown_skips_headings_in_code_fence() {
+    let cases = [
+        ("## Before\n\n```bash\n# Not a heading\necho hello\n```\n\n## After", "backtick"),
+        ("## Before\n\n~~~\n# Not a heading\n~~~\n\n## After", "tilde"),
+    ];
+    for (source, label) in cases {
+        let result = chunk_file(source, "md");
+        assert_eq!(result.chunks.len(), 2, "case: {label}");
+        assert_eq!(result.chunks[0].name.as_deref(), Some("Before"), "case: {label}");
+        assert_eq!(result.chunks[1].name.as_deref(), Some("After"), "case: {label}");
+    }
+}
+
+#[test]
+fn chunk_markdown_content_before_first_heading() {
+    let source = "---\ntitle: Guide\n---\n\n## Section A\n\nContent.";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks.len(), 2);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
+    assert_eq!(result.chunks[1].chunk_type, ChunkType::MdSection);
+    assert_eq!(result.chunks[1].name.as_deref(), Some("Section A"));
+}
+
+#[test]
+fn chunk_markdown_no_headings_falls_back() {
+    let source = "Just some plain text\nwithout any headings.";
+    let result = chunk_file(source, "md");
+    assert!(!result.chunks.is_empty());
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
+}
+
+#[test]
+fn chunk_markdown_trailing_hashes() {
+    let source = "## Heading ##\n\nContent.";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Heading"));
+}
+
+#[test]
+fn chunk_markdown_line_numbers() {
+    let source = "Intro\n\n## First\n\nBody\n\n## Second\n\nMore body";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks[0].start_line, 1); // Intro (Other)
+    assert_eq!(result.chunks[0].end_line, 2);
+    assert_eq!(result.chunks[1].start_line, 3); // ## First
+    assert_eq!(result.chunks[2].start_line, 7); // ## Second
+}
+
+#[test]
+fn chunk_markdown_empty_input() {
+    let result = chunk_file("", "md");
+    assert!(result.chunks.is_empty());
+}
+
+#[test]
+fn chunk_markdown_rejects_invalid_headings() {
+    let cases = [
+        ("    # Not a heading", "4-space indent"),
+        ("#hashtag", "no space after #"),
+        ("####### Not valid", "level 7"),
+    ];
+    for (invalid_line, label) in cases {
+        let source = format!("{invalid_line}\n\n## Valid\n\nContent.");
+        let result = chunk_file(&source, "md");
+        let md_sections: Vec<_> = result
+            .chunks
+            .iter()
+            .filter(|c| c.chunk_type == ChunkType::MdSection)
+            .collect();
+        assert_eq!(md_sections.len(), 1, "case: {label}");
+        assert_eq!(md_sections[0].name.as_deref(), Some("Valid"), "case: {label}");
+    }
+}
+
+#[test]
+fn chunk_markdown_unclosed_fence() {
+    let source = "## Before\n\n```\n# Inside fence\n\n## Also inside";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Before"));
+}
+
+#[test]
+fn chunk_markdown_empty_title_produces_nameless_section() {
+    let source = "##\n\nSome content.";
+    let result = chunk_file(source, "md");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::MdSection);
+    assert_eq!(result.chunks[0].name, None);
+}
+
+#[test]
+fn chunk_markdown_section_with_whitespace_body_kept() {
+    let source = "## Has content\n\nReal text.\n\n## Whitespace body\n   \n   \n\n## Also has content\n\nMore text.";
+    let result = chunk_file(source, "md");
+    let names: Vec<_> = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::MdSection)
+        .filter_map(|c| c.name.as_deref())
+        .collect();
+    assert_eq!(names, vec!["Has content", "Whitespace body", "Also has content"]);
+}

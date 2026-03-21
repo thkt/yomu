@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html", "rs"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html", "rs", "md"];
 
 const EXCLUDED_DIRS: &[&str] = &[
     "node_modules",
@@ -61,6 +61,7 @@ mod tests {
             "src/styles.css",
             "public/index.html",
             "src/lib.rs",
+            "docs/guide.md",
         ] {
             let path = dir.join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -110,7 +111,9 @@ mod tests {
             "missing html: {names:?}"
         );
         assert!(names.contains(&"src/lib.rs"), "missing rs: {names:?}");
-        assert_eq!(files.len(), 8, "expected 8 source files, got: {names:?}");
+        assert!(names.contains(&"docs/guide.md"), "missing md: {names:?}");
+        assert!(names.contains(&"README.md"), "missing root md: {names:?}");
+        assert_eq!(files.len(), 10, "expected 10 source files, got: {names:?}");
     }
 
     #[test]

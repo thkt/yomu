@@ -36,6 +36,7 @@ pub enum ChunkType {
     RustEnum,
     RustTrait,
     RustImpl,
+    MdSection,
     Other,
 }
 
@@ -53,6 +54,7 @@ impl ChunkType {
             Self::RustEnum => "rust_enum",
             Self::RustTrait => "rust_trait",
             Self::RustImpl => "rust_impl",
+            Self::MdSection => "md_section",
             Self::Other => "other",
         }
     }
@@ -70,6 +72,7 @@ impl ChunkType {
             "rust_enum" => Self::RustEnum,
             "rust_trait" => Self::RustTrait,
             "rust_impl" => Self::RustImpl,
+            "md_section" => Self::MdSection,
             "other" => Self::Other,
             other => {
                 tracing::warn!(
