@@ -777,6 +777,44 @@ fn content_match_scores_from_content_body() {
     );
 }
 
+#[test]
+fn rerank_semantic_keyword_overlap_bonus() {
+    let kw = vec!["chat".to_string()];
+    let mut with_overlap = vec![make_result(
+        "src/useChat.tsx",
+        "useChat",
+        storage::ChunkType::Hook,
+        0.2,
+        storage::MatchSource::Semantic,
+    )];
+    let mut without_overlap = vec![make_result(
+        "src/stream.tsx",
+        "processStream",
+        storage::ChunkType::Other,
+        0.2,
+        storage::MatchSource::Semantic,
+    )];
+    let ctx = RerankContext {
+        keywords: &kw,
+        ..Default::default()
+    };
+    rerank(&mut with_overlap, &ctx, &HashMap::new());
+    rerank(&mut without_overlap, &ctx, &HashMap::new());
+
+    assert!(
+        with_overlap[0].score > without_overlap[0].score,
+        "semantic result matching keywords should score higher: {} > {}",
+        with_overlap[0].score,
+        without_overlap[0].score,
+    );
+    let base = 1.0 / (1.0 + 0.2_f32);
+    assert!(
+        (without_overlap[0].score - base).abs() < 1e-6,
+        "no overlap → no bonus: expected {base}, got {}",
+        without_overlap[0].score,
+    );
+}
+
 use crate::indexer::embedder::FailingEmbedder;
 
 #[tokio::test]

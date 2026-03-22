@@ -200,6 +200,7 @@ const NAME_MATCH_BONUS: f32 = 0.05;
 const TYPE_HINT_BONUS: f32 = 0.03;
 const IMPORT_RANK_BONUS: f32 = 0.03;
 const TEST_PATH_PENALTY: f32 = 0.05;
+const SEMANTIC_KEYWORD_OVERLAP_BONUS: f32 = 0.05;
 
 fn is_test_path(path: &str) -> bool {
     path.contains("__tests__")
@@ -282,6 +283,15 @@ pub fn rerank(
             0.0
         };
 
+        let overlap_bonus = if result.match_source == storage::MatchSource::Semantic
+            && !ctx.keywords.is_empty()
+        {
+            SEMANTIC_KEYWORD_OVERLAP_BONUS
+                * keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, true)
+        } else {
+            0.0
+        };
+
         let type_bonus =
             if !ctx.type_hints.is_empty() && ctx.type_hints.contains(&result.chunk.chunk_type) {
                 TYPE_HINT_BONUS
@@ -305,7 +315,7 @@ pub fn rerank(
             0.0
         };
 
-        result.score = base + name_bonus + type_bonus + import_bonus - test_penalty;
+        result.score = base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
     }
 
     results.sort_by(|a, b| {
