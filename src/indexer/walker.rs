@@ -1,32 +1,16 @@
+use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html", "rs", "md"];
 
-const EXCLUDED_DIRS: &[&str] = &[
-    "node_modules",
-    "dist",
-    "build",
-    "target",
-    "storybook-static",
-    "coverage",
-    "out",
-];
-
 pub fn walk_source_files(root: &Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
+    WalkBuilder::new(root)
+        .hidden(true)
         .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| {
-            if entry.file_type().is_dir() && entry.depth() > 0 {
-                let name = entry.file_name().to_str().unwrap_or("");
-                if name.starts_with('.') {
-                    return false;
-                }
-                return !EXCLUDED_DIRS.contains(&name);
-            }
-            true
-        })
+        .require_git(false)
+        .git_global(false)
+        .git_exclude(false)
+        .build()
         .filter_map(|entry| match entry {
             Ok(e) => Some(e),
             Err(e) => {
@@ -34,13 +18,13 @@ pub fn walk_source_files(root: &Path) -> Vec<PathBuf> {
                 None
             }
         })
-        .filter(|entry| entry.file_type().is_file())
         .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| SUPPORTED_EXTENSIONS.contains(&ext))
+            entry.file_type().is_some_and(|ft| ft.is_file())
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| SUPPORTED_EXTENSIONS.contains(&ext))
         })
         .map(|entry| entry.into_path())
         .collect()
@@ -89,45 +73,79 @@ mod tests {
         fs::write(&claude, "// worktree copy").unwrap();
     }
 
-    #[test]
-    fn walk_collects_source_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        setup_project(tmp.path());
-
-        let files = walk_source_files(tmp.path());
-        let names: Vec<&str> = files
-            .iter()
-            .map(|p| p.strip_prefix(tmp.path()).unwrap().to_str().unwrap())
-            .collect();
-
-        assert!(names.contains(&"src/App.tsx"), "missing tsx: {names:?}");
-        assert!(names.contains(&"src/Button.ts"), "missing ts: {names:?}");
-        assert!(names.contains(&"src/utils.js"), "missing js: {names:?}");
-        assert!(names.contains(&"src/Card.jsx"), "missing jsx: {names:?}");
-        assert!(names.contains(&"src/entry.mjs"), "missing mjs: {names:?}");
-        assert!(names.contains(&"src/styles.css"), "missing css: {names:?}");
-        assert!(
-            names.contains(&"public/index.html"),
-            "missing html: {names:?}"
-        );
-        assert!(names.contains(&"src/lib.rs"), "missing rs: {names:?}");
-        assert!(names.contains(&"docs/guide.md"), "missing md: {names:?}");
-        assert!(names.contains(&"README.md"), "missing root md: {names:?}");
-        assert_eq!(files.len(), 10, "expected 10 source files, got: {names:?}");
+    fn setup_project_with_gitignore(dir: &Path) {
+        setup_project(dir);
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
     }
 
     #[test]
-    fn walk_excludes_node_modules_and_dot_dirs() {
+    fn walk_collects_source_files() {
         let tmp = tempfile::tempdir().unwrap();
-        setup_project(tmp.path());
+        setup_project_with_gitignore(tmp.path());
+
+        let files = walk_source_files(tmp.path());
+        let mut names: Vec<&str> = files
+            .iter()
+            .map(|p| p.strip_prefix(tmp.path()).unwrap().to_str().unwrap())
+            .collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            [
+                "README.md",
+                "docs/guide.md",
+                "public/index.html",
+                "src/App.tsx",
+                "src/Button.ts",
+                "src/Card.jsx",
+                "src/entry.mjs",
+                "src/lib.rs",
+                "src/styles.css",
+                "src/utils.js",
+            ]
+        );
+    }
+
+    #[test]
+    fn walk_excludes_hidden_and_gitignored_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        setup_project_with_gitignore(tmp.path());
 
         let files = walk_source_files(tmp.path());
         for f in &files {
             let s = f.to_str().unwrap();
-            assert!(!s.contains("node_modules"), "included node_modules: {s}");
             assert!(!s.contains(".git"), "included .git: {s}");
             assert!(!s.contains(".yomu"), "included .yomu: {s}");
             assert!(!s.contains(".claude"), "included .claude: {s}");
+            assert!(!s.contains("node_modules"), "included node_modules: {s}");
+        }
+    }
+
+    #[test]
+    fn walk_respects_custom_gitignore_patterns() {
+        let tmp = tempfile::tempdir().unwrap();
+        setup_project_with_gitignore(tmp.path());
+
+        let plugin_file = tmp.path().join("plugins/cache/big-plugin/README.md");
+        fs::create_dir_all(plugin_file.parent().unwrap()).unwrap();
+        fs::write(&plugin_file, "# Plugin").unwrap();
+
+        fs::write(
+            tmp.path().join(".gitignore"),
+            "node_modules/\nplugins/*\n",
+        )
+        .unwrap();
+
+        let files = walk_source_files(tmp.path());
+        for f in &files {
+            let s = f.to_str().unwrap();
+            assert!(!s.contains("plugins"), "included gitignored plugins: {s}");
         }
     }
 }

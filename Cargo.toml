@@ -17,7 +17,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 sqlite-vec = "0.1.6"
-walkdir = "2"
+ignore = "0.4"
 sha2 = "0.10"
 tree-sitter = "0.25"
 tree-sitter-typescript = "0.23"
