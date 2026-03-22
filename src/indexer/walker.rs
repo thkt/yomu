@@ -136,11 +136,7 @@ mod tests {
         fs::create_dir_all(plugin_file.parent().unwrap()).unwrap();
         fs::write(&plugin_file, "# Plugin").unwrap();
 
-        fs::write(
-            tmp.path().join(".gitignore"),
-            "node_modules/\nplugins/*\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join(".gitignore"), "node_modules/\nplugins/*\n").unwrap();
 
         let files = walk_source_files(tmp.path());
         for f in &files {
