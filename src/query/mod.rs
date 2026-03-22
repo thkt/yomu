@@ -283,14 +283,13 @@ pub fn rerank(
             0.0
         };
 
-        let overlap_bonus = if result.match_source == storage::MatchSource::Semantic
-            && !ctx.keywords.is_empty()
-        {
-            SEMANTIC_KEYWORD_OVERLAP_BONUS
-                * keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, true)
-        } else {
-            0.0
-        };
+        let overlap_bonus =
+            if result.match_source == storage::MatchSource::Semantic && !ctx.keywords.is_empty() {
+                SEMANTIC_KEYWORD_OVERLAP_BONUS
+                    * keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, true)
+            } else {
+                0.0
+            };
 
         let type_bonus =
             if !ctx.type_hints.is_empty() && ctx.type_hints.contains(&result.chunk.chunk_type) {
