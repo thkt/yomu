@@ -63,7 +63,7 @@ The classic RAG problems — index sync lag, stale embeddings, cold starts — a
 | Solution              | Details                                                                            |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | No sync lag           | Every `search` checks index freshness and re-chunks automatically if files changed |
-| No embedding required | FTS5 full-text fallback works without any API key                                  |
+| No API key required   | Local embedding model, FTS5 full-text fallback when model unavailable              |
 | Incremental embedding | 50 chunks per search call, most-imported files first. No upfront build             |
 
 grep is the right tool when you know the name. yomu is for the moment before that — when you know the concept but not the identifier.
@@ -94,15 +94,18 @@ cargo build --release
 
 ### Configure
 
-For semantic search, set a [Gemini API key](https://aistudio.google.com/apikey) (free tier works):
+Semantic search uses a local embedding model ([Ruri v3](https://huggingface.co/cl-nagoya/ruri-v3-310m), ~1.2 GB). The model downloads automatically on first `search` call — no API key required.
 
-```sh
-export GEMINI_API_KEY="your-key-here"
-```
-
-Without an API key, `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without a key.
+If the model is unavailable (offline, disk full), `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without the model.
 
 No manual indexing. `search` auto-indexes on first call.
+
+#### Platform notes
+
+| Platform              | Build command                                               |
+| --------------------- | ----------------------------------------------------------- |
+| macOS (Apple Silicon) | `cargo build --release` (default: mlx backend)              |
+| Linux / x86           | `cargo build --release --no-default-features --features candle` |
 
 ## Commands
 
@@ -159,13 +162,13 @@ Options: `--symbol` (filter to specific export), `--depth` (default: 3, max: 10)
 ## How it works
 
 ```text
-Source files → tree-sitter AST → Semantic chunks → Gemini embeddings → Hybrid search
+Source files → tree-sitter AST → Semantic chunks → Local embeddings (Ruri v3) → Hybrid search
 ```
 
 | Stage     | Details                                                                                                                                                                                                                                  |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Indexing  | tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. The import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls |
-| Embedding | Chunks are embedded incrementally via Gemini (free tier). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required                                                 |
+| Embedding | Chunks are embedded incrementally via a local model (Ruri v3, 310M params). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required                                |
 | Search    | Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test files are pushed down                                                |
 
 ## Supported file types
@@ -184,7 +187,7 @@ Other files fall back to character-based chunking with overlap.
 
 | Limitation                   | Details                                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Gemini free-tier rate limits | 100 RPM, 1,500 requests/day. Heavy usage across projects can exhaust the daily quota (resets midnight PT) |
+| First-run model download     | ~1.2 GB download on first `search` call (cached after download)                                           |
 | SCSS/Sass not supported      | Only plain CSS                                                                                            |
 | Cold start                   | First `search` call takes a few seconds for chunking + initial embedding                                  |
 | Large files skipped          | Files over 1 MB are excluded from indexing                                                                |
@@ -196,17 +199,19 @@ src/
 ├── main.rs              CLI entry point (clap)
 ├── lib.rs               Crate root, public API
 ├── config.rs            Runtime configuration
+├── modernbert.rs        ModernBERT model (mlx backend)
 ├── tools/               Application facade — orchestrates indexer, query, storage per command
 ├── indexer/
 │   ├── mod.rs           Orchestration: incremental index, embed budget
 │   ├── chunker/         tree-sitter AST → semantic chunks
-│   ├── embedder.rs      Gemini embedding client (batchEmbedContents)
+│   ├── embedder.rs      Local embedding (ModernBERT/Ruri v3 via mlx-rs or candle)
 │   └── walker.rs        File discovery, .gitignore filtering
 ├── resolver.rs          Import path resolution (tsconfig aliases, index.ts probing)
-├── query.rs             Hybrid search + IDF reranking
+├── query/               Hybrid search + IDF reranking
 └── storage/
     ├── mod.rs           Schema, CRUD, types
     ├── search.rs        Vector similarity, name matching, FTS5
+    ├── embed.rs         Embedding storage, vec_chunks
     └── graph.rs         Import graph traversal, dependents, siblings
 ```
 

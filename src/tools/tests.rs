@@ -239,10 +239,7 @@ async fn search_degraded_empty_results_shows_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail(
-            500,
-            "service unavailable",
-        ))),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
     let text = y.search("zzzznonexistent", 10, 0).await.unwrap();
@@ -280,16 +277,13 @@ async fn search_degraded_with_results_shows_note() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail(
-            500,
-            "service unavailable",
-        ))),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
     let result = y_failing.search("Button", 10, 0).await.unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
-        result.contains("embedding API unavailable"),
+        result.contains("embedding model not loaded"),
         "should show degraded note"
     );
 }
@@ -1174,10 +1168,7 @@ async fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail(
-            500,
-            "service unavailable",
-        ))),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
     let result = y_failing.search("Card", 10, 0).await.unwrap();

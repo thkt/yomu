@@ -93,7 +93,6 @@ async fn main() -> ExitCode {
 fn exit_code_for(e: &YomuError) -> ExitCode {
     match e {
         YomuError::InvalidInput(_) => ExitCode::from(2),
-        YomuError::Network(_) => ExitCode::from(3),
         YomuError::Internal(_) => ExitCode::from(4),
         YomuError::Storage(_) | YomuError::Io(_) | YomuError::Index(_) | YomuError::Query(_) => {
             ExitCode::FAILURE

@@ -9,9 +9,9 @@ use crate::storage;
 
 #[test]
 fn query_error_from_embed_error() {
-    let ee = EmbedError::ApiKeyNotSet;
+    let ee = EmbedError::ModelNotAvailable;
     let qe: QueryError = ee.into();
-    assert!(qe.to_string().contains("GEMINI_API_KEY"));
+    assert!(qe.to_string().contains("not available"));
 }
 
 #[tokio::test]
@@ -842,7 +842,7 @@ async fn search_degrades_on_embed_failure() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         conn,
-        &FailingEmbedder::query_only(429, "rate limited"),
+        &FailingEmbedder::query_only("embedding unavailable"),
         "auth",
         10,
         0,
@@ -862,14 +862,14 @@ async fn search_degrades_on_embed_failure() {
 }
 
 #[tokio::test]
-async fn search_degrades_on_api_key_not_set() {
-    struct NoKeyEmbedder;
-    impl Embed for NoKeyEmbedder {
+async fn search_degrades_on_model_not_available() {
+    struct NoModelEmbedder;
+    impl Embed for NoModelEmbedder {
         fn embed_query<'a>(
             &'a self,
             _text: &'a str,
         ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
-            Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+            Box::pin(async { Err(EmbedError::ModelNotAvailable) })
         }
         fn embed_documents<'a>(
             &'a self,
@@ -884,17 +884,19 @@ async fn search_degrades_on_api_key_not_set() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &NoKeyEmbedder, "test", 10, 0).await.unwrap();
+    let outcome = search(conn, &NoModelEmbedder, "test", 10, 0).await.unwrap();
     assert!(
         outcome.degraded,
-        "should degrade to FTS5 when API key not set"
+        "should degrade to FTS5 when model not available"
     );
 }
 
 #[tokio::test]
-#[ignore = "requires GEMINI_API_KEY"]
+#[ignore = "requires model download"]
 async fn search_returns_results() {
-    let embedder = Embedder::from_env(reqwest::Client::new()).unwrap();
+    use crate::indexer::embedder::download_model;
+    let paths = download_model().expect("download model");
+    let embedder = Embedder::new(&paths).expect("load model");
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();

@@ -1,13 +1,14 @@
 mod format;
 
-use reqwest::Client;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::config;
-use crate::indexer::{self, embedder::Embed, embedder::EmbedError, embedder::Embedder};
+use crate::indexer::{
+    self,
+    embedder::{Embed, EmbedError, EmbedFuture, Embedder},
+};
 use crate::query;
 use crate::storage;
 
@@ -73,25 +74,16 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
 struct NoOpEmbedder;
 
 impl Embed for NoOpEmbedder {
-    fn embed_query<'a>(
-        &'a self,
-        _text: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
-        Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+    fn embed_query<'a>(&'a self, _text: &'a str) -> EmbedFuture<'a, Vec<f32>> {
+        Box::pin(async { Err(EmbedError::ModelNotAvailable) })
     }
-    fn embed_documents<'a>(
-        &'a self,
-        _texts: &'a [String],
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>>
-    {
-        Box::pin(async { Err(EmbedError::ApiKeyNotSet) })
+    fn embed_documents<'a>(&'a self, _texts: &'a [String]) -> EmbedFuture<'a, Vec<Vec<f32>>> {
+        Box::pin(async { Err(EmbedError::ModelNotAvailable) })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum YomuError {
-    #[error("network error: {0}")]
-    Network(#[from] reqwest::Error),
     #[error("storage error: {0}")]
     Storage(#[from] storage::StorageError),
     #[error("io error: {0}")]
@@ -155,7 +147,7 @@ impl Yomu {
             )));
         }
 
-        let embedder = self.get_embedder();
+        let embedder = self.get_embedder().await;
         let limit = limit.min(MAX_SEARCH_LIMIT);
         let offset = offset.min(MAX_SEARCH_OFFSET);
 
@@ -179,11 +171,10 @@ impl Yomu {
             notes.push(msg);
         }
         if outcome.degraded {
-            notes.push("embedding API unavailable, results from text search only".into());
+            notes.push("embedding model not loaded, results from text search only".into());
         }
 
         if outcome.results.is_empty() {
-            let stats = self.with_db(storage::get_stats).await?;
             let mut msg = format_no_results_message(&stats);
             for note in &notes {
                 msg.push_str(&format!("\n\nNote: {note}"));
@@ -405,26 +396,42 @@ impl Yomu {
         }
     }
 
-    fn get_embedder(&self) -> &dyn Embed {
+    async fn get_embedder(&self) -> &dyn Embed {
+        fn try_load_embedder() -> Option<Arc<dyn Embed>> {
+            tracing::info!("Downloading embedding model (first run may take a few minutes)");
+            let paths = match crate::indexer::embedder::download_model() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Model download failed, using text search only");
+                    return None;
+                }
+            };
+            let embedder = Embedder::new(&paths)
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "Embedder unavailable, using text search only");
+                    e
+                })
+                .ok()?;
+            tracing::info!("Embedding model loaded successfully");
+            Some(Arc::new(embedder) as Arc<dyn Embed>)
+        }
+
         static NOOP: NoOpEmbedder = NoOpEmbedder;
+        if self.embedder.get().is_none() {
+            let result = tokio::task::spawn_blocking(try_load_embedder)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "Model init task panicked, using text search only");
+                    None
+                });
+            // Only cache successful init — failed attempts can retry on next call
+            if result.is_some() {
+                let _ = self.embedder.set(result);
+            }
+        }
         self.embedder
-            .get_or_init(|| {
-                let http = match Client::builder().build() {
-                    Ok(h) => h,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "HTTP client init failed, embedder unavailable");
-                        return None;
-                    }
-                };
-                Embedder::from_env(http)
-                    .map_err(|e| {
-                        tracing::info!(error = %e, "Embedder unavailable, using text search only");
-                        e
-                    })
-                    .ok()
-                    .map(|e| Arc::new(e) as Arc<dyn Embed>)
-            })
-            .as_deref()
+            .get()
+            .and_then(|o| o.as_deref())
             .unwrap_or(&NOOP)
     }
 

@@ -77,11 +77,17 @@ async fn benchmark_incremental_embed() {
     let conn = yomu::storage::open_db(&db_path).unwrap();
     let conn = Arc::new(std::sync::Mutex::new(conn));
 
-    let http = reqwest::Client::new();
-    let embedder = match yomu::indexer::embedder::Embedder::from_env(http) {
+    let paths = match yomu::indexer::embedder::download_model() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("SKIP: model download failed");
+            return;
+        }
+    };
+    let embedder = match yomu::indexer::embedder::Embedder::new(&paths) {
         Ok(e) => e,
         Err(_) => {
-            eprintln!("SKIP: GEMINI_API_KEY not set");
+            eprintln!("SKIP: model load failed");
             return;
         }
     };
@@ -144,11 +150,17 @@ async fn benchmark_explorer_query() {
     };
     let conn2 = Arc::new(std::sync::Mutex::new(conn2));
 
-    let http = reqwest::Client::new();
-    let embedder = match yomu::indexer::embedder::Embedder::from_env(http) {
+    let paths = match yomu::indexer::embedder::download_model() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("SKIP: model download failed");
+            return;
+        }
+    };
+    let embedder = match yomu::indexer::embedder::Embedder::new(&paths) {
         Ok(e) => e,
         Err(_) => {
-            eprintln!("SKIP: GEMINI_API_KEY not set");
+            eprintln!("SKIP: model load failed");
             return;
         }
     };

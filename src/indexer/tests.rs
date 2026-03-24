@@ -45,6 +45,30 @@ fn enrich_for_embedding_empty_content() {
 
 use crate::indexer::embedder::MockEmbedder;
 
+#[test]
+fn to_rel_path_outside_root() {
+    let result = to_rel_path(std::path::Path::new("/a"), std::path::Path::new("/b/c.tsx"));
+    assert_eq!(result, "/b/c.tsx");
+}
+
+#[test]
+fn read_source_too_large() {
+    let dir = tempfile::tempdir().unwrap();
+    let big_file = dir.path().join("big.ts");
+    let content = "x".repeat(MAX_FILE_SIZE as usize + 1);
+    std::fs::write(&big_file, content).unwrap();
+    let result = read_source(&big_file);
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), FileAction::Skip));
+}
+
+#[test]
+fn read_source_nonexistent() {
+    let result = read_source(std::path::Path::new("/nonexistent/file.ts"));
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), FileAction::Error));
+}
+
 fn test_db() -> (storage::Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
@@ -485,7 +509,55 @@ async fn run_incremental_embed_none_hints_preserves_order() {
     assert!(!result.budget_exhausted);
 }
 
-use crate::indexer::embedder::FailingEmbedder;
+use crate::indexer::embedder::{AlternatingEmbedder, FailingEmbedder};
+
+#[tokio::test]
+async fn run_incremental_embed_recovers_after_intermittent_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    // Insert 6 files with 1 chunk each
+    for i in 0..6 {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/R{i}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&format!("R{i}")),
+                content: &format!("function R{i}() {{}}"),
+                start_line: 1,
+                end_line: 1,
+            }],
+            &format!("r{i}"),
+            "",
+            &[],
+        )
+        .unwrap();
+    }
+
+    let conn = Arc::new(Mutex::new(conn));
+
+    // AlternatingEmbedder: call 0 fails, 1 succeeds, 2 fails, 3 succeeds, ...
+    // consecutive_errors resets to 0 on each success, so it never reaches MAX (5).
+    let result = run_incremental_embed(
+        Arc::clone(&conn),
+        &AlternatingEmbedder::new(),
+        50,
+        None,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "should not abort when failures are intermittent (counter resets on success)"
+    );
+    let outcome = result.unwrap();
+    assert!(
+        outcome.files_completed > 0,
+        "some files should embed successfully"
+    );
+}
 
 #[tokio::test]
 async fn run_incremental_embed_aborts_after_consecutive_failures() {
@@ -515,7 +587,7 @@ async fn run_incremental_embed_aborts_after_consecutive_failures() {
 
     let result = run_incremental_embed(
         Arc::clone(&conn),
-        &FailingEmbedder::all_fail(500, "mock failure"),
+        &FailingEmbedder::all_fail("mock failure"),
         50,
         None,
     )
@@ -550,7 +622,7 @@ async fn embed_and_store_aborts_after_consecutive_failures() {
     let result = run_index(
         Arc::clone(&conn),
         dir.path(),
-        &FailingEmbedder::all_fail(500, "mock failure"),
+        &FailingEmbedder::all_fail("mock failure"),
         false,
     )
     .await;
@@ -679,6 +751,120 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
 }
 
 #[tokio::test]
+async fn embed_and_store_catches_count_mismatch_via_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+
+    // File with multiple top-level functions → multiple chunks
+    std::fs::write(
+        src_dir.join("Multi.tsx"),
+        "function A() { return 1; }\nfunction B() { return 2; }\nfunction C() { return 3; }",
+    )
+    .unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    // MismatchEmbedder returns 1 vector regardless of input count.
+    // Storage layer catches embeddings.len() != chunks.len() via LengthMismatch.
+    let result = run_index(Arc::clone(&conn), dir.path(), &MismatchEmbedder, false).await;
+
+    if let Ok(outcome) = &result {
+        let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
+        assert_eq!(
+            stats.embedded_chunks, 0,
+            "mismatched embeddings should not be stored"
+        );
+        assert!(
+            outcome.files_errored > 0 || outcome.chunks_created == 0,
+            "mismatch should be detected: errored={}, embedded={}",
+            outcome.files_errored,
+            outcome.chunks_created
+        );
+    }
+    // If Err, the mismatch was caught — also acceptable
+}
+
+use crate::indexer::embedder::MismatchEmbedder;
+
+#[tokio::test]
+async fn run_incremental_embed_skips_count_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    // Insert 2 files with 1 chunk each — embedder will return 1 vector for any input
+    for i in 0..2 {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/F{i}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&format!("F{i}")),
+                content: &format!("function F{i}() {{}}"),
+                start_line: 1,
+                end_line: 1,
+            }],
+            &format!("h{i}"),
+            "",
+            &[],
+        )
+        .unwrap();
+    }
+
+    let conn = Arc::new(Mutex::new(conn));
+
+    // MismatchEmbedder always returns 1 vector, but each file has 1 chunk,
+    // so for single-chunk files there's no mismatch. Add a multi-chunk file.
+    {
+        let c = conn.lock().unwrap();
+        storage::replace_file_chunks_only(
+            &c,
+            "src/Multi.tsx",
+            &[
+                storage::NewChunk {
+                    chunk_type: &storage::ChunkType::Component,
+                    name: Some("A"),
+                    content: "function A() {}",
+                    start_line: 1,
+                    end_line: 1,
+                },
+                storage::NewChunk {
+                    chunk_type: &storage::ChunkType::Component,
+                    name: Some("B"),
+                    content: "function B() {}",
+                    start_line: 2,
+                    end_line: 2,
+                },
+            ],
+            "h_multi",
+            "",
+            &[],
+        )
+        .unwrap();
+    }
+
+    let result = run_incremental_embed(Arc::clone(&conn), &MismatchEmbedder, 50, None)
+        .await
+        .unwrap();
+
+    // Multi.tsx should be skipped (2 chunks, 1 embedding), single-chunk files should succeed
+    assert!(
+        result.files_completed >= 2,
+        "single-chunk files should embed: {}",
+        result.files_completed
+    );
+
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
+    assert!(
+        stats.embedded_chunks < stats.total_chunks,
+        "multi-chunk file should be skipped due to count mismatch"
+    );
+}
+
+#[tokio::test]
 async fn run_chunk_only_index_handles_rust_files() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
@@ -707,4 +893,52 @@ async fn run_chunk_only_index_handles_rust_files() {
 
     let ref_count = storage::get_reference_count(&conn.lock().unwrap()).unwrap();
     assert_eq!(ref_count, 0, "Rust files should have no import references");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn run_index_counts_unreadable_files_as_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+
+    // Normal file
+    std::fs::write(
+        src_dir.join("Good.tsx"),
+        "function Good() { return 1; }",
+    )
+    .unwrap();
+
+    // Unreadable file (permission 000)
+    let bad_path = src_dir.join("Bad.tsx");
+    std::fs::write(&bad_path, "function Bad() { return 2; }").unwrap();
+    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    let result = run_index(
+        Arc::clone(&conn),
+        dir.path(),
+        &MockEmbedder,
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Restore permissions for cleanup
+    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert!(
+        result.files_errored > 0,
+        "unreadable file should be counted as error, got files_errored={}",
+        result.files_errored
+    );
+    assert!(
+        result.files_processed > 0,
+        "readable file should still be processed"
+    );
 }

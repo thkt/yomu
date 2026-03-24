@@ -5,7 +5,6 @@ pub mod walker;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::resolver::Resolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
@@ -106,39 +105,47 @@ fn read_source(file_path: &Path) -> Result<String, FileAction> {
     })
 }
 
+/// Shared file-processing pipeline: read → hash → rel_path → chunk → PendingFile.
+/// Does NOT check the DB (caller handles reindex check with appropriate lock strategy).
+fn prepare_file(root: &Path, file_path: &Path) -> Result<PendingFile, FileAction> {
+    let source = read_source(file_path)?;
+    let hash = file_hash(&source);
+    let rel_path = to_rel_path(root, file_path);
+
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_chunks = chunker::chunk_file(&source, ext);
+    if file_chunks.chunks.is_empty() {
+        tracing::debug!(file = %rel_path, "Skipped (no chunks)");
+        return Err(FileAction::Skip);
+    }
+
+    let imports_text = file_chunks.imports.join("\n");
+    Ok(PendingFile {
+        rel_path,
+        raw_chunks: file_chunks.chunks,
+        imports_text,
+        parsed_imports: file_chunks.parsed_imports,
+        hash,
+    })
+}
+
 fn process_file(
     conn: &Db,
     root: &Path,
     file_path: &Path,
     force: bool,
 ) -> Result<FileAction, IndexError> {
-    let source = match read_source(file_path) {
-        Ok(s) => s,
+    let pf = match prepare_file(root, file_path) {
+        Ok(pf) => pf,
         Err(action) => return Ok(action),
     };
-    let hash = file_hash(&source);
-    let rel_path = to_rel_path(root, file_path);
 
-    if !force && !storage::should_reindex(conn, &rel_path, &hash)? {
-        tracing::debug!(file = %rel_path, "Skipped (unchanged)");
+    if !force && !storage::should_reindex(conn, &pf.rel_path, &pf.hash)? {
+        tracing::debug!(file = %pf.rel_path, "Skipped (unchanged)");
         return Ok(FileAction::Skip);
     }
 
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let file_chunks = chunker::chunk_file(&source, ext);
-    if file_chunks.chunks.is_empty() {
-        tracing::debug!(file = %rel_path, "Skipped (no chunks)");
-        return Ok(FileAction::Skip);
-    }
-
-    let imports_text = file_chunks.imports.join("\n");
-    Ok(FileAction::Process(PendingFile {
-        rel_path,
-        raw_chunks: file_chunks.chunks,
-        imports_text,
-        parsed_imports: file_chunks.parsed_imports,
-        hash,
-    }))
+    Ok(FileAction::Process(pf))
 }
 
 fn collect_pending_files(
@@ -152,15 +159,30 @@ fn collect_pending_files(
     let mut files_errored = 0u32;
 
     for file_path in files {
-        let conn_guard = conn.lock().unwrap();
-        match process_file(&conn_guard, root, file_path, force)? {
-            FileAction::Process(pf) => {
-                drop(conn_guard);
-                pending.push(pf);
+        // File I/O + chunking outside the lock (via prepare_file)
+        let pf = match prepare_file(root, file_path) {
+            Ok(pf) => pf,
+            Err(FileAction::Skip) => {
+                files_skipped += 1;
+                continue;
             }
-            FileAction::Skip => files_skipped += 1,
-            FileAction::Error => files_errored += 1,
+            Err(_) => {
+                files_errored += 1;
+                continue;
+            }
+        };
+
+        // DB check under lock (minimal hold time)
+        if !force {
+            let conn_guard = conn.lock().unwrap();
+            if !storage::should_reindex(&conn_guard, &pf.rel_path, &pf.hash)? {
+                tracing::debug!(file = %pf.rel_path, "Skipped (unchanged)");
+                files_skipped += 1;
+                continue;
+            }
         }
+
+        pending.push(pf);
     }
 
     Ok((pending, files_skipped, files_errored))
@@ -247,7 +269,6 @@ fn build_references(
 }
 
 const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
-const RATE_LIMIT_INTERVAL: Duration = Duration::from_millis(700);
 
 /// Prepend file-level context so the embedding vector captures cross-chunk semantics.
 fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, content: &str) -> String {
@@ -264,7 +285,6 @@ fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, conten
 }
 
 enum EmbedFailure {
-    RateLimited(EmbedError),
     Abort(EmbedError),
     Skip,
 }
@@ -274,10 +294,6 @@ fn classify_embed_error(
     consecutive_errors: &mut u32,
     file_path: &str,
 ) -> EmbedFailure {
-    if matches!(&e, EmbedError::Api { status: 429, .. }) {
-        tracing::warn!("Rate limited (429), stopping incremental embed");
-        return EmbedFailure::RateLimited(e);
-    }
     *consecutive_errors += 1;
     tracing::warn!(
         file = %file_path, error = %e, consecutive = *consecutive_errors,
@@ -345,7 +361,7 @@ async fn embed_and_store(
                 embs
             }
             Err(e) => match classify_embed_error(e, &mut consecutive_errors, &pf.rel_path) {
-                EmbedFailure::RateLimited(e) | EmbedFailure::Abort(e) => {
+                EmbedFailure::Abort(e) => {
                     return Err(IndexError::Embed(e));
                 }
                 EmbedFailure::Skip => {
@@ -355,11 +371,9 @@ async fn embed_and_store(
             },
         };
 
-        tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
-
         let n = pf.raw_chunks.len() as u32;
-        let rel_path = pf.rel_path.clone();
         let refs = build_references(&pf.parsed_imports, &pf.rel_path, resolver);
+        tracing::debug!(file = %pf.rel_path, chunks = n, "Indexing file");
 
         let conn_clone = Arc::clone(conn);
         tokio::task::spawn_blocking(move || store_file_data(&conn_clone, pf, embeddings, refs))
@@ -370,7 +384,6 @@ async fn embed_and_store(
         if files_processed.is_multiple_of(10) {
             tracing::info!(files_processed, total = pending_total, "Indexing progress");
         }
-        tracing::debug!(file = %rel_path, chunks = n, "Indexed");
     }
 
     Ok((files_processed, chunks_created, files_errored))
@@ -564,10 +577,6 @@ pub async fn run_incremental_embed(
                 embs
             }
             Err(e) => match classify_embed_error(e, &mut consecutive_errors, file_path) {
-                EmbedFailure::RateLimited(_) => {
-                    budget_exhausted = true;
-                    break;
-                }
                 EmbedFailure::Abort(e) => return Err(IndexError::Embed(e)),
                 EmbedFailure::Skip => continue,
             },
@@ -591,8 +600,6 @@ pub async fn run_incremental_embed(
             }
             continue;
         }
-
-        tokio::time::sleep(RATE_LIMIT_INTERVAL).await;
 
         let pairs: Vec<(i64, Vec<f32>)> = chunk_ids.into_iter().zip(embeddings).collect();
 
