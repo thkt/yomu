@@ -373,9 +373,26 @@ fn chunk_type_roundtrip() {
         ChunkType::RustEnum,
         ChunkType::RustTrait,
         ChunkType::RustImpl,
+        ChunkType::MdSection,
         ChunkType::Other,
     ];
+    // Exhaustive match ensures compile error when a new variant is added
     for variant in &variants {
+        match variant {
+            ChunkType::Component
+            | ChunkType::Hook
+            | ChunkType::TypeDef
+            | ChunkType::CssRule
+            | ChunkType::HtmlElement
+            | ChunkType::TestCase
+            | ChunkType::RustFn
+            | ChunkType::RustStruct
+            | ChunkType::RustEnum
+            | ChunkType::RustTrait
+            | ChunkType::RustImpl
+            | ChunkType::MdSection
+            | ChunkType::Other => {}
+        }
         let s = variant.as_str();
         let restored = ChunkType::from_db(s);
         assert_eq!(&restored, variant, "roundtrip failed for {s}");
@@ -1876,4 +1893,181 @@ fn get_imports_for_file_returns_empty_for_missing() {
     let (conn, _dir) = test_db();
     let result = get_imports_for_file(&conn, "src/nonexistent.tsx").unwrap();
     assert!(result.is_empty());
+}
+
+// --- FTS5 short term expansion ---
+
+#[test]
+fn fts_chunks_vocab_exists_on_new_db() {
+    let (conn, _dir) = test_db();
+
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'fts_chunks_vocab'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(exists, "fts_chunks_vocab table should exist after open_db");
+}
+
+#[test]
+fn migration_v3_to_v4_creates_vocab_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = open_db(&db_path).unwrap();
+
+    // Seed data before simulating v3
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("migrationTest"),
+        content: "function migrationTest() { return true; }",
+        start_line: 1,
+        end_line: 3,
+    }];
+    replace_file_chunks_only(&conn, "src/migrate.ts", &chunks, "h1", "", &[]).unwrap();
+
+    // Simulate a v3 DB by rolling back schema_version and dropping vocab table
+    conn.execute(
+        "UPDATE index_meta SET value = '3' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    let _ = conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab");
+    drop(conn);
+
+    // Re-open triggers migration v3 -> v4
+    let conn = open_db(&db_path).unwrap();
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, "4", "schema_version should be 4 after migration");
+
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'fts_chunks_vocab'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(exists, "fts_chunks_vocab should exist after v3->v4 migration");
+
+    // Verify data preserved: chunk should still be searchable
+    let results =
+        search_by_content(&conn, &["migrationTest"], None, &HashSet::new(), 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "seeded chunk should survive v3->v4 migration"
+    );
+    assert_eq!(
+        results[0].chunk.name.as_deref(),
+        Some("migrationTest"),
+        "chunk name should be preserved after migration"
+    );
+}
+
+#[test]
+fn search_by_content_expands_short_prefix() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("authenticate"),
+        content: "function authenticate() { return authentication(); }",
+        start_line: 1,
+        end_line: 3,
+    }];
+    replace_file_chunks_only(&conn, "src/auth.ts", &chunks, "h1", "", &[]).unwrap();
+
+    let results = search_by_content(&conn, &["au"], None, &HashSet::new(), 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "short prefix 'au' should match 'authentication' via vocab expansion"
+    );
+    assert!(
+        results[0].chunk.content.contains("authentication"),
+        "result should contain 'authentication', got: {}",
+        results[0].chunk.content
+    );
+}
+
+#[test]
+fn search_by_content_short_terms_and_semantics() {
+    let (conn, _dir) = test_db();
+
+    let chunks_both = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("authLogger"),
+        content: "function authLogger() { authentication(); log('request received'); }",
+        start_line: 1,
+        end_line: 3,
+    }];
+    replace_file_chunks_only(&conn, "src/authLogger.ts", &chunks_both, "h1", "", &[]).unwrap();
+
+    let chunks_auth_only = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("authOnly"),
+        content: "function authOnly() { authentication(); }",
+        start_line: 1,
+        end_line: 3,
+    }];
+    replace_file_chunks_only(&conn, "src/authOnly.ts", &chunks_auth_only, "h2", "", &[]).unwrap();
+
+    let chunks_log_only = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("logOnly"),
+        content: "function logOnly() { logger.info('logged'); }",
+        start_line: 1,
+        end_line: 3,
+    }];
+    replace_file_chunks_only(&conn, "src/logOnly.ts", &chunks_log_only, "h3", "", &[]).unwrap();
+
+    // "au log" — both short terms. After expansion + AND, only authLogger should match
+    let results = search_by_content(&conn, &["au", "log"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "AND semantics: only doc containing both expanded terms should match, got {} results",
+        results.len()
+    );
+    assert_eq!(
+        results[0].chunk.name.as_deref(),
+        Some("authLogger"),
+        "the matching doc should be authLogger"
+    );
+}
+
+#[test]
+fn replace_file_chunks_rejects_length_mismatch() {
+    let (conn, _dir) = test_db();
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: Some("A"),
+            content: "fn a() {}",
+            start_line: 1,
+            end_line: 1,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: Some("B"),
+            content: "fn b() {}",
+            start_line: 2,
+            end_line: 2,
+        },
+    ];
+    let embeddings = vec![vec![0.0_f32; EMBEDDING_DIMS as usize]]; // 1 embedding for 2 chunks
+
+    let result = replace_file_chunks(&conn, "src/test.rs", &chunks, &embeddings, "h1", "", &[]);
+    assert!(result.is_err(), "should reject mismatched lengths");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("2") && err.contains("1"),
+        "error should mention chunk/embedding counts, got: {err}"
+    );
 }

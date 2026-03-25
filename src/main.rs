@@ -42,8 +42,7 @@ enum Command {
     Status,
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -67,15 +66,15 @@ async fn main() -> ExitCode {
             query,
             limit,
             offset,
-        } => yomu.search(&query, limit, offset).await,
-        Command::Index => yomu.index().await,
-        Command::Rebuild => yomu.rebuild().await,
+        } => yomu.search(&query, limit, offset),
+        Command::Index => yomu.index(),
+        Command::Rebuild => yomu.rebuild(),
         Command::Impact {
             target,
             symbol,
             depth,
-        } => yomu.impact(&target, symbol.as_deref(), depth).await,
-        Command::Status => yomu.status().await,
+        } => yomu.impact(&target, symbol.as_deref(), depth),
+        Command::Status => yomu.status(),
     };
 
     match result {

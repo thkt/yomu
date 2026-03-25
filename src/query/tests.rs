@@ -1,11 +1,16 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use rurico::embed::{Embed, EmbedError, Embedder, FailingEmbedder, MockEmbedder};
+
 use super::*;
-use crate::indexer::embedder::{EMBEDDING_DIMS, Embed, EmbedError, Embedder, MockEmbedder};
 use crate::storage;
+
+fn test_embedding() -> Vec<f32> {
+    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
+    emb[0] = 1.0;
+    emb
+}
 
 #[test]
 fn query_error_from_embed_error() {
@@ -14,14 +19,13 @@ fn query_error_from_embed_error() {
     assert!(qe.to_string().contains("not available"));
 }
 
-#[tokio::test]
-async fn search_with_mock_embedder() {
+#[test]
+fn search_with_mock_embedder() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
-    emb[0] = 1.0;
+    let emb = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/Button.tsx",
@@ -38,7 +42,7 @@ async fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder, "button", 10, 0).await.unwrap();
+    let outcome = search(conn, &MockEmbedder, "button", 10, 0).unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -142,9 +146,23 @@ fn extract_keywords_no_duplicate_parts() {
 }
 
 #[test]
-fn extract_keywords_normal_query_unchanged() {
-    let kw = extract_keywords("streaming chat hooks");
-    assert_eq!(kw, vec!["streaming", "chat", "hooks", "stream", "hook"]);
+fn extract_keywords_cjk_chars_counted_not_bytes() {
+    let kw = extract_keywords("認証");
+    assert!(
+        kw.contains(&"認証".to_string()),
+        "2-char CJK token should be kept: {kw:?}"
+    );
+
+    // Single CJK char should be filtered (chars().count() == 1 < 2)
+    let kw_single = extract_keywords("認 認証フロー");
+    assert!(
+        !kw_single.contains(&"認".to_string()),
+        "single CJK char should be filtered by chars().count(): {kw_single:?}"
+    );
+    assert!(
+        kw_single.contains(&"認証フロー".to_string()),
+        "multi-char CJK token should be kept: {kw_single:?}"
+    );
 }
 
 #[test]
@@ -181,14 +199,13 @@ fn extract_type_hints_singular_and_plural() {
     );
 }
 
-#[tokio::test]
-async fn search_fallback_merges_vector_and_name_results() {
+#[test]
+fn search_fallback_merges_vector_and_name_results() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
-    emb[0] = 1.0;
+    let emb = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/A.tsx",
@@ -222,7 +239,6 @@ async fn search_fallback_merges_vector_and_name_results() {
 
     let conn = Arc::new(Mutex::new(conn));
     let results = search(conn, &MockEmbedder, "auth hook", 5, 0)
-        .await
         .unwrap()
         .results;
 
@@ -247,14 +263,13 @@ async fn search_fallback_merges_vector_and_name_results() {
     assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
 }
 
-#[tokio::test]
-async fn search_deduplicates_vector_and_name_results() {
+#[test]
+fn search_deduplicates_vector_and_name_results() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
-    emb[0] = 1.0;
+    let emb = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/A.tsx",
@@ -272,7 +287,6 @@ async fn search_deduplicates_vector_and_name_results() {
 
     let conn = Arc::new(Mutex::new(conn));
     let results = search(conn, &MockEmbedder, "auth", 5, 0)
-        .await
         .unwrap()
         .results;
 
@@ -596,14 +610,13 @@ fn rerank_combined_score_can_exceed_one() {
     );
 }
 
-#[tokio::test]
-async fn search_returns_results_sorted_by_score() {
+#[test]
+fn search_returns_results_sorted_by_score() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
-    emb[0] = 1.0;
+    let emb = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/A.tsx",
@@ -637,7 +650,6 @@ async fn search_returns_results_sorted_by_score() {
 
     let conn = Arc::new(Mutex::new(conn));
     let results = search(conn, &MockEmbedder, "auth hook", 5, 0)
-        .await
         .unwrap()
         .results;
 
@@ -815,10 +827,8 @@ fn rerank_semantic_keyword_overlap_bonus() {
     );
 }
 
-use crate::indexer::embedder::FailingEmbedder;
-
-#[tokio::test]
-async fn search_degrades_on_embed_failure() {
+#[test]
+fn search_degrades_on_embed_failure() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -847,7 +857,6 @@ async fn search_degrades_on_embed_failure() {
         10,
         0,
     )
-    .await
     .unwrap();
     assert!(outcome.degraded, "should be degraded when embed fails");
     assert!(
@@ -861,21 +870,15 @@ async fn search_degrades_on_embed_failure() {
     );
 }
 
-#[tokio::test]
-async fn search_degrades_on_model_not_available() {
+#[test]
+fn search_degrades_on_model_not_available() {
     struct NoModelEmbedder;
     impl Embed for NoModelEmbedder {
-        fn embed_query<'a>(
-            &'a self,
-            _text: &'a str,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, EmbedError>> + Send + 'a>> {
-            Box::pin(async { Err(EmbedError::ModelNotAvailable) })
+        fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+            Err(EmbedError::ModelNotAvailable)
         }
-        fn embed_documents<'a>(
-            &'a self,
-            _texts: &'a [String],
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbedError>> + Send + 'a>> {
-            Box::pin(async { Ok(vec![]) })
+        fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+            Err(EmbedError::ModelNotAvailable)
         }
     }
 
@@ -884,24 +887,24 @@ async fn search_degrades_on_model_not_available() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &NoModelEmbedder, "test", 10, 0).await.unwrap();
+    let outcome = search(conn, &NoModelEmbedder, "test", 10, 0).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
     );
 }
 
-#[tokio::test]
+#[test]
 #[ignore = "requires model download"]
-async fn search_returns_results() {
-    use crate::indexer::embedder::download_model;
+fn search_returns_results() {
+    use rurico::embed::download_model;
     let paths = download_model().expect("download model");
     let embedder = Embedder::new(&paths).expect("load model");
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let embedding = embedder.embed_query("Button component").await.unwrap();
+    let embedding = embedder.embed_query("Button component").unwrap();
     storage::insert_chunk(
         &conn,
         "src/Button.tsx",
@@ -918,7 +921,7 @@ async fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &embedder, "button", 10, 0).await.unwrap();
+    let outcome = search(conn, &embedder, "button", 10, 0).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
@@ -959,8 +962,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
-    emb[0] = 1.0;
+    let emb = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/Button.tsx",

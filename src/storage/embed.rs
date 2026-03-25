@@ -45,6 +45,7 @@ pub fn add_embeddings(
     Ok(inserted)
 }
 
+#[cfg(test)]
 pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT c.file_path, COUNT(*) as chunk_count
@@ -132,6 +133,7 @@ fn stored_hash_for_file(
     }
 }
 
+#[cfg(test)]
 pub fn needs_embedding(
     conn: &Connection,
     file_path: &str,

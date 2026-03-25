@@ -8,27 +8,18 @@ repository = "https://github.com/thkt/yomu"
 
 [features]
 default = ["mlx"]
-mlx = ["dep:mlx-rs"]
-candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers"]
-test-support = []
+mlx = ["rurico/mlx"]
+test-support = ["rurico/test-support"]
 
 [dependencies]
-bytemuck = "1"
-candle-core = { version = "0.9", optional = true }
-candle-nn = { version = "0.9", optional = true }
-candle-transformers = { version = "0.9", optional = true }
 clap = { version = "4", features = ["derive"] }
-hf-hub = "0.5"
 ignore = "0.4"
-mlx-rs = { version = "0.25", optional = true }
+rurico = { git = "https://github.com/thkt/rurico", rev = "56320e3" }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sqlite-vec = "0.1.6"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter = "0.25"
@@ -38,6 +29,7 @@ tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
+rurico = { git = "https://github.com/thkt/rurico", rev = "56320e3", features = ["test-support"] }
 serial_test = "3"
 tempfile = "3"
 

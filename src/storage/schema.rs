@@ -1,37 +1,11 @@
 use std::path::Path;
 
 use rusqlite::Connection;
-use rusqlite::ffi::sqlite3_auto_extension;
-use sqlite_vec::sqlite3_vec_init;
 
 use super::{EMBEDDING_DIMS, StorageError};
 
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
-    static INIT: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
-    let init_result = INIT.get_or_init(|| {
-        // SAFETY: sqlite3_vec_init is the auto-extension entry point exported by sqlite-vec.
-        // sqlite-vec exports it as `unsafe extern "C" fn()`, while rusqlite's
-        // sqlite3_auto_extension expects the full init signature. Both are C fn pointers
-        // with compatible calling conventions; SQLite calls it with the correct arguments.
-        // Explicit source type ensures compile error if sqlite-vec changes its export type.
-        let rc = unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute::<
-                unsafe extern "C" fn(),
-                unsafe extern "C" fn(
-                    *mut rusqlite::ffi::sqlite3,
-                    *mut *mut std::os::raw::c_char,
-                    *const rusqlite::ffi::sqlite3_api_routines,
-                ) -> std::os::raw::c_int,
-            >(sqlite3_vec_init)))
-        };
-        if rc == 0 { Ok(()) } else { Err(rc) }
-    });
-    if let Err(rc) = init_result {
-        return Err(StorageError::Io(std::io::Error::other(format!(
-            "sqlite-vec extension failed to register (sqlite3 rc={rc}). \
-                 This is a process-level initialization error that cannot be retried."
-        ))));
-    }
+    rurico::storage::ensure_sqlite_vec().map_err(|e| StorageError::Io(std::io::Error::other(e)))?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -67,7 +41,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -127,7 +101,10 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
         [],
         |row| row.get::<_, String>(0),
     ) {
-        Ok(v) => v.parse().unwrap_or(0),
+        Ok(v) => v.parse().unwrap_or_else(|e| {
+            tracing::warn!(value = %v, error = %e, "Corrupt schema_version, treating as 0");
+            0
+        }),
         Err(rusqlite::Error::QueryReturnedNoRows) => 0,
         Err(e) => return Err(e.into()),
     };
@@ -161,10 +138,16 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
         fts_set_automerge(conn, true)?;
     }
 
+    // v3 → v4: add fts5vocab table for short-term expansion
+    if from < 4 {
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)",
+        )?;
+    }
+
     Ok(())
 }
 
-/// FTS5 default automerge threshold (merge when ≥4 b-tree segments exist).
 const FTS5_AUTOMERGE_DEFAULT: i32 = 4;
 
 pub fn fts_set_automerge(conn: &Connection, enabled: bool) -> Result<(), StorageError> {

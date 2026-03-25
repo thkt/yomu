@@ -17,8 +17,8 @@ fn skip_if_no_repo() -> bool {
     !vercel_ai_root().join(".git").exists()
 }
 
-#[tokio::test]
-async fn benchmark_chunk_only_index() {
+#[test]
+fn benchmark_chunk_only_index() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
         return;
@@ -34,7 +34,6 @@ async fn benchmark_chunk_only_index() {
 
     let start = Instant::now();
     yomu::indexer::run_chunk_only_index(Arc::clone(&conn), &root)
-        .await
         .unwrap();
     let chunk_time = start.elapsed();
 
@@ -60,8 +59,8 @@ async fn benchmark_chunk_only_index() {
     eprintln!();
 }
 
-#[tokio::test]
-async fn benchmark_incremental_embed() {
+#[test]
+fn benchmark_incremental_embed() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
         return;
@@ -77,14 +76,14 @@ async fn benchmark_incremental_embed() {
     let conn = yomu::storage::open_db(&db_path).unwrap();
     let conn = Arc::new(std::sync::Mutex::new(conn));
 
-    let paths = match yomu::indexer::embedder::download_model() {
+    let paths = match rurico::embed::download_model() {
         Ok(p) => p,
         Err(_) => {
             eprintln!("SKIP: model download failed");
             return;
         }
     };
-    let embedder = match yomu::indexer::embedder::Embedder::new(&paths) {
+    let embedder = match rurico::embed::Embedder::new(&paths) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: model load failed");
@@ -93,7 +92,7 @@ async fn benchmark_incremental_embed() {
     };
 
     let start = Instant::now();
-    let result = yomu::indexer::run_incremental_embed(Arc::clone(&conn), &embedder, 50, None).await;
+    let result = yomu::indexer::run_incremental_embed(Arc::clone(&conn), &embedder, 50, None);
     let embed_time = start.elapsed();
 
     let stats = {
@@ -113,8 +112,8 @@ async fn benchmark_incremental_embed() {
     eprintln!();
 }
 
-#[tokio::test]
-async fn benchmark_explorer_query() {
+#[test]
+fn benchmark_explorer_query() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
         return;
@@ -150,14 +149,14 @@ async fn benchmark_explorer_query() {
     };
     let conn2 = Arc::new(std::sync::Mutex::new(conn2));
 
-    let paths = match yomu::indexer::embedder::download_model() {
+    let paths = match rurico::embed::download_model() {
         Ok(p) => p,
         Err(_) => {
             eprintln!("SKIP: model download failed");
             return;
         }
     };
-    let embedder = match yomu::indexer::embedder::Embedder::new(&paths) {
+    let embedder = match rurico::embed::Embedder::new(&paths) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: model load failed");
@@ -173,7 +172,7 @@ async fn benchmark_explorer_query() {
 
     for query in &queries {
         let start = Instant::now();
-        let results = yomu::query::search(Arc::clone(&conn2), &embedder, query, 5, 0).await;
+        let results = yomu::query::search(Arc::clone(&conn2), &embedder, query, 5, 0);
         let search_time = start.elapsed();
 
         match results {
@@ -200,8 +199,8 @@ async fn benchmark_explorer_query() {
     eprintln!();
 }
 
-#[tokio::test]
-async fn benchmark_impact_query() {
+#[test]
+fn benchmark_impact_query() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
         return;

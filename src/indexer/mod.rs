@@ -1,15 +1,15 @@
 pub mod chunker;
-pub mod embedder;
 pub mod walker;
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use rurico::embed::{Embed, EmbedError};
+
 use crate::resolver::Resolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
-use embedder::{Embed, EmbedError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
@@ -21,12 +21,6 @@ pub enum IndexError {
     Io(#[from] std::io::Error),
     #[error("internal task failed: {0}")]
     Internal(String),
-}
-
-impl From<tokio::task::JoinError> for IndexError {
-    fn from(e: tokio::task::JoinError) -> Self {
-        Self::Internal(e.to_string())
-    }
 }
 
 #[derive(Debug)]
@@ -105,7 +99,6 @@ fn read_source(file_path: &Path) -> Result<String, FileAction> {
     })
 }
 
-/// Shared file-processing pipeline: read → hash → rel_path → chunk → PendingFile.
 /// Does NOT check the DB (caller handles reindex check with appropriate lock strategy).
 fn prepare_file(root: &Path, file_path: &Path) -> Result<PendingFile, FileAction> {
     let source = read_source(file_path)?;
@@ -188,18 +181,12 @@ fn collect_pending_files(
     Ok((pending, files_skipped, files_errored))
 }
 
-async fn remove_orphans(
+fn remove_orphans(
     conn: &Arc<Mutex<Db>>,
     current_rel_paths: std::collections::HashSet<String>,
 ) -> Result<(), IndexError> {
-    let indexed_paths = {
-        let conn = Arc::clone(conn);
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().unwrap();
-            storage::get_all_file_paths(&conn)
-        })
-        .await?
-    }?;
+    let conn = conn.lock().unwrap();
+    let indexed_paths = storage::get_all_file_paths(&conn)?;
 
     let orphans: Vec<_> = indexed_paths
         .difference(&current_rel_paths)
@@ -209,19 +196,13 @@ async fn remove_orphans(
         return Ok(());
     }
 
-    let conn = Arc::clone(conn);
-    let result = tokio::task::spawn_blocking(move || {
-        let conn = conn.lock().unwrap();
-        let tx = conn.unchecked_transaction()?;
-        for orphan in &orphans {
-            storage::delete_file_chunks_in(&tx, orphan)?;
-        }
-        tx.commit()?;
-        tracing::info!(removed = orphans.len(), "Removed orphaned file chunks");
-        Ok::<_, StorageError>(())
-    })
-    .await?;
-    Ok(result?)
+    let tx = conn.unchecked_transaction().map_err(StorageError::from)?;
+    for orphan in &orphans {
+        storage::delete_file_chunks_in(&tx, orphan)?;
+    }
+    tx.commit().map_err(StorageError::from)?;
+    tracing::info!(removed = orphans.len(), "Removed orphaned file chunks");
+    Ok(())
 }
 
 fn import_kind_to_ref_kind(kind: &chunker::ImportKind) -> RefKind {
@@ -270,7 +251,6 @@ fn build_references(
 
 const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 
-/// Prepend file-level context so the embedding vector captures cross-chunk semantics.
 fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, content: &str) -> String {
     let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
     if !imports.is_empty() {
@@ -311,15 +291,14 @@ fn classify_embed_error(
 }
 
 fn store_file_data(
-    conn: &Arc<Mutex<Db>>,
+    conn: &Db,
     pf: PendingFile,
     embeddings: Vec<Vec<f32>>,
     refs: Vec<Reference>,
 ) -> Result<(), StorageError> {
     let new_chunks = pf.to_new_chunks();
-    let conn = conn.lock().unwrap();
     storage::replace_file_chunks(
-        &conn,
+        conn,
         &pf.rel_path,
         &new_chunks,
         &embeddings,
@@ -329,7 +308,7 @@ fn store_file_data(
     )
 }
 
-async fn embed_and_store(
+fn embed_and_store(
     conn: &Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     pending: Vec<PendingFile>,
@@ -355,7 +334,8 @@ async fn embed_and_store(
             })
             .collect();
 
-        let embeddings = match embedder.embed_documents(&texts).await {
+        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let embeddings = match embedder.embed_documents_batch(&texts_ref) {
             Ok(embs) => {
                 consecutive_errors = 0;
                 embs
@@ -375,9 +355,10 @@ async fn embed_and_store(
         let refs = build_references(&pf.parsed_imports, &pf.rel_path, resolver);
         tracing::debug!(file = %pf.rel_path, chunks = n, "Indexing file");
 
-        let conn_clone = Arc::clone(conn);
-        tokio::task::spawn_blocking(move || store_file_data(&conn_clone, pf, embeddings, refs))
-            .await??;
+        {
+            let conn = conn.lock().unwrap();
+            store_file_data(&conn, pf, embeddings, refs)?;
+        }
 
         chunks_created += n;
         files_processed += 1;
@@ -396,21 +377,21 @@ pub struct EmbedResult {
     pub budget_exhausted: bool,
 }
 
-pub async fn run_chunk_only_index(
+pub fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
 ) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, false).await
+    run_chunk_only_index_inner(conn, root, false)
 }
 
-pub async fn run_chunk_only_index_force(
+pub fn run_chunk_only_index_force(
     conn: Arc<Mutex<Db>>,
     root: &Path,
 ) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, true).await
+    run_chunk_only_index_inner(conn, root, true)
 }
 
-async fn run_chunk_only_index_inner(
+fn run_chunk_only_index_inner(
     conn: Arc<Mutex<Db>>,
     root: &Path,
     force: bool,
@@ -426,57 +407,47 @@ async fn run_chunk_only_index_inner(
         files.iter().map(|f| to_rel_path(root, f)).collect();
 
     let resolver = Resolver::new(root);
-    let root_owned = root.to_owned();
 
     let (files_processed, chunks_created, files_skipped, files_errored) = {
-        let conn = Arc::clone(&conn);
-        tokio::task::spawn_blocking(move || {
-            let mut files_processed = 0u32;
-            let mut chunks_created = 0u32;
-            let mut files_skipped = 0u32;
-            let mut files_errored = 0u32;
+        let mut files_processed = 0u32;
+        let mut chunks_created = 0u32;
+        let mut files_skipped = 0u32;
+        let mut files_errored = 0u32;
 
-            let conn_guard = conn.lock().unwrap();
-            storage::fts_set_automerge(&conn_guard, false)?;
+        let conn_guard = conn.lock().unwrap();
+        storage::fts_set_automerge(&conn_guard, false)?;
 
-            for file_path in &files {
-                match process_file(&conn_guard, &root_owned, file_path, force)? {
-                    FileAction::Process(pf) => {
-                        let n = pf.raw_chunks.len() as u32;
-                        let new_chunks = pf.to_new_chunks();
-                        let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
-                        storage::replace_file_chunks_only(
-                            &conn_guard,
-                            &pf.rel_path,
-                            &new_chunks,
-                            &pf.hash,
-                            &pf.imports_text,
-                            &refs,
-                        )?;
-                        chunks_created += n;
-                        files_processed += 1;
-                    }
-                    FileAction::Skip => files_skipped += 1,
-                    FileAction::Error => files_errored += 1,
+        for file_path in &files {
+            match process_file(&conn_guard, root, file_path, force)? {
+                FileAction::Process(pf) => {
+                    let n = pf.raw_chunks.len() as u32;
+                    let new_chunks = pf.to_new_chunks();
+                    let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
+                    storage::replace_file_chunks_only(
+                        &conn_guard,
+                        &pf.rel_path,
+                        &new_chunks,
+                        &pf.hash,
+                        &pf.imports_text,
+                        &refs,
+                    )?;
+                    chunks_created += n;
+                    files_processed += 1;
                 }
+                FileAction::Skip => files_skipped += 1,
+                FileAction::Error => files_errored += 1,
             }
+        }
 
-            if files_processed > 0 {
-                storage::fts_optimize(&conn_guard)?;
-            }
-            storage::fts_set_automerge(&conn_guard, true)?;
+        if files_processed > 0 {
+            storage::fts_optimize(&conn_guard)?;
+        }
+        storage::fts_set_automerge(&conn_guard, true)?;
 
-            Ok::<_, IndexError>((
-                files_processed,
-                chunks_created,
-                files_skipped,
-                files_errored,
-            ))
-        })
-        .await?
-    }?;
+        (files_processed, chunks_created, files_skipped, files_errored)
+    };
 
-    remove_orphans(&conn, current_rel_paths).await?;
+    remove_orphans(&conn, current_rel_paths)?;
 
     tracing::info!(
         files_processed,
@@ -522,8 +493,7 @@ fn order_files_for_embedding(
     Ok(files)
 }
 
-/// Embed un-embedded chunks up to `max_chunks` budget, most-imported-first.
-pub async fn run_incremental_embed(
+pub fn run_incremental_embed(
     conn: Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     max_chunks: u32,
@@ -571,7 +541,8 @@ pub async fn run_incremental_embed(
             break;
         }
 
-        let embeddings = match embedder.embed_documents(&texts).await {
+        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let embeddings = match embedder.embed_documents_batch(&texts_ref) {
             Ok(embs) => {
                 consecutive_errors = 0;
                 embs
@@ -596,7 +567,9 @@ pub async fn run_incremental_embed(
                     consecutive_errors,
                     "Too many consecutive failures in incremental embed, aborting"
                 );
-                break;
+                return Err(IndexError::Internal(format!(
+                    "Aborting incremental embed after {consecutive_errors} consecutive failures"
+                )));
             }
             continue;
         }
@@ -604,12 +577,10 @@ pub async fn run_incremental_embed(
         let pairs: Vec<(i64, Vec<f32>)> = chunk_ids.into_iter().zip(embeddings).collect();
 
         let n = pairs.len() as u32;
-        let conn_clone = Arc::clone(&conn);
-        tokio::task::spawn_blocking(move || {
-            let conn_guard = conn_clone.lock().unwrap();
-            storage::add_embeddings(&conn_guard, &pairs)
-        })
-        .await??;
+        {
+            let conn_guard = conn.lock().unwrap();
+            storage::add_embeddings(&conn_guard, &pairs)?;
+        }
 
         chunks_embedded += n;
         files_completed += 1;
@@ -634,8 +605,8 @@ pub async fn run_incremental_embed(
     })
 }
 
-/// Per-file embed+store ensures partial progress survives API failures.
-pub async fn run_index(
+/// Per-file embed+store ensures partial progress survives embedding failures.
+pub fn run_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
     embedder: &(impl Embed + ?Sized),
@@ -653,20 +624,14 @@ pub async fn run_index(
     let current_rel_paths: std::collections::HashSet<String> =
         files.iter().map(|f| to_rel_path(root, f)).collect();
 
-    let (pending, files_skipped, mut files_errored) = {
-        let conn = Arc::clone(&conn);
-        let root = root.to_owned();
-        let result =
-            tokio::task::spawn_blocking(move || collect_pending_files(&conn, &root, &files, force))
-                .await?;
-        result?
-    };
+    let (pending, files_skipped, mut files_errored) =
+        collect_pending_files(&conn, root, &files, force)?;
 
-    remove_orphans(&conn, current_rel_paths).await?;
+    remove_orphans(&conn, current_rel_paths)?;
 
     let resolver = Resolver::new(root);
     let (files_processed, chunks_created, embed_errors) =
-        embed_and_store(&conn, embedder, pending, &resolver).await?;
+        embed_and_store(&conn, embedder, pending, &resolver)?;
     files_errored += embed_errors;
 
     tracing::info!(

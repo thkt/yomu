@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::indexer::embedder::{Embed, EmbedError};
+use rurico::embed::{Embed, EmbedError};
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
 
 #[derive(Debug, thiserror::Error)]
@@ -12,12 +12,6 @@ pub enum QueryError {
     Embed(#[from] EmbedError),
     #[error("internal task failed: {0}")]
     Internal(String),
-}
-
-impl From<tokio::task::JoinError> for QueryError {
-    fn from(e: tokio::task::JoinError) -> Self {
-        Self::Internal(e.to_string())
-    }
 }
 
 #[derive(Debug)]
@@ -61,12 +55,12 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
     for token in query.split_whitespace() {
         let lower = token.to_lowercase();
-        if lower.len() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !base.contains(&lower) {
+        if lower.chars().count() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !base.contains(&lower) {
             base.push(lower);
         }
         for part in split_identifier(token) {
             let part_lower = part.to_lowercase();
-            if part_lower.len() >= 2
+            if part_lower.chars().count() >= 2
                 && !STOP_WORDS.contains(&part_lower.as_str())
                 && !base.contains(&part_lower)
             {
@@ -349,7 +343,7 @@ fn search_pipeline(
             Some(type_hints.as_slice())
         };
 
-        let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
+        let mut exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
         let name_results = storage::search_by_name(
             conn,
             &keyword_refs,
@@ -357,9 +351,8 @@ fn search_pipeline(
             &exclude_ids,
             fallback_limit,
         )?;
+        exclude_ids.extend(name_results.iter().filter_map(|r| r.chunk_id));
         results.extend(name_results);
-
-        let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
         let content_results = storage::search_by_content(
             conn,
             &keyword_refs,
@@ -377,7 +370,7 @@ fn search_pipeline(
         0.0
     };
 
-    let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs)?;
+    let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;
     let total = stats.total_chunks.max(1) as f32;
     let keyword_idfs: Vec<f32> = dfs
         .iter()
@@ -399,37 +392,30 @@ fn search_pipeline(
     Ok(results)
 }
 
-pub async fn search(
+pub fn search(
     conn: Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     query: &str,
     limit: u32,
     offset: u32,
 ) -> Result<SearchOutcome, QueryError> {
-    let (query_embedding, degraded) = match embedder.embed_query(query).await {
+    let (query_embedding, degraded) = match embedder.embed_query(query) {
         Ok(emb) => (Some(emb), false),
         Err(e) => {
             tracing::warn!(error = %e, "Query embedding failed, falling back to text search");
             (None, true)
         }
     };
-    let query_owned = query.to_string();
 
-    let results = tokio::task::spawn_blocking(move || {
-        let conn = conn.lock().unwrap();
-        search_pipeline(
-            &conn,
-            &query_owned,
-            query_embedding.as_deref(),
-            limit,
-            offset,
-        )
-    })
-    .await?;
-    Ok(SearchOutcome {
-        results: results?,
-        degraded,
-    })
+    let conn = conn.lock().unwrap();
+    let results = search_pipeline(
+        &conn,
+        query,
+        query_embedding.as_deref(),
+        limit,
+        offset,
+    )?;
+    Ok(SearchOutcome { results, degraded })
 }
 
 #[cfg(test)]

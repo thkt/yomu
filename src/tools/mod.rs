@@ -4,11 +4,10 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use rurico::embed::{Embed, EmbedError, Embedder};
+
 use crate::config;
-use crate::indexer::{
-    self,
-    embedder::{Embed, EmbedError, EmbedFuture, Embedder},
-};
+use crate::indexer;
 use crate::query;
 use crate::storage;
 
@@ -74,11 +73,11 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
 struct NoOpEmbedder;
 
 impl Embed for NoOpEmbedder {
-    fn embed_query<'a>(&'a self, _text: &'a str) -> EmbedFuture<'a, Vec<f32>> {
-        Box::pin(async { Err(EmbedError::ModelNotAvailable) })
+    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+        Err(EmbedError::ModelNotAvailable)
     }
-    fn embed_documents<'a>(&'a self, _texts: &'a [String]) -> EmbedFuture<'a, Vec<Vec<f32>>> {
-        Box::pin(async { Err(EmbedError::ModelNotAvailable) })
+    fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+        Err(EmbedError::ModelNotAvailable)
     }
 }
 
@@ -133,11 +132,11 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
-            embed_budget: parse_embed_budget(),
+            embed_budget: DEFAULT_EMBED_BUDGET,
         }
     }
 
-    pub async fn search(&self, query: &str, limit: u32, offset: u32) -> Result<String, YomuError> {
+    pub fn search(&self, query: &str, limit: u32, offset: u32) -> Result<String, YomuError> {
         if query.is_empty() {
             return Err(YomuError::InvalidInput("query must not be empty".into()));
         }
@@ -147,7 +146,7 @@ impl Yomu {
             )));
         }
 
-        let embedder = self.get_embedder().await;
+        let embedder = self.get_embedder();
         let limit = limit.min(MAX_SEARCH_LIMIT);
         let offset = offset.min(MAX_SEARCH_OFFSET);
 
@@ -160,11 +159,11 @@ impl Yomu {
             Some(type_hints.as_slice())
         };
 
-        let stats = self.with_db(storage::get_stats).await?;
+        let stats = self.with_db(storage::get_stats)?;
         let state = determine_index_state(&stats);
-        let index_notes = self.ensure_indexed(embedder, state, hints_ref).await?;
+        let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
-        let outcome = query::search(Arc::clone(&self.conn), embedder, query, limit, offset).await?;
+        let outcome = query::search(Arc::clone(&self.conn), embedder, query, limit, offset)?;
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
@@ -182,7 +181,7 @@ impl Yomu {
             return Ok(msg);
         }
 
-        let ctx = self.fetch_enrichment_context(&outcome.results).await?;
+        let ctx = self.fetch_enrichment_context(&outcome.results)?;
         let mut text = format_results_grouped(&outcome.results, &ctx);
         for note in &notes {
             text.push_str(&format!("\n---\nNote: {note}\n"));
@@ -190,11 +189,11 @@ impl Yomu {
         Ok(text)
     }
 
-    pub async fn index(&self) -> Result<String, YomuError> {
+    pub fn index(&self) -> Result<String, YomuError> {
         let chunk_result =
-            indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await?;
+            indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
 
-        let stats = self.with_db(storage::get_stats).await?;
+        let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
             "Indexing complete: {} files chunked, {} chunks created, {} files skipped (unchanged), {} errors",
             chunk_result.files_processed,
@@ -208,11 +207,11 @@ impl Yomu {
         Ok(text)
     }
 
-    pub async fn rebuild(&self) -> Result<String, YomuError> {
+    pub fn rebuild(&self) -> Result<String, YomuError> {
         let chunk_result =
-            indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root).await?;
+            indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
 
-        let stats = self.with_db(storage::get_stats).await?;
+        let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
             "Rebuild complete: {} files chunked, {} chunks created, {} errors",
             chunk_result.files_processed, chunk_result.chunks_created, chunk_result.files_errored,
@@ -223,7 +222,7 @@ impl Yomu {
         Ok(text)
     }
 
-    pub async fn impact(
+    pub fn impact(
         &self,
         target: &str,
         symbol: Option<&str>,
@@ -233,7 +232,7 @@ impl Yomu {
             return Err(YomuError::InvalidInput("target must not be empty".into()));
         }
 
-        let stats = self.with_db(storage::get_stats).await?;
+        let stats = self.with_db(storage::get_stats)?;
         if stats.total_chunks == 0 {
             return Err(YomuError::InvalidInput(
                 "index is empty — run `yomu index` first, or use `yomu search` which auto-indexes"
@@ -263,8 +262,7 @@ impl Yomu {
                     None => vec![],
                 };
                 Ok((exists, dependents, refs))
-            })
-            .await?;
+            })?;
 
         if dependents.is_empty() {
             return Ok(if file_in_index {
@@ -286,14 +284,13 @@ impl Yomu {
         Ok(text)
     }
 
-    pub async fn status(&self) -> Result<String, YomuError> {
+    pub fn status(&self) -> Result<String, YomuError> {
         let (stats, ref_count) = self
             .with_db(|conn| {
                 let stats = storage::get_stats(conn)?;
                 let ref_count = storage::get_reference_count(conn)?;
                 Ok((stats, ref_count))
-            })
-            .await?;
+            })?;
 
         Ok(format!(
             "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}\n  References: {}\n  Last indexed: {}",
@@ -307,19 +304,19 @@ impl Yomu {
 }
 
 impl Yomu {
-    async fn ensure_indexed(
+    fn ensure_indexed(
         &self,
         embedder: &dyn Embed,
         state: IndexState,
         type_hints: Option<&[storage::ChunkType]>,
     ) -> Result<Option<String>, YomuError> {
         let (needs_embed, rechunk_note) = match state {
-            IndexState::Empty => (self.handle_empty_index().await?, None),
+            IndexState::Empty => (self.handle_empty_index()?, None),
             IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
-                let note = self.rechunk_if_stale().await;
+                let note = self.rechunk_if_stale();
                 (true, note)
             }
-            IndexState::FullyEmbedded => self.handle_fully_embedded().await?,
+            IndexState::FullyEmbedded => self.handle_fully_embedded()?,
         };
 
         let embed_note = if needs_embed {
@@ -328,9 +325,7 @@ impl Yomu {
                 embedder,
                 self.embed_budget,
                 type_hints,
-            )
-            .await
-            {
+            ) {
                 Ok(_) => None,
                 Err(e @ indexer::IndexError::Storage(_)) => return Err(e.into()),
                 Err(e) => {
@@ -354,39 +349,41 @@ impl Yomu {
         })
     }
 
-    async fn handle_empty_index(&self) -> Result<bool, YomuError> {
+    fn handle_empty_index(&self) -> Result<bool, YomuError> {
         tracing::info!("Index is empty, running chunk-only index");
-        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await?;
+        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
         Ok(true)
     }
 
-    async fn try_rechunk(&self) -> Option<String> {
-        match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root).await {
+    fn try_rechunk(&self) -> Option<String> {
+        match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root) {
+            Ok(r) if r.files_errored > 0 => {
+                Some(format!("{} files had errors during re-indexing", r.files_errored))
+            }
             Ok(_) => None,
             Err(e) => Some(format!("re-chunking failed: {e}")),
         }
     }
 
-    async fn rechunk_if_stale(&self) -> Option<String> {
-        if self.check_index_fresh().await {
+    fn rechunk_if_stale(&self) -> Option<String> {
+        if self.check_index_fresh() {
             return None;
         }
-        self.try_rechunk().await
+        self.try_rechunk()
     }
 
-    async fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
-        if self.check_index_fresh().await {
+    fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
+        if self.check_index_fresh() {
             return Ok((false, None));
         }
-        let note = self.try_rechunk().await;
-        let stats = self.with_db(storage::get_stats).await?;
+        let note = self.try_rechunk();
+        let stats = self.with_db(storage::get_stats)?;
         Ok((stats.embedded_chunks < stats.total_chunks, note))
     }
 
-    async fn check_index_fresh(&self) -> bool {
+    fn check_index_fresh(&self) -> bool {
         match self
             .with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS))
-            .await
         {
             Ok(fresh) => fresh,
             Err(e) => {
@@ -396,10 +393,10 @@ impl Yomu {
         }
     }
 
-    async fn get_embedder(&self) -> &dyn Embed {
+    fn get_embedder(&self) -> &dyn Embed {
         fn try_load_embedder() -> Option<Arc<dyn Embed>> {
             tracing::info!("Downloading embedding model (first run may take a few minutes)");
-            let paths = match crate::indexer::embedder::download_model() {
+            let paths = match rurico::embed::download_model() {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!(error = %e, "Model download failed, using text search only");
@@ -418,13 +415,7 @@ impl Yomu {
 
         static NOOP: NoOpEmbedder = NoOpEmbedder;
         if self.embedder.get().is_none() {
-            let result = tokio::task::spawn_blocking(try_load_embedder)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "Model init task panicked, using text search only");
-                    None
-                });
-            // Only cache successful init — failed attempts can retry on next call
+            let result = try_load_embedder();
             if result.is_some() {
                 let _ = self.embedder.set(result);
             }
@@ -435,7 +426,7 @@ impl Yomu {
             .unwrap_or(&NOOP)
     }
 
-    async fn fetch_enrichment_context(
+    fn fetch_enrichment_context(
         &self,
         results: &[storage::SearchResult],
     ) -> Result<EnrichmentContext, YomuError> {
@@ -453,22 +444,14 @@ impl Yomu {
             let siblings = storage::get_file_siblings(conn, &path_refs)?;
             Ok(EnrichmentContext { imports, siblings })
         })
-        .await
     }
 
-    async fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
+    fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
     where
-        F: FnOnce(&storage::Db) -> Result<T, storage::StorageError> + Send + 'static,
-        T: Send + 'static,
+        F: FnOnce(&storage::Db) -> Result<T, storage::StorageError>,
     {
-        let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().unwrap();
-            f(&conn)
-        })
-        .await
-        .map_err(|e| YomuError::Internal(format!("task join failed: {e}")))?
-        .map_err(YomuError::from)
+        let conn = self.conn.lock().unwrap();
+        f(&conn).map_err(YomuError::from)
     }
 }
 

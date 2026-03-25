@@ -1,4 +1,7 @@
 use super::*;
+
+use rurico::embed::{AlternatingEmbedder, FailingEmbedder, MismatchEmbedder, MockEmbedder};
+
 #[test]
 fn file_hash_is_deterministic() {
     let h1 = file_hash("hello world");
@@ -43,8 +46,6 @@ fn enrich_for_embedding_empty_content() {
     assert_eq!(result, "// File: src/empty.ts\n// Type: other\n");
 }
 
-use crate::indexer::embedder::MockEmbedder;
-
 #[test]
 fn to_rel_path_outside_root() {
     let result = to_rel_path(std::path::Path::new("/a"), std::path::Path::new("/b/c.tsx"));
@@ -76,8 +77,8 @@ fn test_db() -> (storage::Db, tempfile::TempDir) {
     (conn, dir)
 }
 
-#[tokio::test]
-async fn run_index_with_mock_embedder() {
+#[test]
+fn run_index_with_mock_embedder() {
     let dir = tempfile::tempdir().unwrap();
 
     let src_dir = dir.path().join("src");
@@ -98,7 +99,6 @@ async fn run_index_with_mock_embedder() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
 
     assert_eq!(result.files_processed, 2);
@@ -110,8 +110,8 @@ async fn run_index_with_mock_embedder() {
     assert!(stats.total_chunks >= 2);
 }
 
-#[tokio::test]
-async fn run_index_skips_unchanged_files() {
+#[test]
+fn run_index_skips_unchanged_files() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -123,20 +123,18 @@ async fn run_index_skips_unchanged_files() {
 
     // First run: processes file
     let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
     assert_eq!(r1.files_processed, 1);
 
     // Second run: skips unchanged file
     let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
     assert_eq!(r2.files_processed, 0);
     assert_eq!(r2.files_skipped, 1);
 }
 
-#[tokio::test]
-async fn run_index_force_reindexes() {
+#[test]
+fn run_index_force_reindexes() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -147,18 +145,16 @@ async fn run_index_force_reindexes() {
     let conn = Arc::new(Mutex::new(conn));
 
     run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
 
     let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true)
-        .await
         .unwrap();
     assert_eq!(r2.files_processed, 1);
     assert_eq!(r2.files_skipped, 0);
 }
 
-#[tokio::test]
-async fn run_index_removes_deleted_file_chunks() {
+#[test]
+fn run_index_removes_deleted_file_chunks() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -171,7 +167,6 @@ async fn run_index_removes_deleted_file_chunks() {
 
     // Index both files
     let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
     assert_eq!(r1.files_processed, 2);
     assert_eq!(
@@ -186,7 +181,6 @@ async fn run_index_removes_deleted_file_chunks() {
 
     // Re-index: should remove orphaned B.tsx chunks
     run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
@@ -252,8 +246,8 @@ fn build_references_unresolvable_returns_empty() {
     assert!(refs.is_empty());
 }
 
-#[tokio::test]
-async fn run_index_stores_imports_in_file_context() {
+#[test]
+fn run_index_stores_imports_in_file_context() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -267,7 +261,6 @@ async fn run_index_stores_imports_in_file_context() {
     let conn = Arc::new(Mutex::new(conn));
 
     run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .await
         .unwrap();
 
     let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
@@ -283,8 +276,8 @@ async fn run_index_stores_imports_in_file_context() {
     );
 }
 
-#[tokio::test]
-async fn run_chunk_only_index_stores_chunks_without_embeddings() {
+#[test]
+fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -304,7 +297,6 @@ async fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .await
         .unwrap();
 
     assert_eq!(result.files_processed, 2);
@@ -323,8 +315,22 @@ async fn run_chunk_only_index_stores_chunks_without_embeddings() {
     );
 }
 
-#[tokio::test]
-async fn run_incremental_embed_within_budget() {
+#[test]
+fn run_incremental_embed_empty_db_returns_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None).unwrap();
+
+    assert_eq!(result.chunks_embedded, 0);
+    assert_eq!(result.files_completed, 0);
+    assert!(!result.budget_exhausted);
+}
+
+#[test]
+fn run_incremental_embed_within_budget() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -341,13 +347,11 @@ async fn run_incremental_embed_within_budget() {
     let conn = Arc::new(Mutex::new(conn));
 
     run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .await
         .unwrap();
     let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
     let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
-        .await
         .unwrap();
 
     assert!(result.chunks_embedded >= 3);
@@ -358,8 +362,8 @@ async fn run_incremental_embed_within_budget() {
     assert_eq!(stats_after.embedded_chunks, stats_after.total_chunks);
 }
 
-#[tokio::test]
-async fn run_incremental_embed_exhausts_budget() {
+#[test]
+fn run_incremental_embed_exhausts_budget() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -376,11 +380,9 @@ async fn run_incremental_embed_exhausts_budget() {
     let conn = Arc::new(Mutex::new(conn));
 
     run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .await
         .unwrap();
 
     let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 2, None)
-        .await
         .unwrap();
 
     assert!(result.budget_exhausted);
@@ -390,8 +392,8 @@ async fn run_incremental_embed_exhausts_budget() {
     assert!(stats.embedded_chunks < stats.total_chunks);
 }
 
-#[tokio::test]
-async fn run_incremental_embed_prioritizes_type_hints() {
+#[test]
+fn run_incremental_embed_prioritizes_type_hints() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -436,7 +438,6 @@ async fn run_incremental_embed_prioritizes_type_hints() {
         1,
         Some(&[storage::ChunkType::Hook]),
     )
-    .await
     .unwrap();
 
     assert_eq!(result.files_completed, 1);
@@ -461,8 +462,8 @@ async fn run_incremental_embed_prioritizes_type_hints() {
     assert!(hook_embedded, "hook file should be embedded first");
 }
 
-#[tokio::test]
-async fn run_incremental_embed_none_hints_preserves_order() {
+#[test]
+fn run_incremental_embed_none_hints_preserves_order() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -501,7 +502,6 @@ async fn run_incremental_embed_none_hints_preserves_order() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
-        .await
         .unwrap();
 
     assert_eq!(result.files_completed, 2);
@@ -509,10 +509,8 @@ async fn run_incremental_embed_none_hints_preserves_order() {
     assert!(!result.budget_exhausted);
 }
 
-use crate::indexer::embedder::{AlternatingEmbedder, FailingEmbedder};
-
-#[tokio::test]
-async fn run_incremental_embed_recovers_after_intermittent_failure() {
+#[test]
+fn run_incremental_embed_recovers_after_intermittent_failure() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -546,7 +544,7 @@ async fn run_incremental_embed_recovers_after_intermittent_failure() {
         50,
         None,
     )
-    .await;
+    ;
 
     assert!(
         result.is_ok(),
@@ -559,8 +557,8 @@ async fn run_incremental_embed_recovers_after_intermittent_failure() {
     );
 }
 
-#[tokio::test]
-async fn run_incremental_embed_aborts_after_consecutive_failures() {
+#[test]
+fn run_incremental_embed_aborts_after_consecutive_failures() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -591,7 +589,7 @@ async fn run_incremental_embed_aborts_after_consecutive_failures() {
         50,
         None,
     )
-    .await;
+    ;
 
     assert!(
         result.is_err(),
@@ -601,8 +599,8 @@ async fn run_incremental_embed_aborts_after_consecutive_failures() {
     assert!(err_msg.contains("mock failure"), "got: {err_msg}");
 }
 
-#[tokio::test]
-async fn embed_and_store_aborts_after_consecutive_failures() {
+#[test]
+fn embed_and_store_aborts_after_consecutive_failures() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -625,7 +623,7 @@ async fn embed_and_store_aborts_after_consecutive_failures() {
         &FailingEmbedder::all_fail("mock failure"),
         false,
     )
-    .await;
+    ;
 
     assert!(
         result.is_err(),
@@ -750,8 +748,8 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
     assert_eq!(ordered[0], "src/A.tsx");
 }
 
-#[tokio::test]
-async fn embed_and_store_catches_count_mismatch_via_storage() {
+#[test]
+fn embed_and_store_catches_count_mismatch_via_storage() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -769,7 +767,7 @@ async fn embed_and_store_catches_count_mismatch_via_storage() {
 
     // MismatchEmbedder returns 1 vector regardless of input count.
     // Storage layer catches embeddings.len() != chunks.len() via LengthMismatch.
-    let result = run_index(Arc::clone(&conn), dir.path(), &MismatchEmbedder, false).await;
+    let result = run_index(Arc::clone(&conn), dir.path(), &MismatchEmbedder, false);
 
     if let Ok(outcome) = &result {
         let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
@@ -787,10 +785,8 @@ async fn embed_and_store_catches_count_mismatch_via_storage() {
     // If Err, the mismatch was caught — also acceptable
 }
 
-use crate::indexer::embedder::MismatchEmbedder;
-
-#[tokio::test]
-async fn run_incremental_embed_skips_count_mismatch() {
+#[test]
+fn run_incremental_embed_skips_count_mismatch() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -847,7 +843,6 @@ async fn run_incremental_embed_skips_count_mismatch() {
     }
 
     let result = run_incremental_embed(Arc::clone(&conn), &MismatchEmbedder, 50, None)
-        .await
         .unwrap();
 
     // Multi.tsx should be skipped (2 chunks, 1 embedding), single-chunk files should succeed
@@ -864,8 +859,8 @@ async fn run_incremental_embed_skips_count_mismatch() {
     );
 }
 
-#[tokio::test]
-async fn run_chunk_only_index_handles_rust_files() {
+#[test]
+fn run_chunk_only_index_handles_rust_files() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
@@ -880,7 +875,6 @@ async fn run_chunk_only_index_handles_rust_files() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .await
         .unwrap();
 
     assert_eq!(result.files_processed, 1);
@@ -896,8 +890,8 @@ async fn run_chunk_only_index_handles_rust_files() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn run_index_counts_unreadable_files_as_errors() {
+#[test]
+fn run_index_counts_unreadable_files_as_errors() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
@@ -926,7 +920,6 @@ async fn run_index_counts_unreadable_files_as_errors() {
         &MockEmbedder,
         false,
     )
-    .await
     .unwrap();
 
     // Restore permissions for cleanup

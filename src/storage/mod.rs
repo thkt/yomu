@@ -14,14 +14,8 @@ use rusqlite::Connection;
 
 pub type Db = Connection;
 
-pub const EMBEDDING_DIMS: u32 = 768;
-
-#[cfg(not(target_endian = "little"))]
-compile_error!("yomu requires a little-endian target for f32↔u8 embedding storage");
-
-pub(crate) fn f32_as_bytes(slice: &[f32]) -> &[u8] {
-    bytemuck::cast_slice(slice)
-}
+pub use rurico::embed::EMBEDDING_DIMS;
+pub use rurico::storage::f32_as_bytes;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkType {

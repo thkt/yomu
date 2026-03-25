@@ -1,7 +1,13 @@
 use super::*;
 use std::collections::HashMap;
 
-use crate::indexer::embedder::FailingEmbedder;
+use rurico::embed::FailingEmbedder;
+
+fn test_embedding() -> Vec<f32> {
+    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
+    emb[0] = 1.0;
+    emb
+}
 
 fn test_db() -> (storage::Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -38,7 +44,7 @@ fn test_yomu_with_files(files: &[(&str, &str)]) -> (Yomu, tempfile::TempDir) {
 
 fn test_yomu_with_files_and_embedder(
     files: &[(&str, &str)],
-    embedder: Arc<dyn crate::indexer::embedder::Embed>,
+    embedder: Arc<dyn rurico::embed::Embed>,
 ) -> (Yomu, tempfile::TempDir) {
     let (conn, dir) = setup_test_files(files);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
@@ -46,8 +52,7 @@ fn test_yomu_with_files_and_embedder(
 }
 
 fn seed_index(conn: &storage::Db) {
-    let mut embedding = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
-    embedding[0] = 1.0;
+    let embedding = test_embedding();
     storage::insert_chunk(
         conn,
         "src/dummy.tsx",
@@ -64,10 +69,10 @@ fn seed_index(conn: &storage::Db) {
     .unwrap();
 }
 
-#[tokio::test]
-async fn search_rejects_empty_query() {
+#[test]
+fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
-    let err = y.search("", 10, 0).await.unwrap_err();
+    let err = y.search("", 10, 0).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {}",
@@ -75,11 +80,11 @@ async fn search_rejects_empty_query() {
     );
 }
 
-#[tokio::test]
-async fn search_rejects_long_query() {
+#[test]
+fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y.search(&long_query, 10, 0).await.unwrap_err();
+    let err = y.search(&long_query, 10, 0).unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -87,24 +92,24 @@ async fn search_rejects_long_query() {
     );
 }
 
-#[tokio::test]
-async fn search_without_embedder_degrades_gracefully() {
+#[test]
+fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
-    let text = y.search("test query", 10, 0).await.unwrap();
+    let text = y.search("test query", 10, 0).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
     );
 }
 
-#[tokio::test]
-async fn search_auto_indexes_empty_db() {
+#[test]
+fn search_auto_indexes_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Button.tsx", "function Button() { return <div/>; }")],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
-    let text = y.search("button component", 10, 0).await.unwrap();
+    let text = y.search("button component", 10, 0).unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -125,17 +130,17 @@ async fn search_auto_indexes_empty_db() {
     );
 }
 
-#[tokio::test]
-async fn search_hybrid_flow_empty_db() {
+#[test]
+fn search_hybrid_flow_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[(
             "src/Button.tsx",
             "export function Button() { return <div/>; }",
         )],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
-    let text = y.search("button component", 10, 0).await.unwrap();
+    let text = y.search("button component", 10, 0).unwrap();
     assert!(
         text.contains("Button"),
         "expected Button in results: {text}"
@@ -152,15 +157,14 @@ async fn search_hybrid_flow_empty_db() {
     );
 }
 
-#[tokio::test]
-async fn search_incremental_embeds_chunked_only() {
+#[test]
+fn search_incremental_embeds_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Form.tsx", "export function Form() { return <form/>; }")],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path())
-        .await
         .unwrap();
 
     {
@@ -170,7 +174,7 @@ async fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y.search("form component", 10, 0).await.unwrap();
+    let text = y.search("form component", 10, 0).unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -183,8 +187,8 @@ async fn search_incremental_embeds_chunked_only() {
     }
 }
 
-#[tokio::test]
-async fn search_shows_coverage_on_no_results() {
+#[test]
+fn search_shows_coverage_on_no_results() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -214,8 +218,8 @@ async fn search_shows_coverage_on_no_results() {
     assert!(msg.contains("0/"), "expected 0 embedded: {msg}");
 }
 
-#[tokio::test]
-async fn search_degraded_empty_results_shows_note() {
+#[test]
+fn search_degraded_empty_results_shows_note() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -242,7 +246,7 @@ async fn search_degraded_empty_results_shows_note() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let text = y.search("zzzznonexistent", 10, 0).await.unwrap();
+    let text = y.search("zzzznonexistent", 10, 0).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -253,23 +257,22 @@ async fn search_degraded_empty_results_shows_note() {
     );
 }
 
-#[tokio::test]
-async fn search_degraded_with_results_shows_note() {
+#[test]
+fn search_degraded_with_results_shows_note() {
     let (y, dir) = test_yomu_with_files_and_embedder(
         &[(
             "src/Button.tsx",
             "export function Button() { return <div/>; }",
         )],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &crate::indexer::embedder::MockEmbedder,
+        &rurico::embed::MockEmbedder,
         false,
     )
-    .await
     .unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
@@ -280,7 +283,7 @@ async fn search_degraded_with_results_shows_note() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let result = y_failing.search("Button", 10, 0).await.unwrap();
+    let result = y_failing.search("Button", 10, 0).unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -630,15 +633,15 @@ fn format_results_grouped_sorts_by_score() {
     );
 }
 
-#[tokio::test]
-async fn index_works_without_api_key() {
+#[test]
+fn index_works_without_api_key() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
-    let text = y.index().await.unwrap();
+    let text = y.index().unwrap();
     assert!(text.contains("complete"), "expected success: {text}");
 }
 
-#[tokio::test]
-async fn index_chunks_without_embedding() {
+#[test]
+fn index_chunks_without_embedding() {
     let (y, _dir) = test_yomu_with_files(&[
         (
             "src/Header.tsx",
@@ -650,7 +653,7 @@ async fn index_chunks_without_embedding() {
         ),
     ]);
 
-    let text = y.index().await.unwrap();
+    let text = y.index().unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
     assert!(
         text.contains("Embedding coverage:"),
@@ -665,10 +668,10 @@ async fn index_chunks_without_embedding() {
     assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
 }
 
-#[tokio::test]
-async fn rebuild_re_parses_all_files() {
+#[test]
+fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    y.index().await.unwrap();
+    y.index().unwrap();
 
     let chunks_before = {
         let c = y.conn.lock().unwrap();
@@ -682,7 +685,7 @@ async fn rebuild_re_parses_all_files() {
     )
     .unwrap();
 
-    let text = y.rebuild().await.unwrap();
+    let text = y.rebuild().unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
 
     let chunks_after = {
@@ -695,10 +698,10 @@ async fn rebuild_re_parses_all_files() {
     );
 }
 
-#[tokio::test]
-async fn status_returns_empty_stats() {
+#[test]
+fn status_returns_empty_stats() {
     let (y, _dir) = test_yomu();
-    let text = y.status().await.unwrap();
+    let text = y.status().unwrap();
     assert!(text.contains("Files: 0"), "expected 0 files, got: {text}");
     assert!(text.contains("Chunks: 0"), "expected 0 chunks, got: {text}");
     assert!(
@@ -708,11 +711,10 @@ async fn status_returns_empty_stats() {
     assert!(text.contains("never"), "expected 'never', got: {text}");
 }
 
-#[tokio::test]
-async fn status_returns_counts_after_insert() {
+#[test]
+fn status_returns_counts_after_insert() {
     let (conn, _dir) = test_db();
-    let mut embedding = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
-    embedding[0] = 1.0;
+    let embedding = test_embedding();
     storage::insert_chunk(
         &conn,
         "src/A.tsx",
@@ -729,13 +731,13 @@ async fn status_returns_counts_after_insert() {
     .unwrap();
 
     let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
-    let text = y.status().await.unwrap();
+    let text = y.status().unwrap();
     assert!(text.contains("Files: 1"), "expected 1 file, got: {text}");
     assert!(text.contains("Chunks: 1"), "expected 1 chunk, got: {text}");
 }
 
-#[tokio::test]
-async fn status_shows_embedded_total() {
+#[test]
+fn status_shows_embedded_total() {
     let (conn, _dir) = test_db();
 
     storage::replace_file_chunks_only(
@@ -755,12 +757,12 @@ async fn status_shows_embedded_total() {
     .unwrap();
 
     let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
-    let text = y.status().await.unwrap();
+    let text = y.status().unwrap();
     assert!(text.contains("0/1"), "expected 0/1 in status: {text}");
 }
 
-#[tokio::test]
-async fn impact_lists_dependents() {
+#[test]
+fn impact_lists_dependents() {
     let (y, _dir) = test_yomu();
     {
         let conn = y.conn.lock().unwrap();
@@ -789,7 +791,7 @@ async fn impact_lists_dependents() {
         .unwrap();
     }
 
-    let text = y.impact("src/hooks/useAuth.ts", None, 3).await.unwrap();
+    let text = y.impact("src/hooks/useAuth.ts", None, 3).unwrap();
     assert!(text.contains("src/A.tsx"), "expected A.tsx: {text}");
     assert!(text.contains("src/C.tsx"), "expected C.tsx: {text}");
     assert!(
@@ -802,8 +804,8 @@ async fn impact_lists_dependents() {
     );
 }
 
-#[tokio::test]
-async fn impact_filters_by_symbol() {
+#[test]
+fn impact_filters_by_symbol() {
     let (y, _dir) = test_yomu();
     {
         let conn = y.conn.lock().unwrap();
@@ -834,7 +836,6 @@ async fn impact_filters_by_symbol() {
 
     let text = y
         .impact("src/hooks/useAuth.ts:useAuth", None, 3)
-        .await
         .unwrap();
     assert!(
         text.contains("Direct symbol references"),
@@ -846,56 +847,56 @@ async fn impact_filters_by_symbol() {
     );
 }
 
-#[tokio::test]
-async fn impact_rejects_empty_target() {
+#[test]
+fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("", None, 3).await.unwrap_err();
+    let err = y.impact("", None, 3).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {err}"
     );
 }
 
-#[tokio::test]
-async fn impact_errors_on_empty_index() {
+#[test]
+fn impact_errors_on_empty_index() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("src/A.tsx", None, 3).await.unwrap_err();
+    let err = y.impact("src/A.tsx", None, 3).unwrap_err();
     assert!(
         err.to_string().contains("index is empty"),
         "expected empty index error, got: {err}"
     );
 }
 
-#[tokio::test]
-async fn impact_distinguishes_missing_file() {
+#[test]
+fn impact_distinguishes_missing_file() {
     let (y, _dir) = test_yomu();
     {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let text = y.impact("src/nonexistent.tsx", None, 3).await.unwrap();
+    let text = y.impact("src/nonexistent.tsx", None, 3).unwrap();
     assert!(
         text.contains("not found in index"),
         "expected file-not-found message: {text}"
     );
 }
 
-#[tokio::test]
-async fn impact_rejects_path_traversal() {
+#[test]
+fn impact_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("../etc/passwd", None, 3).await.unwrap_err();
+    let err = y.impact("../etc/passwd", None, 3).unwrap_err();
     assert!(
         err.to_string().contains(".."),
         "expected path traversal error, got: {err}"
     );
 }
 
-#[tokio::test]
-async fn impact_symbol_flag_overrides_colon_syntax() {
+#[test]
+fn impact_symbol_flag_overrides_colon_syntax() {
     let (y, _dir) = test_yomu();
     {
         let conn = y.conn.lock().unwrap();
@@ -926,7 +927,6 @@ async fn impact_symbol_flag_overrides_colon_syntax() {
 
     let text = y
         .impact("src/hooks/useAuth.ts:useAuth", Some("AuthProvider"), 3)
-        .await
         .unwrap();
     assert!(
         text.contains("src/B.tsx"),
@@ -934,8 +934,8 @@ async fn impact_symbol_flag_overrides_colon_syntax() {
     );
 }
 
-#[tokio::test]
-async fn integration_index_then_impact() {
+#[test]
+fn integration_index_then_impact() {
     let (y, _dir) = test_yomu_with_files(&[
         (
             "src/A.tsx",
@@ -951,13 +951,12 @@ async fn integration_index_then_impact() {
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &crate::indexer::embedder::MockEmbedder,
+        &rurico::embed::MockEmbedder,
         false,
     )
-    .await
     .unwrap();
 
-    let text = y.impact("src/C.tsx", None, 3).await.unwrap();
+    let text = y.impact("src/C.tsx", None, 3).unwrap();
     assert!(
         text.contains("src/B.tsx"),
         "expected B.tsx as direct dependent: {text}"
@@ -1078,15 +1077,14 @@ fn determine_index_state_variants() {
     ));
 }
 
-#[tokio::test]
-async fn ensure_indexed_partially_embedded_triggers_embed() {
+#[test]
+fn ensure_indexed_partially_embedded_triggers_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/App.tsx", "export function App() { return <div/>; }")],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path())
-        .await
         .unwrap();
 
     let stats_before = {
@@ -1099,7 +1097,7 @@ async fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y.search("App component", 10, 0).await.unwrap();
+    let result = y.search("App component", 10, 0).unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1115,23 +1113,22 @@ async fn ensure_indexed_partially_embedded_triggers_embed() {
     );
 }
 
-#[tokio::test]
-async fn ensure_indexed_fully_embedded_skips_embed() {
+#[test]
+fn ensure_indexed_fully_embedded_skips_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[(
             "src/Button.tsx",
             "export function Button() { return <button/>; }",
         )],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &crate::indexer::embedder::MockEmbedder,
+        &rurico::embed::MockEmbedder,
         false,
     )
-    .await
     .unwrap();
 
     let stats = {
@@ -1143,24 +1140,23 @@ async fn ensure_indexed_fully_embedded_skips_embed() {
         "should be fully embedded"
     );
 
-    let result = y.search("Button", 10, 0).await.unwrap();
+    let result = y.search("Button", 10, 0).unwrap();
     assert!(result.contains("Button"), "should find Button: {result}");
 }
 
-#[tokio::test]
-async fn ensure_indexed_fully_embedded_with_failing_embedder() {
+#[test]
+fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let (y, dir) = test_yomu_with_files_and_embedder(
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
-        Arc::new(crate::indexer::embedder::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &crate::indexer::embedder::MockEmbedder,
+        &rurico::embed::MockEmbedder,
         false,
     )
-    .await
     .unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
@@ -1171,7 +1167,7 @@ async fn ensure_indexed_fully_embedded_with_failing_embedder() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let result = y_failing.search("Card", 10, 0).await.unwrap();
+    let result = y_failing.search("Card", 10, 0).unwrap();
     assert!(
         result.contains("Card"),
         "should find Card with existing embeddings: {result}"

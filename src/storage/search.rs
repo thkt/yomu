@@ -6,6 +6,17 @@ use super::{
     Chunk, ChunkType, MatchSource, SearchResult, StorageError, f32_as_bytes, sql_placeholders,
 };
 
+fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
+    Ok(Chunk {
+        file_path: row.get(offset)?,
+        chunk_type: ChunkType::from_db(row.get::<_, String>(offset + 1)?.as_ref()),
+        name: row.get(offset + 2)?,
+        content: row.get(offset + 3)?,
+        start_line: row.get(offset + 4)?,
+        end_line: row.get(offset + 5)?,
+    })
+}
+
 pub fn search_similar(
     conn: &Connection,
     query_embedding: &[f32],
@@ -30,14 +41,7 @@ pub fn search_similar(
     let rows = stmt.query_map(rusqlite::params![query_bytes, k, limit, offset], |row| {
         let distance: f32 = row.get(6)?;
         Ok(SearchResult {
-            chunk: Chunk {
-                file_path: row.get(0)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(1)?.as_ref()),
-                name: row.get(2)?,
-                content: row.get(3)?,
-                start_line: row.get(4)?,
-                end_line: row.get(5)?,
-            },
+            chunk: chunk_from_row(row, 0)?,
             chunk_id: Some(row.get(7)?),
             distance,
             match_source: MatchSource::Semantic,
@@ -88,14 +92,7 @@ pub fn search_by_name(
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(SearchResult {
-            chunk: Chunk {
-                file_path: row.get(1)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                name: row.get(3)?,
-                content: row.get(4)?,
-                start_line: row.get(5)?,
-                end_line: row.get(6)?,
-            },
+            chunk: chunk_from_row(row, 1)?,
             chunk_id: Some(row.get(0)?),
             distance: f32::INFINITY,
             match_source: MatchSource::NameMatch,
@@ -118,11 +115,15 @@ pub fn search_by_content(
         return Ok(Vec::new());
     }
 
-    let fts_query: String = keywords
+    let parts: Vec<String> = keywords
         .iter()
-        .map(|k| format!("\"{}\"", k.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" OR ");
+        .map(|k| rurico::storage::fts_expand_short_terms(conn, k))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fts_query = parts.join(" AND ");
 
     let mut sql = String::from(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,
@@ -145,14 +146,7 @@ pub fn search_by_content(
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(SearchResult {
-            chunk: Chunk {
-                file_path: row.get(1)?,
-                chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                name: row.get(3)?,
-                content: row.get(4)?,
-                start_line: row.get(5)?,
-                end_line: row.get(6)?,
-            },
+            chunk: chunk_from_row(row, 1)?,
             chunk_id: Some(row.get(0)?),
             distance: f32::INFINITY,
             match_source: MatchSource::ContentMatch,
@@ -166,10 +160,11 @@ pub fn search_by_content(
 pub fn get_keyword_doc_frequencies(
     conn: &Connection,
     keywords: &[&str],
+    total_chunks: u32,
 ) -> Result<Vec<u32>, StorageError> {
     let mut dfs = Vec::with_capacity(keywords.len());
     for kw in keywords {
-        let fts_term = format!("\"{}\"", kw.replace('"', "\"\""));
+        let fts_term = rurico::storage::fts_quote(kw);
         let count: u32 = match conn.query_row(
             "SELECT COUNT(*) FROM fts_chunks WHERE fts_chunks MATCH ?1",
             [&fts_term],
@@ -177,8 +172,8 @@ pub fn get_keyword_doc_frequencies(
         ) {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(keyword = %kw, error = %e, "FTS5 doc freq query failed, treating as 0");
-                0
+                tracing::debug!(keyword = %kw, error = %e, "FTS5 doc freq query failed, treating as neutral");
+                total_chunks
             }
         };
         dfs.push(count);
