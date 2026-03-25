@@ -896,6 +896,20 @@ fn impact_rejects_path_traversal() {
 }
 
 #[test]
+fn impact_rejects_absolute_path() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+    }
+    let err = y.impact("/etc/passwd", None, 3).unwrap_err();
+    assert!(
+        err.to_string().contains("relative"),
+        "expected rejection of absolute path, got: {err}"
+    );
+}
+
+#[test]
 fn impact_symbol_flag_overrides_colon_syntax() {
     let (y, _dir) = test_yomu();
     {

@@ -250,17 +250,7 @@ pub fn replace_file_chunks(
             embeddings: embeddings.len(),
         });
     }
-
-    let tx = conn.unchecked_transaction()?;
-    delete_file_chunks_in(&tx, file_path)?;
-
-    for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-        insert_chunk(&tx, file_path, chunk, file_hash, embedding)?;
-    }
-
-    write_file_metadata(&tx, file_path, imports_text, refs)?;
-    tx.commit()?;
-    Ok(())
+    replace_file_chunks_inner(conn, file_path, chunks, Some(embeddings), file_hash, imports_text, refs)
 }
 
 pub fn replace_file_chunks_only(
@@ -271,11 +261,32 @@ pub fn replace_file_chunks_only(
     imports_text: &str,
     refs: &[Reference],
 ) -> Result<(), StorageError> {
+    replace_file_chunks_inner(conn, file_path, chunks, None, file_hash, imports_text, refs)
+}
+
+fn replace_file_chunks_inner(
+    conn: &Connection,
+    file_path: &str,
+    chunks: &[NewChunk],
+    embeddings: Option<&[Vec<f32>]>,
+    file_hash: &str,
+    imports_text: &str,
+    refs: &[Reference],
+) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
     delete_file_chunks_in(&tx, file_path)?;
 
-    for chunk in chunks {
-        insert_chunk_row(&tx, file_path, chunk, file_hash)?;
+    match embeddings {
+        Some(embs) => {
+            for (chunk, embedding) in chunks.iter().zip(embs.iter()) {
+                insert_chunk(&tx, file_path, chunk, file_hash, embedding)?;
+            }
+        }
+        None => {
+            for chunk in chunks {
+                insert_chunk_row(&tx, file_path, chunk, file_hash)?;
+            }
+        }
     }
 
     write_file_metadata(&tx, file_path, imports_text, refs)?;
@@ -339,7 +350,7 @@ pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageE
     paths.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
-/// No transaction -- caller manages.
+/// Must be called within a transaction.
 pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), StorageError> {
     conn.execute(
         "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE file_path = ?1)",

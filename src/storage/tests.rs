@@ -2071,3 +2071,66 @@ fn replace_file_chunks_rejects_length_mismatch() {
         "error should mention chunk/embedding counts, got: {err}"
     );
 }
+
+#[test]
+fn insert_chunk_rejects_wrong_embedding_dims() {
+    let (conn, _dir) = test_db();
+    let wrong_dims = vec![0.0_f32; 10]; // 10 instead of 768
+
+    let result = insert_chunk(
+        &conn,
+        "src/test.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: Some("A"),
+            content: "fn a() {}",
+            start_line: 1,
+            end_line: 1,
+        },
+        "h1",
+        &wrong_dims,
+    );
+    assert!(result.is_err(), "should reject wrong embedding dimensions");
+    match result.unwrap_err() {
+        StorageError::DimensionMismatch { expected, actual } => {
+            assert_eq!(expected, EMBEDDING_DIMS as usize);
+            assert_eq!(actual, 10);
+        }
+        e => panic!("expected DimensionMismatch, got: {e}"),
+    }
+}
+
+#[test]
+fn search_by_name_escapes_like_wildcards() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("use_Auth"),
+            content: "function use_Auth() {}",
+            start_line: 1,
+            end_line: 1,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useXAuth"),
+            content: "function useXAuth() {}",
+            start_line: 2,
+            end_line: 2,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    // Searching for "use_auth" should NOT match "useXAuth" via _ wildcard
+    let results = search_by_name(&conn, &["use_auth"], None, &HashSet::new(), 10).unwrap();
+    let names: Vec<_> = results.iter().filter_map(|r| r.chunk.name.as_deref()).collect();
+    assert!(
+        names.contains(&"use_Auth"),
+        "should find use_Auth, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"useXAuth"),
+        "_ should be escaped, not match useXAuth, got: {names:?}"
+    );
+}

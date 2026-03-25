@@ -12,13 +12,16 @@ pub struct PathAlias {
 
 pub struct Resolver {
     root: PathBuf,
+    canonical_root: Option<PathBuf>,
     aliases: Vec<PathAlias>,
 }
 
 impl Resolver {
     pub fn new(root: &Path) -> Self {
+        let canonical_root = root.canonicalize().ok();
         Self {
             root: root.to_path_buf(),
+            canonical_root,
             aliases: load_aliases(root),
         }
     }
@@ -88,14 +91,14 @@ impl Resolver {
                 return None;
             }
         };
-        let root = match self.root.canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(path = %self.root.display(), error = %e, "canonicalize failed for project root");
+        let root = match self.canonical_root.as_deref() {
+            Some(p) => p,
+            None => {
+                tracing::warn!(path = %self.root.display(), "canonical root unavailable");
                 return None;
             }
         };
-        match abs.strip_prefix(&root) {
+        match abs.strip_prefix(root) {
             Ok(p) => Some(p.to_string_lossy().to_string()),
             Err(_) => {
                 tracing::warn!(path = %abs.display(), root = %root.display(), "Resolved path escapes project root");

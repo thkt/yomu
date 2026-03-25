@@ -1,4 +1,5 @@
 pub mod chunker;
+mod embed;
 pub mod walker;
 
 use sha2::{Digest, Sha256};
@@ -10,6 +11,11 @@ use rurico::embed::{Embed, EmbedError};
 use crate::resolver::Resolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
+
+pub use embed::{run_incremental_embed, EmbedResult};
+use embed::embed_and_store;
+#[cfg(test)]
+use embed::{enrich_for_embedding, order_files_for_embedding, MAX_CONSECUTIVE_EMBED_ERRORS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
@@ -99,11 +105,9 @@ fn read_source(file_path: &Path) -> Result<String, FileAction> {
     })
 }
 
-/// Does NOT check the DB (caller handles reindex check with appropriate lock strategy).
-fn prepare_file(root: &Path, file_path: &Path) -> Result<PendingFile, FileAction> {
+fn prepare_file(rel_path: String, file_path: &Path) -> Result<PendingFile, FileAction> {
     let source = read_source(file_path)?;
     let hash = file_hash(&source);
-    let rel_path = to_rel_path(root, file_path);
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let file_chunks = chunker::chunk_file(&source, ext);
@@ -124,11 +128,11 @@ fn prepare_file(root: &Path, file_path: &Path) -> Result<PendingFile, FileAction
 
 fn process_file(
     conn: &Db,
-    root: &Path,
+    rel_path: String,
     file_path: &Path,
     force: bool,
 ) -> Result<FileAction, IndexError> {
-    let pf = match prepare_file(root, file_path) {
+    let pf = match prepare_file(rel_path, file_path) {
         Ok(pf) => pf,
         Err(action) => return Ok(action),
     };
@@ -146,14 +150,16 @@ fn collect_pending_files(
     root: &Path,
     files: &[std::path::PathBuf],
     force: bool,
-) -> Result<(Vec<PendingFile>, u32, u32), IndexError> {
+) -> Result<(Vec<PendingFile>, u32, u32, std::collections::HashSet<String>), IndexError> {
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
     let mut files_errored = 0u32;
+    let mut all_rel_paths = std::collections::HashSet::with_capacity(files.len());
 
     for file_path in files {
-        // File I/O + chunking outside the lock (via prepare_file)
-        let pf = match prepare_file(root, file_path) {
+        let rel_path = to_rel_path(root, file_path);
+        all_rel_paths.insert(rel_path.clone());
+        let pf = match prepare_file(rel_path, file_path) {
             Ok(pf) => pf,
             Err(FileAction::Skip) => {
                 files_skipped += 1;
@@ -165,7 +171,6 @@ fn collect_pending_files(
             }
         };
 
-        // DB check under lock (minimal hold time)
         if !force {
             let conn_guard = conn.lock().unwrap();
             if !storage::should_reindex(&conn_guard, &pf.rel_path, &pf.hash)? {
@@ -178,7 +183,7 @@ fn collect_pending_files(
         pending.push(pf);
     }
 
-    Ok((pending, files_skipped, files_errored))
+    Ok((pending, files_skipped, files_errored, all_rel_paths))
 }
 
 fn remove_orphans(
@@ -249,134 +254,6 @@ fn build_references(
         .collect()
 }
 
-const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
-
-fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, content: &str) -> String {
-    let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
-    if !imports.is_empty() {
-        for line in imports.lines() {
-            result.push_str("// ");
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-    result.push_str(content);
-    result
-}
-
-enum EmbedFailure {
-    Abort(EmbedError),
-    Skip,
-}
-
-fn classify_embed_error(
-    e: EmbedError,
-    consecutive_errors: &mut u32,
-    file_path: &str,
-) -> EmbedFailure {
-    *consecutive_errors += 1;
-    tracing::warn!(
-        file = %file_path, error = %e, consecutive = *consecutive_errors,
-        "Embedding failed, skipping file",
-    );
-    if *consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-        tracing::error!(
-            consecutive_errors = *consecutive_errors,
-            "Too many consecutive embedding failures, aborting"
-        );
-        EmbedFailure::Abort(e)
-    } else {
-        EmbedFailure::Skip
-    }
-}
-
-fn store_file_data(
-    conn: &Db,
-    pf: PendingFile,
-    embeddings: Vec<Vec<f32>>,
-    refs: Vec<Reference>,
-) -> Result<(), StorageError> {
-    let new_chunks = pf.to_new_chunks();
-    storage::replace_file_chunks(
-        conn,
-        &pf.rel_path,
-        &new_chunks,
-        &embeddings,
-        &pf.hash,
-        &pf.imports_text,
-        &refs,
-    )
-}
-
-fn embed_and_store(
-    conn: &Arc<Mutex<Db>>,
-    embedder: &(impl Embed + ?Sized),
-    pending: Vec<PendingFile>,
-    resolver: &Resolver,
-) -> Result<(u32, u32, u32), IndexError> {
-    let pending_total = pending.len();
-    let mut files_processed = 0u32;
-    let mut chunks_created = 0u32;
-    let mut files_errored = 0u32;
-    let mut consecutive_errors = 0u32;
-
-    for pf in pending {
-        let texts: Vec<String> = pf
-            .raw_chunks
-            .iter()
-            .map(|c| {
-                enrich_for_embedding(
-                    &pf.rel_path,
-                    c.chunk_type.as_str(),
-                    &pf.imports_text,
-                    &c.content,
-                )
-            })
-            .collect();
-
-        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let embeddings = match embedder.embed_documents_batch(&texts_ref) {
-            Ok(embs) => {
-                consecutive_errors = 0;
-                embs
-            }
-            Err(e) => match classify_embed_error(e, &mut consecutive_errors, &pf.rel_path) {
-                EmbedFailure::Abort(e) => {
-                    return Err(IndexError::Embed(e));
-                }
-                EmbedFailure::Skip => {
-                    files_errored += 1;
-                    continue;
-                }
-            },
-        };
-
-        let n = pf.raw_chunks.len() as u32;
-        let refs = build_references(&pf.parsed_imports, &pf.rel_path, resolver);
-        tracing::debug!(file = %pf.rel_path, chunks = n, "Indexing file");
-
-        {
-            let conn = conn.lock().unwrap();
-            store_file_data(&conn, pf, embeddings, refs)?;
-        }
-
-        chunks_created += n;
-        files_processed += 1;
-        if files_processed.is_multiple_of(10) {
-            tracing::info!(files_processed, total = pending_total, "Indexing progress");
-        }
-    }
-
-    Ok((files_processed, chunks_created, files_errored))
-}
-
-#[derive(Debug)]
-pub struct EmbedResult {
-    pub chunks_embedded: u32,
-    pub files_completed: u32,
-    pub budget_exhausted: bool,
-}
-
 pub fn run_chunk_only_index(
     conn: Arc<Mutex<Db>>,
     root: &Path,
@@ -403,22 +280,23 @@ fn run_chunk_only_index_inner(
         "Starting chunk-only indexing"
     );
 
-    let current_rel_paths: std::collections::HashSet<String> =
-        files.iter().map(|f| to_rel_path(root, f)).collect();
-
     let resolver = Resolver::new(root);
 
-    let (files_processed, chunks_created, files_skipped, files_errored) = {
+    let (files_processed, chunks_created, files_skipped, files_errored, current_rel_paths) = {
         let mut files_processed = 0u32;
         let mut chunks_created = 0u32;
         let mut files_skipped = 0u32;
         let mut files_errored = 0u32;
+        let mut current_rel_paths =
+            std::collections::HashSet::with_capacity(files.len());
 
         let conn_guard = conn.lock().unwrap();
         storage::fts_set_automerge(&conn_guard, false)?;
 
         for file_path in &files {
-            match process_file(&conn_guard, root, file_path, force)? {
+            let rel_path = to_rel_path(root, file_path);
+            current_rel_paths.insert(rel_path.clone());
+            match process_file(&conn_guard, rel_path, file_path, force)? {
                 FileAction::Process(pf) => {
                     let n = pf.raw_chunks.len() as u32;
                     let new_chunks = pf.to_new_chunks();
@@ -444,7 +322,7 @@ fn run_chunk_only_index_inner(
         }
         storage::fts_set_automerge(&conn_guard, true)?;
 
-        (files_processed, chunks_created, files_skipped, files_errored)
+        (files_processed, chunks_created, files_skipped, files_errored, current_rel_paths)
     };
 
     remove_orphans(&conn, current_rel_paths)?;
@@ -465,146 +343,6 @@ fn run_chunk_only_index_inner(
     })
 }
 
-fn order_files_for_embedding(
-    conn: &Db,
-    type_hints: Option<&[storage::ChunkType]>,
-) -> Result<Vec<String>, StorageError> {
-    let mut files = storage::get_files_by_import_count(conn)?;
-
-    if let Some(hints) = type_hints
-        && !hints.is_empty()
-    {
-        let hint_files = storage::get_files_with_chunk_types(conn, &files, hints)?;
-        if !hint_files.is_empty() {
-            let mut prioritized: Vec<String> = Vec::new();
-            let mut rest: Vec<String> = Vec::new();
-            for f in files {
-                if hint_files.contains(&f) {
-                    prioritized.push(f);
-                } else {
-                    rest.push(f);
-                }
-            }
-            prioritized.extend(rest);
-            files = prioritized;
-        }
-    }
-
-    Ok(files)
-}
-
-pub fn run_incremental_embed(
-    conn: Arc<Mutex<Db>>,
-    embedder: &(impl Embed + ?Sized),
-    max_chunks: u32,
-    type_hints: Option<&[storage::ChunkType]>,
-) -> Result<EmbedResult, IndexError> {
-    let ordered_files = {
-        let conn_guard = conn.lock().unwrap();
-        order_files_for_embedding(&conn_guard, type_hints)?
-    };
-
-    if ordered_files.is_empty() {
-        return Ok(EmbedResult {
-            chunks_embedded: 0,
-            files_completed: 0,
-            budget_exhausted: false,
-        });
-    }
-
-    let mut chunks_embedded = 0u32;
-    let mut files_completed = 0u32;
-    let mut budget_exhausted = false;
-    let mut consecutive_errors = 0u32;
-
-    for file_path in &ordered_files {
-        let (chunk_ids, texts) = {
-            let conn_guard = conn.lock().unwrap();
-            let triples = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
-            let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
-            let ids: Vec<i64> = triples.iter().map(|(id, _, _)| *id).collect();
-            let texts: Vec<String> = triples
-                .into_iter()
-                .map(|(_, content, chunk_type)| {
-                    enrich_for_embedding(file_path, &chunk_type, &imports, &content)
-                })
-                .collect();
-            (ids, texts)
-        };
-
-        if texts.is_empty() {
-            continue;
-        }
-
-        if chunks_embedded.saturating_add(texts.len() as u32) > max_chunks && chunks_embedded > 0 {
-            budget_exhausted = true;
-            break;
-        }
-
-        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let embeddings = match embedder.embed_documents_batch(&texts_ref) {
-            Ok(embs) => {
-                consecutive_errors = 0;
-                embs
-            }
-            Err(e) => match classify_embed_error(e, &mut consecutive_errors, file_path) {
-                EmbedFailure::Abort(e) => return Err(IndexError::Embed(e)),
-                EmbedFailure::Skip => continue,
-            },
-        };
-
-        if embeddings.len() != chunk_ids.len() {
-            consecutive_errors += 1;
-            tracing::warn!(
-                file = %file_path,
-                expected = chunk_ids.len(),
-                actual = embeddings.len(),
-                consecutive = consecutive_errors,
-                "Embedding count mismatch, skipping file"
-            );
-            if consecutive_errors >= MAX_CONSECUTIVE_EMBED_ERRORS {
-                tracing::error!(
-                    consecutive_errors,
-                    "Too many consecutive failures in incremental embed, aborting"
-                );
-                return Err(IndexError::Internal(format!(
-                    "Aborting incremental embed after {consecutive_errors} consecutive failures"
-                )));
-            }
-            continue;
-        }
-
-        let pairs: Vec<(i64, Vec<f32>)> = chunk_ids.into_iter().zip(embeddings).collect();
-
-        let n = pairs.len() as u32;
-        {
-            let conn_guard = conn.lock().unwrap();
-            storage::add_embeddings(&conn_guard, &pairs)?;
-        }
-
-        chunks_embedded += n;
-        files_completed += 1;
-
-        if chunks_embedded >= max_chunks {
-            budget_exhausted = true;
-            break;
-        }
-    }
-
-    tracing::info!(
-        chunks_embedded,
-        files_completed,
-        budget_exhausted,
-        "Incremental embedding complete"
-    );
-
-    Ok(EmbedResult {
-        chunks_embedded,
-        files_completed,
-        budget_exhausted,
-    })
-}
-
 /// Per-file embed+store ensures partial progress survives embedding failures.
 pub fn run_index(
     conn: Arc<Mutex<Db>>,
@@ -621,10 +359,7 @@ pub fn run_index(
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
 
-    let current_rel_paths: std::collections::HashSet<String> =
-        files.iter().map(|f| to_rel_path(root, f)).collect();
-
-    let (pending, files_skipped, mut files_errored) =
+    let (pending, files_skipped, mut files_errored, current_rel_paths) =
         collect_pending_files(&conn, root, &files, force)?;
 
     remove_orphans(&conn, current_rel_paths)?;
