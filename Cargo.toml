@@ -14,6 +14,7 @@ test-support = ["rurico/test-support"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
+openssl = { version = "0.10", features = ["vendored"] }
 rurico = { git = "https://github.com/thkt/rurico", rev = "56320e3" }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
