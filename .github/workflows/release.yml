@@ -26,9 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Configure private repo access
-        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # stable
         with:
@@ -52,7 +49,13 @@ jobs:
         run: |
           cp "target/$TARGET/release/yomu" yomu
           chmod +x yomu
-          tar czf "$NAME.tar.gz" yomu
+          METALLIB=$(find "target/$TARGET/release/build/mlx-sys-"*/out/build/lib/mlx.metallib 2>/dev/null | head -1)
+          if [ -n "$METALLIB" ]; then
+            cp "$METALLIB" mlx.metallib
+            tar czf "$NAME.tar.gz" yomu mlx.metallib
+          else
+            tar czf "$NAME.tar.gz" yomu
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -107,45 +110,49 @@ jobs:
           repository: thkt/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-      - name: Download artifacts for checksums
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: artifacts
-
-      - name: Validate and update Formula
+      - name: Update Formula
         env:
           VERSION: ${{ needs.release.outputs.version }}
           TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          # Validate version format again
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "::error::Invalid version format: $VERSION"
             exit 1
           fi
 
-          # Validate TAG matches VERSION
-          if [[ "$TAG" != "v$VERSION" ]]; then
-            echo "::error::TAG ($TAG) does not match VERSION (v$VERSION)"
-            exit 1
-          fi
+          # Download source tarball and compute SHA256
+          curl -sL "https://github.com/thkt/yomu/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
 
-          # Calculate checksums
-          SHA_AARCH64_DARWIN=$(sha256sum artifacts/yomu-aarch64-apple-darwin/yomu-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
-          SHA_X86_64_DARWIN=$(sha256sum artifacts/yomu-x86_64-apple-darwin/yomu-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
-          SHA_AARCH64_LINUX=$(sha256sum artifacts/yomu-aarch64-unknown-linux-gnu/yomu-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-          SHA_X86_64_LINUX=$(sha256sum artifacts/yomu-x86_64-unknown-linux-gnu/yomu-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-
-          # Ensure Formula directory exists
           mkdir -p Formula
+          cat > Formula/yomu.rb << FORMULA
+          class Yomu < Formula
+            desc "Frontend-specialized semantic code search CLI"
+            homepage "https://github.com/thkt/yomu"
+            url "https://github.com/thkt/yomu/archive/refs/tags/${TAG}.tar.gz"
+            sha256 "${SHA256}"
+            license "MIT"
 
-          # Update Formula using sed on existing template
-          sed -e "s/__VERSION__/$VERSION/g" \
-              -e "s/__TAG__/$TAG/g" \
-              -e "s/__SHA_AARCH64_DARWIN__/$SHA_AARCH64_DARWIN/g" \
-              -e "s/__SHA_X86_64_DARWIN__/$SHA_X86_64_DARWIN/g" \
-              -e "s/__SHA_AARCH64_LINUX__/$SHA_AARCH64_LINUX/g" \
-              -e "s/__SHA_X86_64_LINUX__/$SHA_X86_64_LINUX/g" \
-              Formula/yomu.rb.template > Formula/yomu.rb
+            depends_on "cmake" => :build
+            depends_on "rust" => :build
+            depends_on :macos
+
+            def install
+              system "cargo", "build", "--release"
+              bin.install "target/release/yomu"
+              metallib = Dir.glob("target/release/build/mlx-sys-*/out/build/lib/mlx.metallib").first
+              bin.install metallib if metallib
+            end
+
+            test do
+              assert_predicate bin/"yomu", :executable?
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/yomu.rb
 
       - name: Commit and push
         env:
