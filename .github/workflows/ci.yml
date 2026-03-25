@@ -33,13 +33,13 @@ jobs:
         uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
 
       - name: Check
-        run: cargo check
+        run: cargo check --no-default-features
 
       - name: Test
-        run: cargo test
+        run: cargo test --no-default-features
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --no-default-features -- -D warnings
 
       - name: Format check
         run: cargo fmt -- --check
