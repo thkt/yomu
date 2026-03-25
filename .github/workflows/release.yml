@@ -110,39 +110,41 @@ jobs:
           repository: thkt/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
+      - name: Download artifacts for checksums
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+
       - name: Update Formula
         env:
           VERSION: ${{ needs.release.outputs.version }}
           TAG: ${{ github.ref_name }}
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "::error::Invalid version format: $VERSION"
             exit 1
           fi
 
-          # Download source tarball and compute SHA256
-          curl -sL "https://github.com/thkt/yomu/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
-          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          SHA_AARCH64_DARWIN=$(sha256sum artifacts/yomu-aarch64-apple-darwin/yomu-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
 
           mkdir -p Formula
           cat > Formula/yomu.rb << FORMULA
           class Yomu < Formula
             desc "Frontend-specialized semantic code search CLI"
             homepage "https://github.com/thkt/yomu"
-            url "https://github.com/thkt/yomu/archive/refs/tags/${TAG}.tar.gz"
-            sha256 "${SHA256}"
+            version "${VERSION}"
             license "MIT"
 
-            depends_on "cmake" => :build
-            depends_on "rust" => :build
-            depends_on :macos
+            on_macos do
+              on_arm do
+                url "https://github.com/thkt/yomu/releases/download/${TAG}/yomu-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_AARCH64_DARWIN}"
+              end
+            end
 
             def install
-              system "cargo", "build", "--release"
-              bin.install "target/release/yomu"
-              metallib = Dir.glob("target/release/build/mlx-sys-*/out/build/lib/mlx.metallib").first
-              bin.install metallib if metallib
+              bin.install "yomu"
+              bin.install "mlx.metallib" if File.exist?("mlx.metallib")
             end
 
             test do
