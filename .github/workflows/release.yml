@@ -20,7 +20,7 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             name: yomu-x86_64-apple-darwin
-            cargo_flags: ""
+            cargo_flags: "--no-default-features"
           - target: aarch64-apple-darwin
             os: macos-latest
             name: yomu-aarch64-apple-darwin
