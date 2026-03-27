@@ -1200,10 +1200,8 @@ fn with_root_creates_db_and_returns_yomu() {
 
 #[test]
 fn search_without_embedder_skips_embed_attempt() {
-    let (y, _dir) = test_yomu_with_files(&[(
-        "src/Card.tsx",
-        "export function Card() { return <div/>; }",
-    )]);
+    let (y, _dir) =
+        test_yomu_with_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 

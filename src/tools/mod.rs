@@ -468,10 +468,7 @@ impl Yomu {
 
     fn embedding_available(&self) -> bool {
         self.get_embedder();
-        self.embedder
-            .get()
-            .and_then(|o| o.as_ref())
-            .is_some()
+        self.embedder.get().and_then(|o| o.as_ref()).is_some()
     }
 
     fn fetch_enrichment_context(
