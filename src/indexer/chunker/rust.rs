@@ -23,9 +23,7 @@ pub(super) fn chunk_rust(source: &str) -> FileChunks {
         match node.kind() {
             "use_declaration" => {
                 imports.push(source[node.byte_range()].to_string());
-                if let Some(pi) = parse_rust_use(&node, source) {
-                    parsed_imports.push(pi);
-                }
+                parsed_imports.extend(parse_rust_use(&node, source));
                 pending_comments.clear();
             }
             "line_comment" | "block_comment" => {
@@ -67,14 +65,16 @@ fn classify_rust_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk
     Some(make_chunk(source, node, chunk_type, name))
 }
 
-fn parse_rust_use(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
-    let argument = node.child_by_field_name("argument")?;
+fn parse_rust_use(node: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {
+    let Some(argument) = node.child_by_field_name("argument") else {
+        return vec![];
+    };
     match argument.kind() {
-        "scoped_identifier" => parse_scoped_identifier(&argument, source),
+        "scoped_identifier" => parse_scoped_identifier(&argument, source).into_iter().collect(),
         "scoped_use_list" => parse_scoped_use_list(&argument, source),
-        "use_wildcard" => parse_use_wildcard(&argument, source),
-        "use_as_clause" => parse_use_as_clause(&argument, source),
-        _ => None,
+        "use_wildcard" => parse_use_wildcard(&argument, source).into_iter().collect(),
+        "use_as_clause" => parse_use_as_clause(&argument, source).into_iter().collect(),
+        _ => vec![],
     }
 }
 
@@ -95,18 +95,18 @@ fn parse_scoped_identifier(node: &tree_sitter::Node, source: &str) -> Option<Par
     })
 }
 
-fn parse_scoped_use_list(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
-    let path_node = node.child_by_field_name("path")?;
-    let list_node = node.child_by_field_name("list")?;
-    let path = &source[path_node.byte_range()];
-    if !is_internal_path(path) {
-        return None;
+fn parse_scoped_use_list(node: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {
+    let (Some(path_node), Some(list_node)) = (
+        node.child_by_field_name("path"),
+        node.child_by_field_name("list"),
+    ) else {
+        return vec![];
+    };
+    let base_path = &source[path_node.byte_range()];
+    if !is_internal_path(base_path) {
+        return vec![];
     }
-    let specifiers = collect_use_list_specifiers(&list_node, source);
-    Some(ParsedImport {
-        source: path.to_string(),
-        specifiers,
-    })
+    collect_use_list_imports(base_path, &list_node, source)
 }
 
 fn parse_use_wildcard(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
@@ -149,37 +149,50 @@ fn parse_use_as_clause(node: &tree_sitter::Node, source: &str) -> Option<ParsedI
     }
 }
 
-fn collect_use_list_specifiers(
+fn collect_use_list_imports(
+    base_path: &str,
     list: &tree_sitter::Node,
     source: &str,
-) -> Vec<ImportSpecifier> {
-    let mut specifiers = Vec::new();
+) -> Vec<ParsedImport> {
+    let mut base_specifiers = Vec::new();
+    let mut extra_imports = Vec::new();
     let mut cursor = list.walk();
     for child in list.children(&mut cursor) {
         match child.kind() {
             "identifier" => {
-                specifiers.push(ImportSpecifier {
+                base_specifiers.push(ImportSpecifier {
                     name: source[child.byte_range()].to_string(),
                     alias: None,
                     kind: ImportKind::Named,
                 });
             }
             "scoped_identifier" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    specifiers.push(ImportSpecifier {
-                        name: source[name_node.byte_range()].to_string(),
-                        alias: None,
-                        kind: ImportKind::Named,
+                if let (Some(path_node), Some(name_node)) = (
+                    child.child_by_field_name("path"),
+                    child.child_by_field_name("name"),
+                ) {
+                    let nested_path = format!("{}::{}", base_path, &source[path_node.byte_range()]);
+                    extra_imports.push(ParsedImport {
+                        source: nested_path,
+                        specifiers: vec![ImportSpecifier {
+                            name: source[name_node.byte_range()].to_string(),
+                            alias: None,
+                            kind: ImportKind::Named,
+                        }],
                     });
                 }
             }
             "scoped_use_list" => {
-                if let Some(inner_list) = child.child_by_field_name("list") {
-                    specifiers.extend(collect_use_list_specifiers(&inner_list, source));
+                if let (Some(inner_path), Some(inner_list)) = (
+                    child.child_by_field_name("path"),
+                    child.child_by_field_name("list"),
+                ) {
+                    let nested_path = format!("{}::{}", base_path, &source[inner_path.byte_range()]);
+                    extra_imports.extend(collect_use_list_imports(&nested_path, &inner_list, source));
                 }
             }
             "use_wildcard" => {
-                specifiers.push(ImportSpecifier {
+                base_specifiers.push(ImportSpecifier {
                     name: "*".to_string(),
                     alias: None,
                     kind: ImportKind::Namespace,
@@ -188,7 +201,13 @@ fn collect_use_list_specifiers(
             _ => {}
         }
     }
-    specifiers
+    if !base_specifiers.is_empty() {
+        extra_imports.insert(0, ParsedImport {
+            source: base_path.to_string(),
+            specifiers: base_specifiers,
+        });
+    }
+    extra_imports
 }
 
 fn is_internal_path(path: &str) -> bool {

@@ -801,15 +801,13 @@ fn chunk_rust_stores_all_use_as_import_text() {
 fn chunk_rust_parses_nested_grouped_use() {
     let source = "use crate::foo::{bar::Baz, Quux};\nfn run() {}";
     let result = chunk_file(source, "rs");
-    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports.len(), 2);
+    // Simple identifier stays with base path
     assert_eq!(result.parsed_imports[0].source, "crate::foo");
-    let names: Vec<&str> = result.parsed_imports[0]
-        .specifiers
-        .iter()
-        .map(|s| s.name.as_str())
-        .collect();
-    assert!(names.contains(&"Baz"));
-    assert!(names.contains(&"Quux"));
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "Quux");
+    // Scoped identifier gets its own ParsedImport with extended path
+    assert_eq!(result.parsed_imports[1].source, "crate::foo::bar");
+    assert_eq!(result.parsed_imports[1].specifiers[0].name, "Baz");
 }
 
 #[test]
