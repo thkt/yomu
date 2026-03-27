@@ -1,8 +1,9 @@
 use crate::storage::ChunkType;
 
 use super::{
-    chunk_fallback, classify_function, extract_name, find_child_by_kind, make_chunk, make_parser,
-    other_or_skip, FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk, ReExport,
+    attach_pending_comments, chunk_fallback, classify_function, extract_name, find_child_by_kind,
+    make_chunk, make_parser, other_or_skip, FileChunks, ImportKind, ImportSpecifier, ParsedImport,
+    RawChunk, ReExport,
 };
 
 pub(super) fn chunk_tsx(source: &str) -> FileChunks {
@@ -28,6 +29,7 @@ fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) ->
     let mut imports = Vec::new();
     let mut parsed_imports = Vec::new();
     let mut chunks = Vec::new();
+    let mut pending_comments: Vec<tree_sitter::Node> = Vec::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "import_statement" {
@@ -35,8 +37,14 @@ fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) ->
             if let Some(pi) = parse_single_import(&node, source) {
                 parsed_imports.push(pi);
             }
-        } else if let Some(chunk) = classify_js_node(&node, source) {
+            pending_comments.clear();
+        } else if node.kind() == "comment" {
+            pending_comments.push(node);
+        } else if let Some(mut chunk) = classify_js_node(&node, source) {
+            attach_pending_comments(&mut chunk, &mut pending_comments, source);
             chunks.push(chunk);
+        } else {
+            pending_comments.clear();
         }
     }
     if chunks.is_empty() {

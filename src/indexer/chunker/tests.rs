@@ -378,12 +378,18 @@ fn parse_aliased_named_import() {
 }
 
 #[test]
-fn chunk_rust_function() {
-    let source = "fn hello() { println!(\"hello\"); }";
-    let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
-    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
-    assert_eq!(result.chunks[0].name.as_deref(), Some("hello"));
+fn chunk_rust_function_variants() {
+    let cases = [
+        ("fn hello() { println!(\"hello\"); }", "hello"),
+        ("pub fn greet() { println!(\"hi\"); }", "greet"),
+        ("async fn fetch() { todo!() }", "fetch"),
+    ];
+    for (source, expected_name) in cases {
+        let result = chunk_file(source, "rs");
+        assert_eq!(result.chunks.len(), 1, "source: {source}");
+        assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn, "source: {source}");
+        assert_eq!(result.chunks[0].name.as_deref(), Some(expected_name), "source: {source}");
+    }
 }
 
 #[test]
@@ -433,7 +439,7 @@ fn chunk_rust_impl_trait() {
 }
 
 #[test]
-fn chunk_rust_skips_use_and_comments() {
+fn chunk_rust_use_and_comment_do_not_produce_separate_chunks() {
     let source = r#"
 use std::fmt::Display;
 // A helper function
@@ -460,24 +466,6 @@ fn baz() {}
 }
 
 #[test]
-fn chunk_rust_pub_fn() {
-    let source = "pub fn greet() { println!(\"hi\"); }";
-    let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
-    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
-    assert_eq!(result.chunks[0].name.as_deref(), Some("greet"));
-}
-
-#[test]
-fn chunk_rust_async_fn() {
-    let source = "async fn fetch() { todo!() }";
-    let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
-    assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn);
-    assert_eq!(result.chunks[0].name.as_deref(), Some("fetch"));
-}
-
-#[test]
 fn chunk_rust_impl_generic() {
     let source = "impl<T> From<T> for Wrapper<T> { fn from(val: T) -> Self { Wrapper(val) } }";
     let result = chunk_file(source, "rs");
@@ -489,7 +477,7 @@ fn chunk_rust_impl_generic() {
 }
 
 #[test]
-fn chunk_rust_skips_block_comment() {
+fn chunk_rust_block_comment_does_not_produce_separate_chunk() {
     let source = r#"
 /* This is a block comment */
 fn only_fn() {}
@@ -646,6 +634,263 @@ fn chunk_markdown_empty_title_produces_nameless_section() {
     assert_eq!(result.chunks.len(), 1);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::MdSection);
     assert_eq!(result.chunks[0].name, None);
+}
+
+#[test]
+fn chunk_tsx_jsdoc_attached_to_function() {
+    let source = r#"/** Manages authentication state */
+export function useAuth() { return { user: null }; }"#;
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        result.chunks[0].content.contains("/** Manages authentication state */"),
+        "JSDoc should be attached to the chunk"
+    );
+    assert_eq!(result.chunks[0].start_line, 1);
+}
+
+#[test]
+fn chunk_tsx_line_comment_attached_to_function() {
+    let source = r#"// Helper to format dates
+function formatDate() { return '2024-01-01'; }"#;
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        result.chunks[0].content.contains("// Helper to format dates"),
+        "Line comment should be attached to the chunk"
+    );
+}
+
+#[test]
+fn chunk_tsx_consecutive_comments_attached() {
+    let source = r#"// Line 1
+// Line 2
+function helper() { return 42; }"#;
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        result.chunks[0].content.contains("// Line 1"),
+        "First comment should be attached"
+    );
+    assert!(
+        result.chunks[0].content.contains("// Line 2"),
+        "Second comment should be attached"
+    );
+}
+
+#[test]
+fn chunk_tsx_standalone_comment_discarded() {
+    let source = r#"// Standalone comment
+import { useState } from 'react';
+function App() { return <div/>; }"#;
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        !result.chunks[0].content.contains("Standalone"),
+        "Comment before import should not attach to later declaration"
+    );
+}
+
+#[test]
+fn chunk_tsx_comment_between_declarations() {
+    let source = r#"function first() { return 1; }
+/** Second function docs */
+function second() { return 2; }"#;
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 2);
+    assert!(
+        !result.chunks[0].content.contains("Second function docs"),
+        "Comment should not attach to preceding declaration"
+    );
+    assert!(
+        result.chunks[1].content.contains("/** Second function docs */"),
+        "Comment should attach to following declaration"
+    );
+}
+
+#[test]
+fn chunk_rust_doc_comment_attached_to_fn() {
+    let source = "/// Docs for helper\nfn helper() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        result.chunks[0].content.contains("/// Docs for helper"),
+        "doc comment should be attached"
+    );
+    assert_eq!(result.chunks[0].start_line, 1);
+}
+
+#[test]
+fn chunk_rust_block_comment_attached_to_struct() {
+    let source = "/* Info about Config */\nstruct Config { x: i32 }";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        result.chunks[0].content.contains("/* Info about Config */"),
+        "block comment should be attached"
+    );
+}
+
+#[test]
+fn chunk_rust_comment_before_use_not_attached_to_fn() {
+    let source = "// docs for use\nuse crate::foo::Bar;\nfn bar() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.chunks.len(), 1);
+    assert!(
+        !result.chunks[0].content.contains("docs for use"),
+        "comment before use should not attach to following fn"
+    );
+}
+
+#[test]
+fn chunk_rust_parses_internal_use_prefixes() {
+    let cases = [
+        ("use crate::foo::Bar;\nfn main() {}", "crate::foo", "Bar"),
+        ("use super::utils::helper;\nfn run() {}", "super::utils", "helper"),
+        ("use self::inner::Thing;\nfn run() {}", "self::inner", "Thing"),
+    ];
+    for (source, expected_source, expected_name) in cases {
+        let result = chunk_file(source, "rs");
+        assert_eq!(result.parsed_imports.len(), 1, "source: {source}");
+        assert_eq!(result.parsed_imports[0].source, expected_source, "source: {source}");
+        assert_eq!(result.parsed_imports[0].specifiers[0].name, expected_name, "source: {source}");
+        assert_eq!(result.parsed_imports[0].specifiers[0].kind, ImportKind::Named, "source: {source}");
+    }
+}
+
+#[test]
+fn chunk_rust_parses_grouped_use() {
+    let source = "use crate::models::{User, Post};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports[0].source, "crate::models");
+    assert_eq!(result.parsed_imports[0].specifiers.len(), 2);
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "User");
+    assert_eq!(result.parsed_imports[0].specifiers[1].name, "Post");
+}
+
+#[test]
+fn chunk_rust_parses_glob_use() {
+    let source = "use crate::prelude::*;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports[0].source, "crate::prelude");
+    assert_eq!(result.parsed_imports[0].specifiers.len(), 1);
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "*");
+    assert_eq!(result.parsed_imports[0].specifiers[0].kind, ImportKind::Namespace);
+}
+
+#[test]
+fn chunk_rust_skips_external_crate_use() {
+    let source = "use std::fmt::Display;\nuse serde::Serialize;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(result.parsed_imports.is_empty());
+}
+
+#[test]
+fn chunk_rust_stores_all_use_as_import_text() {
+    let source = "use std::fmt::Display;\nuse crate::foo::Bar;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.imports.len(), 2, "all use declarations stored as text");
+    assert!(result.imports[0].contains("std::fmt::Display"));
+    assert!(result.imports[1].contains("crate::foo::Bar"));
+    assert_eq!(result.parsed_imports.len(), 1, "only internal parsed");
+}
+
+#[test]
+fn chunk_rust_parses_nested_grouped_use() {
+    let source = "use crate::foo::{bar::Baz, Quux};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports[0].source, "crate::foo");
+    let names: Vec<&str> = result.parsed_imports[0]
+        .specifiers
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert!(names.contains(&"Baz"));
+    assert!(names.contains(&"Quux"));
+}
+
+#[test]
+fn chunk_rust_parses_use_as_clause() {
+    let source = "use crate::foo::Bar as Baz;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports[0].source, "crate::foo");
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "Bar");
+    assert_eq!(
+        result.parsed_imports[0].specifiers[0].alias,
+        Some("Baz".to_string())
+    );
+}
+
+#[test]
+fn chunk_rust_parses_wildcard_in_group() {
+    let source = "use crate::prelude::{self, *};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    let has_wildcard = result.parsed_imports[0]
+        .specifiers
+        .iter()
+        .any(|s| s.name == "*");
+    assert!(has_wildcard, "should parse wildcard within use group");
+}
+
+#[test]
+fn chunk_rust_skips_crate_name_prefix_collision() {
+    let source = "use self_cell::SelfCell;\nuse superstruct::Foo;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(
+        result.parsed_imports.is_empty(),
+        "crate names starting with self/super should not be treated as internal"
+    );
+}
+
+#[test]
+fn chunk_rust_skips_external_use_as_clause() {
+    let source = "use std::io::Read as R;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(
+        result.parsed_imports.is_empty(),
+        "external use-as should not produce a parsed import"
+    );
+    assert_eq!(result.imports.len(), 1, "raw import text should still be stored");
+}
+
+#[test]
+fn chunk_tsx_exported_interface() {
+    let source = "export interface Props { label: string; }";
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Props"));
+}
+
+#[test]
+fn chunk_tsx_exported_type_alias() {
+    let source = "export type Theme = 'light' | 'dark';";
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::TypeDef);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("Theme"));
+}
+
+#[test]
+fn chunk_tsx_exported_const_non_arrow() {
+    let source = "export const API_URL = 'https://api.example.com';";
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("API_URL"));
+}
+
+#[test]
+fn chunk_tsx_bare_expression_statement() {
+    let source = "console.log('init');";
+    let result = chunk_file(source, "tsx");
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::Other);
 }
 
 #[test]
