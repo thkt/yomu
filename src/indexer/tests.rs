@@ -247,6 +247,31 @@ fn build_references_unresolvable_returns_empty() {
 }
 
 #[test]
+fn build_references_rust_crate_import() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    let foo = src.join("foo");
+    std::fs::create_dir_all(&foo).unwrap();
+    std::fs::write(foo.join("bar.rs"), "").unwrap();
+
+    let rust_resolver = crate::rust_resolver::RustResolver::new(tmp.path());
+    let imports = vec![chunker::ParsedImport {
+        specifiers: vec![chunker::ImportSpecifier {
+            name: "Bar".to_string(),
+            alias: None,
+            kind: chunker::ImportKind::Named,
+        }],
+        source: "crate::foo::bar".to_string(),
+    }];
+    let refs = build_references(&imports, "src/lib.rs", &rust_resolver);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].source_file, "src/lib.rs");
+    assert_eq!(refs[0].target_file, "src/foo/bar.rs");
+    assert_eq!(refs[0].symbol_name, Some("Bar".to_string()));
+    assert_eq!(refs[0].ref_kind, RefKind::Named);
+}
+
+#[test]
 fn run_index_stores_imports_in_file_context() {
     let dir = tempfile::tempdir().unwrap();
     let src_dir = dir.path().join("src");

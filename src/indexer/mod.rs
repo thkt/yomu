@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use rurico::embed::{Embed, EmbedError};
 
-use crate::resolver::Resolver;
+use crate::resolver::{Resolve, Resolver};
+use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
 
@@ -222,7 +223,7 @@ fn import_kind_to_ref_kind(kind: &chunker::ImportKind) -> RefKind {
 fn build_references(
     imports: &[ParsedImport],
     source_path: &str,
-    resolver: &Resolver,
+    resolver: &impl Resolve,
 ) -> Vec<Reference> {
     imports
         .iter()
@@ -281,6 +282,7 @@ fn run_chunk_only_index_inner(
     );
 
     let resolver = Resolver::new(root);
+    let rust_resolver = RustResolver::new(root);
 
     let (files_processed, chunks_created, files_skipped, files_errored, current_rel_paths) = {
         let mut files_processed = 0u32;
@@ -300,7 +302,11 @@ fn run_chunk_only_index_inner(
                 FileAction::Process(pf) => {
                     let n = pf.raw_chunks.len() as u32;
                     let new_chunks = pf.to_new_chunks();
-                    let refs = build_references(&pf.parsed_imports, &pf.rel_path, &resolver);
+                    let refs = if pf.rel_path.ends_with(".rs") {
+                        build_references(&pf.parsed_imports, &pf.rel_path, &rust_resolver)
+                    } else {
+                        build_references(&pf.parsed_imports, &pf.rel_path, &resolver)
+                    };
                     storage::replace_file_chunks_only(
                         &conn_guard,
                         &pf.rel_path,
@@ -365,8 +371,9 @@ pub fn run_index(
     remove_orphans(&conn, current_rel_paths)?;
 
     let resolver = Resolver::new(root);
+    let rust_resolver = RustResolver::new(root);
     let (files_processed, chunks_created, embed_errors) =
-        embed_and_store(&conn, embedder, pending, &resolver)?;
+        embed_and_store(&conn, embedder, pending, &resolver, &rust_resolver)?;
     files_errored += embed_errors;
 
     tracing::info!(

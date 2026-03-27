@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use rurico::embed::{Embed, EmbedError};
 
 use crate::resolver::Resolver;
+use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, Reference, StorageError};
 
 use super::{build_references, IndexError, PendingFile};
@@ -78,6 +79,7 @@ pub(super) fn embed_and_store(
     embedder: &(impl Embed + ?Sized),
     pending: Vec<PendingFile>,
     resolver: &Resolver,
+    rust_resolver: &RustResolver,
 ) -> Result<(u32, u32, u32), IndexError> {
     let pending_total = pending.len();
     let mut files_processed = 0u32;
@@ -117,7 +119,11 @@ pub(super) fn embed_and_store(
         };
 
         let n = pf.raw_chunks.len() as u32;
-        let refs = build_references(&pf.parsed_imports, &pf.rel_path, resolver);
+        let refs = if pf.rel_path.ends_with(".rs") {
+            build_references(&pf.parsed_imports, &pf.rel_path, rust_resolver)
+        } else {
+            build_references(&pf.parsed_imports, &pf.rel_path, resolver)
+        };
         tracing::debug!(file = %pf.rel_path, chunks = n, "Indexing file");
 
         {
