@@ -1,7 +1,7 @@
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, OutputFormat, Yomu, YomuError,
     probe_embedder,
@@ -87,8 +87,12 @@ fn main() -> ExitCode {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
-            eprintln!("error: requires a subcommand (search, index, rebuild, impact, status)");
-            return ExitCode::from(2);
+            Cli::command()
+                .error(
+                    clap::error::ErrorKind::MissingSubcommand,
+                    "requires a subcommand",
+                )
+                .exit();
         }
     };
 
