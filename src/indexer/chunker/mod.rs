@@ -64,7 +64,7 @@ pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
     match extension {
         "tsx" | "jsx" => ts::chunk_tsx(source),
         "ts" | "js" | "mjs" => ts::chunk_ts(source),
-        "rs" => FileChunks::chunks_only(rust::chunk_rust(source)),
+        "rs" => rust::chunk_rust(source),
         "css" => FileChunks::chunks_only(css_html::chunk_css(source)),
         "html" => FileChunks::chunks_only(css_html::chunk_html(source)),
         "md" => FileChunks::chunks_only(markdown::chunk_markdown(source)),
@@ -144,6 +144,24 @@ fn chunk_fallback(source: &str) -> Vec<RawChunk> {
     }
 
     chunks
+}
+
+pub(super) fn attach_pending_comments(
+    chunk: &mut RawChunk,
+    pending_comments: &mut Vec<tree_sitter::Node>,
+    source: &str,
+) {
+    if pending_comments.is_empty() {
+        return;
+    }
+    let comment_text: String = pending_comments
+        .iter()
+        .map(|c| &source[c.byte_range()])
+        .collect::<Vec<_>>()
+        .join("\n");
+    chunk.start_line = pending_comments[0].start_position().row as u32 + 1;
+    chunk.content = format!("{comment_text}\n{}", chunk.content);
+    pending_comments.clear();
 }
 
 fn other_or_skip(source: &str, node: &tree_sitter::Node) -> Option<RawChunk> {

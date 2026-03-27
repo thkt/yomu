@@ -1,12 +1,54 @@
 use crate::storage::ChunkType;
 
-use super::{chunk_fallback, chunk_with_ast, extract_name, make_chunk, make_parser, other_or_skip, RawChunk};
+use super::{
+    attach_pending_comments, chunk_fallback, extract_name, make_chunk, make_parser, other_or_skip,
+    FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk,
+};
 
-pub(super) fn chunk_rust(source: &str) -> Vec<RawChunk> {
+pub(super) fn chunk_rust(source: &str) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_rust::LANGUAGE.into()) else {
-        return chunk_fallback(source);
+        return FileChunks::chunks_only(chunk_fallback(source));
     };
-    chunk_with_ast(source, &mut parser, classify_rust_node)
+    let Some(tree) = parser.parse(source, None) else {
+        tracing::warn!("AST parse failed, using fallback chunker");
+        return FileChunks::chunks_only(chunk_fallback(source));
+    };
+    let root = tree.root_node();
+    let mut imports = Vec::new();
+    let mut parsed_imports = Vec::new();
+    let mut chunks = Vec::new();
+    let mut pending_comments: Vec<tree_sitter::Node> = Vec::new();
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        match node.kind() {
+            "use_declaration" => {
+                imports.push(source[node.byte_range()].to_string());
+                if let Some(pi) = parse_rust_use(&node, source) {
+                    parsed_imports.push(pi);
+                }
+                pending_comments.clear();
+            }
+            "line_comment" | "block_comment" => {
+                pending_comments.push(node);
+            }
+            _ => {
+                if let Some(mut chunk) = classify_rust_node(&node, source) {
+                    attach_pending_comments(&mut chunk, &mut pending_comments, source);
+                    chunks.push(chunk);
+                } else {
+                    pending_comments.clear();
+                }
+            }
+        }
+    }
+    if chunks.is_empty() {
+        chunks = chunk_fallback(source);
+    }
+    FileChunks {
+        imports,
+        parsed_imports,
+        chunks,
+    }
 }
 
 fn classify_rust_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk> {
@@ -19,11 +61,139 @@ fn classify_rust_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk
             let name = extract_rust_impl_name(node, source);
             return Some(make_chunk(source, node, ChunkType::RustImpl, name));
         }
-        "use_declaration" | "line_comment" | "block_comment" => return None,
         _ => return other_or_skip(source, node),
     };
     let name = extract_name(node, source);
     Some(make_chunk(source, node, chunk_type, name))
+}
+
+fn parse_rust_use(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let argument = node.child_by_field_name("argument")?;
+    match argument.kind() {
+        "scoped_identifier" => parse_scoped_identifier(&argument, source),
+        "scoped_use_list" => parse_scoped_use_list(&argument, source),
+        "use_wildcard" => parse_use_wildcard(&argument, source),
+        "use_as_clause" => parse_use_as_clause(&argument, source),
+        _ => None,
+    }
+}
+
+fn parse_scoped_identifier(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let path_node = node.child_by_field_name("path")?;
+    let name_node = node.child_by_field_name("name")?;
+    let path = &source[path_node.byte_range()];
+    if !is_internal_path(path) {
+        return None;
+    }
+    Some(ParsedImport {
+        source: path.to_string(),
+        specifiers: vec![ImportSpecifier {
+            name: source[name_node.byte_range()].to_string(),
+            alias: None,
+            kind: ImportKind::Named,
+        }],
+    })
+}
+
+fn parse_scoped_use_list(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let path_node = node.child_by_field_name("path")?;
+    let list_node = node.child_by_field_name("list")?;
+    let path = &source[path_node.byte_range()];
+    if !is_internal_path(path) {
+        return None;
+    }
+    let specifiers = collect_use_list_specifiers(&list_node, source);
+    Some(ParsedImport {
+        source: path.to_string(),
+        specifiers,
+    })
+}
+
+fn parse_use_wildcard(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let mut cursor = node.walk();
+    let path_node = node.children(&mut cursor).find(|c| c.is_named())?;
+    let path = &source[path_node.byte_range()];
+    if !is_internal_path(path) {
+        return None;
+    }
+    Some(ParsedImport {
+        source: path.to_string(),
+        specifiers: vec![ImportSpecifier {
+            name: "*".to_string(),
+            alias: None,
+            kind: ImportKind::Namespace,
+        }],
+    })
+}
+
+fn parse_use_as_clause(node: &tree_sitter::Node, source: &str) -> Option<ParsedImport> {
+    let path_node = node.child_by_field_name("path")?;
+    let alias_node = node.child_by_field_name("alias")?;
+    if path_node.kind() == "scoped_identifier" {
+        let inner_path = path_node.child_by_field_name("path")?;
+        let inner_name = path_node.child_by_field_name("name")?;
+        let path = &source[inner_path.byte_range()];
+        if !is_internal_path(path) {
+            return None;
+        }
+        Some(ParsedImport {
+            source: path.to_string(),
+            specifiers: vec![ImportSpecifier {
+                name: source[inner_name.byte_range()].to_string(),
+                alias: Some(source[alias_node.byte_range()].to_string()),
+                kind: ImportKind::Named,
+            }],
+        })
+    } else {
+        None
+    }
+}
+
+fn collect_use_list_specifiers(
+    list: &tree_sitter::Node,
+    source: &str,
+) -> Vec<ImportSpecifier> {
+    let mut specifiers = Vec::new();
+    let mut cursor = list.walk();
+    for child in list.children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                specifiers.push(ImportSpecifier {
+                    name: source[child.byte_range()].to_string(),
+                    alias: None,
+                    kind: ImportKind::Named,
+                });
+            }
+            "scoped_identifier" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    specifiers.push(ImportSpecifier {
+                        name: source[name_node.byte_range()].to_string(),
+                        alias: None,
+                        kind: ImportKind::Named,
+                    });
+                }
+            }
+            "scoped_use_list" => {
+                if let Some(inner_list) = child.child_by_field_name("list") {
+                    specifiers.extend(collect_use_list_specifiers(&inner_list, source));
+                }
+            }
+            "use_wildcard" => {
+                specifiers.push(ImportSpecifier {
+                    name: "*".to_string(),
+                    alias: None,
+                    kind: ImportKind::Namespace,
+                });
+            }
+            _ => {}
+        }
+    }
+    specifiers
+}
+
+fn is_internal_path(path: &str) -> bool {
+    let prefix = path.split("::").next().unwrap_or("");
+    matches!(prefix, "crate" | "super" | "self")
 }
 
 fn extract_rust_impl_name(node: &tree_sitter::Node, source: &str) -> Option<String> {
