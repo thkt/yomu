@@ -113,13 +113,17 @@ pub(super) fn format_results_grouped(
     });
 
     let mut output = String::new();
-    let result_chunk_ids: HashSet<i64> = results
-        .iter()
-        .filter_map(|r| r.chunk_id)
-        .collect();
+    let result_chunk_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
 
     for (file_path, chunks) in &sorted {
-        format_file_group(&mut output, file_path, chunks, ctx, parent_chunks, &result_chunk_ids);
+        format_file_group(
+            &mut output,
+            file_path,
+            chunks,
+            ctx,
+            parent_chunks,
+            &result_chunk_ids,
+        );
     }
     output
 }

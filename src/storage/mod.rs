@@ -325,10 +325,23 @@ fn replace_file_data(
             for (i, chunk) in data.chunks.iter().enumerate() {
                 let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
                 if *chunk.chunk_type == ChunkType::InnerFn {
-                    let id = insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?;
+                    let id = insert_chunk_row(
+                        &tx,
+                        data.file_path,
+                        chunk,
+                        data.file_hash,
+                        parent_chunk_id,
+                    )?;
                     inserted_ids.push(id);
                 } else {
-                    let id = insert_chunk(&tx, data.file_path, chunk, data.file_hash, &embs[emb_idx], parent_chunk_id)?;
+                    let id = insert_chunk(
+                        &tx,
+                        data.file_path,
+                        chunk,
+                        data.file_hash,
+                        &embs[emb_idx],
+                        parent_chunk_id,
+                    )?;
                     inserted_ids.push(id);
                     emb_idx += 1;
                 }
@@ -337,7 +350,8 @@ fn replace_file_data(
         None => {
             for (i, chunk) in data.chunks.iter().enumerate() {
                 let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
-                let id = insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?;
+                let id =
+                    insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?;
                 inserted_ids.push(id);
             }
         }
@@ -353,7 +367,11 @@ fn resolve_parent(chunk: &NewChunk, inserted_ids: &[i64], current_index: usize) 
         if pi < current_index {
             inserted_ids.get(pi).copied()
         } else {
-            tracing::warn!(parent_index = pi, current_index, "invalid parent_index, skipping");
+            tracing::warn!(
+                parent_index = pi,
+                current_index,
+                "invalid parent_index, skipping"
+            );
             None
         }
     })

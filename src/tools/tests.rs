@@ -1315,7 +1315,8 @@ fn t011_innerfn_hit_shows_parent_context_in_text_output() {
             file_path: "src/UserForm.tsx".to_string(),
             chunk_type: storage::ChunkType::InnerFn,
             name: Some("handleSubmit".to_string()),
-            content: "const handleSubmit = (e) => {\n  e.preventDefault();\n  submit(name);\n};".to_string(),
+            content: "const handleSubmit = (e) => {\n  e.preventDefault();\n  submit(name);\n};"
+                .to_string(),
             start_line: 10,
             end_line: 13,
             parent_chunk_id: Some(42),

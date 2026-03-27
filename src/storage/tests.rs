@@ -2393,7 +2393,10 @@ fn t_009_out_of_order_chunks_resolves_to_null() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(child_parent, None, "out-of-order parent_index should resolve to NULL");
+    assert_eq!(
+        child_parent, None,
+        "out-of-order parent_index should resolve to NULL"
+    );
 }
 
 #[test]
@@ -2612,8 +2615,7 @@ fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
 
     let keywords = ["renderitem"];
     let keyword_refs: Vec<&str> = keywords.iter().copied().collect();
-    let dfs =
-        get_keyword_doc_frequencies(&conn, &keyword_refs, stats.total_chunks).unwrap();
+    let dfs = get_keyword_doc_frequencies(&conn, &keyword_refs, stats.total_chunks).unwrap();
 
     let total = stats.total_chunks.max(1) as f32;
     for &df in &dfs {
@@ -2669,16 +2671,12 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
         )
         .unwrap();
 
-    let results = search_by_content(
-        &conn,
-        &["handlesubmit"],
-        None,
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
+    let results = search_by_content(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
 
-    assert!(!results.is_empty(), "should find handleSubmit via content search");
+    assert!(
+        !results.is_empty(),
+        "should find handleSubmit via content search"
+    );
     let innerfn_result = results
         .iter()
         .find(|r| r.chunk.chunk_type == ChunkType::InnerFn)
@@ -2730,16 +2728,12 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
         )
         .unwrap();
 
-    let results = search_by_name(
-        &conn,
-        &["handlesubmit"],
-        None,
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
+    let results = search_by_name(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
 
-    assert!(!results.is_empty(), "should find handleSubmit via name search");
+    assert!(
+        !results.is_empty(),
+        "should find handleSubmit via name search"
+    );
     let innerfn_result = results
         .iter()
         .find(|r| r.chunk.chunk_type == ChunkType::InnerFn)
@@ -2765,24 +2759,9 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
         parent_index: None,
     };
 
-    replace_file_chunks_only(
-        &conn,
-        "src/UserForm.tsx",
-        &[parent],
-        "hash_uf3",
-        "",
-        &[],
-    )
-    .unwrap();
+    replace_file_chunks_only(&conn, "src/UserForm.tsx", &[parent], "hash_uf3", "", &[]).unwrap();
 
-    let results = search_by_name(
-        &conn,
-        &["userform"],
-        None,
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
+    let results = search_by_name(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
 
     assert!(!results.is_empty(), "should find UserForm via name search");
     let component_result = &results[0];

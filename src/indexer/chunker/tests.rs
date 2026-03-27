@@ -1144,9 +1144,7 @@ fn t_003_hook_callbacks_extracted_as_inner_fn() {
 fn t_004_nested_functions_only_direct_children() {
     let source = make_large_component(
         "NestedPage",
-        &[
-            "const outer = () => { const inner = () => { return 1; }; return inner(); };",
-        ],
+        &["const outer = () => { const inner = () => { return 1; }; return inner(); };"],
     );
     let result = chunk_file(&source, "tsx");
 
@@ -1176,7 +1174,9 @@ fn t_005_parent_emitted_before_children() {
     let parent_pos = result
         .chunks
         .iter()
-        .position(|c| c.chunk_type == ChunkType::Component && c.name.as_deref() == Some("OrderedPage"))
+        .position(|c| {
+            c.chunk_type == ChunkType::Component && c.name.as_deref() == Some("OrderedPage")
+        })
         .expect("parent Component chunk should exist");
 
     let child_positions: Vec<_> = result
@@ -1187,10 +1187,7 @@ fn t_005_parent_emitted_before_children() {
         .map(|(i, _)| i)
         .collect();
 
-    assert!(
-        !child_positions.is_empty(),
-        "should have InnerFn children"
-    );
+    assert!(!child_positions.is_empty(), "should have InnerFn children");
     for child_pos in &child_positions {
         assert!(
             parent_pos < *child_pos,

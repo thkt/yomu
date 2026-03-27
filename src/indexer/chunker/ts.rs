@@ -93,9 +93,7 @@ fn find_function_body<'a>(node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter
     let decl = if node.kind() == "export_statement" {
         let mut c = node.walk();
         node.children(&mut c)
-            .find(|n| {
-                n.kind() == "function_declaration" || n.kind() == "lexical_declaration"
-            })?
+            .find(|n| n.kind() == "function_declaration" || n.kind() == "lexical_declaration")?
     } else {
         *node
     };
@@ -103,7 +101,8 @@ fn find_function_body<'a>(node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter
     match decl.kind() {
         "function_declaration" => {
             let mut c = decl.walk();
-            decl.children(&mut c).find(|n| n.kind() == "statement_block")
+            decl.children(&mut c)
+                .find(|n| n.kind() == "statement_block")
         }
         "lexical_declaration" => {
             // const Foo = () => { ... }
