@@ -3,3 +3,4 @@
 .claude/
 .analysis/
 workspace/
+.playwright-cli/
