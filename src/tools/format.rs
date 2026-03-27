@@ -234,22 +234,20 @@ fn format_file_group(
         output.push_str(&chunk.content);
         output.push_str("\n\n");
 
-        // Show parent context for subchunk hits (only if parent is not already in results)
-        if let Some(parent_id) = chunk.parent_chunk_id {
-            if !result_chunk_ids.contains(&parent_id) {
-                if let Some(parent) = parent_chunks.get(&parent_id) {
-                    let parent_name = parent.name.as_deref().unwrap_or("(unnamed)");
-                    output.push_str(&format!(
-                        "  Parent context: {} [{}] — {}:{}\n",
-                        parent_name,
-                        parent.chunk_type.as_str(),
-                        parent.start_line,
-                        parent.end_line,
-                    ));
-                    output.push_str(&parent.content);
-                    output.push_str("\n\n");
-                }
-            }
+        if let Some(parent_id) = chunk.parent_chunk_id
+            && !result_chunk_ids.contains(&parent_id)
+            && let Some(parent) = parent_chunks.get(&parent_id)
+        {
+            let parent_name = parent.name.as_deref().unwrap_or("(unnamed)");
+            output.push_str(&format!(
+                "  Parent context: {} [{}] — {}:{}\n",
+                parent_name,
+                parent.chunk_type.as_str(),
+                parent.start_line,
+                parent.end_line,
+            ));
+            output.push_str(&parent.content);
+            output.push_str("\n\n");
         }
     }
 }
