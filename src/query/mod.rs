@@ -329,8 +329,9 @@ fn search_pipeline(
     let type_hints = extract_type_hints(query);
     let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
 
+    let fetch_limit = limit.saturating_add(offset);
     let mut results = match query_embedding {
-        Some(emb) => storage::search_similar(conn, emb, limit, offset)?,
+        Some(emb) => storage::search_similar(conn, emb, fetch_limit, 0)?,
         None => Vec::new(),
     };
 
@@ -387,6 +388,10 @@ fn search_pipeline(
     };
     rerank(&mut results, &ctx, &import_counts);
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
+    if offset > 0 {
+        let skip = std::cmp::min(offset as usize, results.len());
+        results.drain(..skip);
+    }
     results.truncate(limit as usize);
 
     Ok(results)

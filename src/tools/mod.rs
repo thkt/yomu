@@ -415,10 +415,7 @@ impl Yomu {
 
         static NOOP: NoOpEmbedder = NoOpEmbedder;
         if self.embedder.get().is_none() {
-            let result = try_load_embedder();
-            if result.is_some() {
-                let _ = self.embedder.set(result);
-            }
+            let _ = self.embedder.set(try_load_embedder());
         }
         self.embedder
             .get()

@@ -83,7 +83,7 @@ pub fn search_by_name(
 
     append_type_filter(&mut sql, &mut all_params, "chunk_type", type_filter);
     append_exclude_ids(&mut sql, &mut all_params, "id", exclude_ids);
-    sql.push_str(" LIMIT ?");
+    sql.push_str(" ORDER BY id LIMIT ?");
     all_params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
