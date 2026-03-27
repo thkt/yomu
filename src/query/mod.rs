@@ -338,7 +338,7 @@ fn search_pipeline(
         None => Vec::new(),
     };
 
-    let fallback_limit = limit * 3;
+    let fallback_limit = fetch_limit * 3;
 
     if !keywords.is_empty() {
         let type_filter = if type_hints.is_empty() {

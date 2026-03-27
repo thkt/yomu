@@ -129,13 +129,12 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
 
     // v2 → v3: populate fts_chunks from existing chunks
     if from < 3 {
-        fts_set_automerge(conn, false)?;
+        let _automerge = FtsAutomergeGuard::new(conn)?;
         conn.execute_batch(
             "INSERT OR IGNORE INTO fts_chunks(rowid, content)
              SELECT id, content FROM chunks",
         )?;
         fts_optimize(conn)?;
-        fts_set_automerge(conn, true)?;
     }
 
     // v3 → v4: add fts5vocab table for short-term expansion
@@ -157,6 +156,25 @@ pub fn fts_set_automerge(conn: &Connection, enabled: bool) -> Result<(), Storage
         [value],
     )?;
     Ok(())
+}
+
+pub struct FtsAutomergeGuard<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> FtsAutomergeGuard<'a> {
+    pub fn new(conn: &'a Connection) -> Result<Self, StorageError> {
+        fts_set_automerge(conn, false)?;
+        Ok(Self { conn })
+    }
+}
+
+impl Drop for FtsAutomergeGuard<'_> {
+    fn drop(&mut self) {
+        if let Err(e) = fts_set_automerge(self.conn, true) {
+            tracing::error!(error = %e, "Failed to restore FTS automerge");
+        }
+    }
 }
 
 pub fn fts_optimize(conn: &Connection) -> Result<(), StorageError> {
