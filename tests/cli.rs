@@ -96,6 +96,32 @@ fn unknown_subcommand_fails() {
 
 // --- Success-path integration tests ---
 
+fn setup_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("Button.tsx"),
+        "export function Button() { return <button>Click</button>; }\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    // pre-index so tests don't depend on auto-indexing
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "setup index failed");
+    dir
+}
+
 #[test]
 fn index_then_status_then_search() {
     let dir = tempfile::tempdir().unwrap();
@@ -161,5 +187,158 @@ fn index_then_status_then_search() {
     assert!(
         stdout.contains("Button"),
         "expected Button in results: {stdout}"
+    );
+}
+
+#[test]
+fn search_stdin_query() {
+    let dir = setup_project();
+    let mut child = yomu_cmd()
+        .args(["search", "-"])
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"button")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stdin search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Button"),
+        "expected Button in results: {stdout}"
+    );
+}
+
+#[test]
+fn search_format_json() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["search", "button", "--format", "json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "json search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    let results = parsed["results"].as_array().expect("should have results array");
+    assert!(!results.is_empty(), "should have results: {stdout}");
+    assert!(parsed.get("degraded").is_some(), "should have degraded field: {stdout}");
+    let first = &results[0];
+    for field in ["file", "name", "type", "start_line", "end_line", "score", "content"] {
+        assert!(first.get(field).is_some(), "result missing '{field}' field: {stdout}");
+    }
+}
+
+#[test]
+fn index_dry_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("App.tsx"), "export function App() {}").unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    let output = yomu_cmd()
+        .args(["index", "--dry-run"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 files to process"),
+        "should show files to process: {stdout}"
+    );
+}
+
+#[test]
+fn rebuild_after_index() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .arg("rebuild")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rebuild failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 files chunked"),
+        "rebuild should re-process files: {stdout}"
+    );
+}
+
+#[test]
+#[test]
+fn search_stdin_empty_query_fails() {
+    let dir = setup_project();
+    let mut child = yomu_cmd()
+        .args(["search", "-"])
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close stdin immediately (empty input)
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        !output.status.success(),
+        "empty stdin should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("empty"),
+        "should mention empty query: {stderr}"
+    );
+}
+
+#[test]
+fn rebuild_dry_run_reports_all_files() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["rebuild", "--dry-run"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "rebuild --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 files to process"),
+        "rebuild --dry-run should report files to process (force=true): {stdout}"
     );
 }

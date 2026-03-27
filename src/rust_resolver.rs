@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::resolver::Resolve;
+use crate::resolver::{Resolve, strip_canonical_prefix};
 
 pub struct RustResolver {
     root: PathBuf,
@@ -76,11 +76,11 @@ impl RustResolver {
         let canonical_root = self.canonical_root.as_deref();
         let rs_candidate = self.root.join("src").join(format!("{path}.rs"));
         if let Ok(abs) = rs_candidate.canonicalize() {
-            return relative_from_canonical(&abs, canonical_root);
+            return strip_canonical_prefix(&abs, canonical_root);
         }
         let mod_candidate = self.root.join("src").join(&path).join("mod.rs");
         if let Ok(abs) = mod_candidate.canonicalize() {
-            return relative_from_canonical(&abs, canonical_root);
+            return strip_canonical_prefix(&abs, canonical_root);
         }
         None
     }
@@ -90,13 +90,6 @@ impl Resolve for RustResolver {
     fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
         self.resolve(source, from_file)
     }
-}
-
-fn relative_from_canonical(abs: &Path, canonical_root: Option<&Path>) -> Option<String> {
-    let root = canonical_root?;
-    abs.strip_prefix(root)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
 }
 
 fn module_path_from_file(from_file: &str) -> Vec<String> {

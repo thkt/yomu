@@ -169,6 +169,47 @@ fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile>
     })
 }
 
+enum FileOutcome {
+    Processed(u32),
+    Skipped,
+    Errored,
+}
+
+fn process_file(
+    conn: &Db,
+    rel_path: String,
+    file_path: &Path,
+    force: bool,
+    resolver: &Resolver,
+    rust_resolver: &RustResolver,
+) -> Result<FileOutcome, IndexError> {
+    let checked = match check_file(conn, rel_path, file_path, force)? {
+        CheckResult::Changed(c) => c,
+        CheckResult::Skip => return Ok(FileOutcome::Skipped),
+        CheckResult::Error => return Ok(FileOutcome::Errored),
+    };
+    let pf = match prepare_chunks(checked, file_path) {
+        Some(pf) => pf,
+        None => return Ok(FileOutcome::Skipped),
+    };
+    let n = pf.raw_chunks.len() as u32;
+    let new_chunks = pf.to_new_chunks();
+    let refs = if pf.rel_path.ends_with(".rs") {
+        build_references(&pf.parsed_imports, &pf.rel_path, rust_resolver)
+    } else {
+        build_references(&pf.parsed_imports, &pf.rel_path, resolver)
+    };
+    storage::replace_file_chunks_only(
+        conn,
+        &pf.rel_path,
+        &new_chunks,
+        &pf.hash,
+        &pf.imports_text,
+        &refs,
+    )?;
+    Ok(FileOutcome::Processed(n))
+}
+
 struct CollectResult {
     pending: Vec<PendingFile>,
     files_skipped: u32,
@@ -361,38 +402,13 @@ fn run_chunk_only_index_inner(
         for file_path in &files {
             let rel_path = to_rel_path(root, file_path);
             current_rel_paths.insert(rel_path.clone());
-            let checked = match check_file(&conn_guard, rel_path, file_path, force)? {
-                CheckResult::Changed(c) => c,
-                CheckResult::Skip => {
-                    files_skipped += 1;
-                    continue;
-                }
-                CheckResult::Error => {
-                    files_errored += 1;
-                    continue;
-                }
-            };
-            match prepare_chunks(checked, file_path) {
-                Some(pf) => {
-                    let n = pf.raw_chunks.len() as u32;
-                    let new_chunks = pf.to_new_chunks();
-                    let refs = if pf.rel_path.ends_with(".rs") {
-                        build_references(&pf.parsed_imports, &pf.rel_path, &rust_resolver)
-                    } else {
-                        build_references(&pf.parsed_imports, &pf.rel_path, &resolver)
-                    };
-                    storage::replace_file_chunks_only(
-                        &conn_guard,
-                        &pf.rel_path,
-                        &new_chunks,
-                        &pf.hash,
-                        &pf.imports_text,
-                        &refs,
-                    )?;
+            match process_file(&conn_guard, rel_path, file_path, force, &resolver, &rust_resolver)? {
+                FileOutcome::Processed(n) => {
                     chunks_created += n;
                     files_processed += 1;
                 }
-                None => files_skipped += 1,
+                FileOutcome::Skipped => files_skipped += 1,
+                FileOutcome::Errored => files_errored += 1,
             }
         }
 
