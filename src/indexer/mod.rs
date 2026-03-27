@@ -38,6 +38,15 @@ pub struct IndexResult {
     pub files_errored: u32,
 }
 
+#[derive(Debug)]
+pub struct DryRunResult {
+    pub total_files: u32,
+    pub files_to_process: u32,
+    pub files_to_skip: u32,
+    pub files_errored: u32,
+    pub orphans_to_remove: u32,
+}
+
 struct PendingFile {
     rel_path: String,
     raw_chunks: Vec<chunker::RawChunk>,
@@ -65,7 +74,6 @@ const MAX_FILE_SIZE: u64 = 1_000_000;
 const LARGE_PROJECT_THRESHOLD: usize = 5_000;
 
 enum FileAction {
-    Process(PendingFile),
     Skip,
     Error,
 }
@@ -106,44 +114,59 @@ fn read_source(file_path: &Path) -> Result<String, FileAction> {
     })
 }
 
-fn prepare_file(rel_path: String, file_path: &Path) -> Result<PendingFile, FileAction> {
-    let source = read_source(file_path)?;
-    let hash = file_hash(&source);
-
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let file_chunks = chunker::chunk_file(&source, ext);
-    if file_chunks.chunks.is_empty() {
-        tracing::debug!(file = %rel_path, "Skipped (no chunks)");
-        return Err(FileAction::Skip);
-    }
-
-    let imports_text = file_chunks.imports.join("\n");
-    Ok(PendingFile {
-        rel_path,
-        raw_chunks: file_chunks.chunks,
-        imports_text,
-        parsed_imports: file_chunks.parsed_imports,
-        hash,
-    })
+struct CheckedFile {
+    rel_path: String,
+    source: String,
+    hash: String,
 }
 
-fn process_file(
+enum CheckResult {
+    Changed(CheckedFile),
+    Skip,
+    Error,
+}
+
+fn check_file(
     conn: &Db,
     rel_path: String,
     file_path: &Path,
     force: bool,
-) -> Result<FileAction, IndexError> {
-    let pf = match prepare_file(rel_path, file_path) {
-        Ok(pf) => pf,
-        Err(action) => return Ok(action),
+) -> Result<CheckResult, IndexError> {
+    let source = match read_source(file_path) {
+        Ok(s) => s,
+        Err(FileAction::Skip) => return Ok(CheckResult::Skip),
+        Err(_) => return Ok(CheckResult::Error),
     };
+    let hash = file_hash(&source);
 
-    if !force && !storage::should_reindex(conn, &pf.rel_path, &pf.hash)? {
-        tracing::debug!(file = %pf.rel_path, "Skipped (unchanged)");
-        return Ok(FileAction::Skip);
+    if !force && !storage::should_reindex(conn, &rel_path, &hash)? {
+        tracing::debug!(file = %rel_path, "Skipped (unchanged)");
+        return Ok(CheckResult::Skip);
     }
 
-    Ok(FileAction::Process(pf))
+    Ok(CheckResult::Changed(CheckedFile {
+        rel_path,
+        source,
+        hash,
+    }))
+}
+
+fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile> {
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_chunks = chunker::chunk_file(&checked.source, ext);
+    if file_chunks.chunks.is_empty() {
+        tracing::debug!(file = %checked.rel_path, "Skipped (no chunks)");
+        return None;
+    }
+
+    let imports_text = file_chunks.imports.join("\n");
+    Some(PendingFile {
+        rel_path: checked.rel_path,
+        raw_chunks: file_chunks.chunks,
+        imports_text,
+        parsed_imports: file_chunks.parsed_imports,
+        hash: checked.hash,
+    })
 }
 
 fn collect_pending_files(
@@ -168,28 +191,26 @@ fn collect_pending_files(
     for file_path in files {
         let rel_path = to_rel_path(root, file_path);
         all_rel_paths.insert(rel_path.clone());
-        let pf = match prepare_file(rel_path, file_path) {
-            Ok(pf) => pf,
-            Err(FileAction::Skip) => {
-                files_skipped += 1;
-                continue;
-            }
-            Err(_) => {
-                files_errored += 1;
-                continue;
+        let checked = {
+            let conn_guard = conn.lock().unwrap();
+            match check_file(&conn_guard, rel_path, file_path, force)? {
+                CheckResult::Changed(c) => c,
+                CheckResult::Skip => {
+                    files_skipped += 1;
+                    continue;
+                }
+                CheckResult::Error => {
+                    files_errored += 1;
+                    continue;
+                }
             }
         };
-
-        if !force {
-            let conn_guard = conn.lock().unwrap();
-            if !storage::should_reindex(&conn_guard, &pf.rel_path, &pf.hash)? {
-                tracing::debug!(file = %pf.rel_path, "Skipped (unchanged)");
+        match prepare_chunks(checked, file_path) {
+            Some(pf) => pending.push(pf),
+            None => {
                 files_skipped += 1;
-                continue;
             }
         }
-
-        pending.push(pf);
     }
 
     Ok((pending, files_skipped, files_errored, all_rel_paths))
@@ -263,6 +284,45 @@ fn build_references(
         .collect()
 }
 
+pub fn dry_run_index(
+    conn: Arc<Mutex<Db>>,
+    root: &Path,
+    force: bool,
+) -> Result<DryRunResult, IndexError> {
+    let files = walker::walk_source_files(root);
+    let total_files = files.len() as u32;
+    let mut files_to_process = 0u32;
+    let mut files_to_skip = 0u32;
+    let mut files_errored = 0u32;
+    let mut current_rel_paths = std::collections::HashSet::with_capacity(files.len());
+
+    let conn_guard = conn.lock().unwrap();
+    for file_path in &files {
+        let rel_path = to_rel_path(root, file_path);
+        current_rel_paths.insert(rel_path.clone());
+        match check_file(&conn_guard, rel_path, file_path, force) {
+            Ok(CheckResult::Changed(_)) => files_to_process += 1,
+            Ok(CheckResult::Skip) => files_to_skip += 1,
+            Ok(CheckResult::Error) => files_errored += 1,
+            Err(e) => {
+                tracing::warn!(file = %file_path.display(), error = %e, "check_file failed during dry run");
+                files_errored += 1;
+            }
+        }
+    }
+
+    let indexed_paths = storage::get_all_file_paths(&conn_guard)?;
+    let orphans_to_remove = indexed_paths.difference(&current_rel_paths).count() as u32;
+
+    Ok(DryRunResult {
+        total_files,
+        files_to_process,
+        files_to_skip,
+        files_errored,
+        orphans_to_remove,
+    })
+}
+
 pub fn run_chunk_only_index(conn: Arc<Mutex<Db>>, root: &Path) -> Result<IndexResult, IndexError> {
     run_chunk_only_index_inner(conn, root, false)
 }
@@ -302,8 +362,19 @@ fn run_chunk_only_index_inner(
         for file_path in &files {
             let rel_path = to_rel_path(root, file_path);
             current_rel_paths.insert(rel_path.clone());
-            match process_file(&conn_guard, rel_path, file_path, force)? {
-                FileAction::Process(pf) => {
+            let checked = match check_file(&conn_guard, rel_path, file_path, force)? {
+                CheckResult::Changed(c) => c,
+                CheckResult::Skip => {
+                    files_skipped += 1;
+                    continue;
+                }
+                CheckResult::Error => {
+                    files_errored += 1;
+                    continue;
+                }
+            };
+            match prepare_chunks(checked, file_path) {
+                Some(pf) => {
                     let n = pf.raw_chunks.len() as u32;
                     let new_chunks = pf.to_new_chunks();
                     let refs = if pf.rel_path.ends_with(".rs") {
@@ -322,8 +393,7 @@ fn run_chunk_only_index_inner(
                     chunks_created += n;
                     files_processed += 1;
                 }
-                FileAction::Skip => files_skipped += 1,
-                FileAction::Error => files_errored += 1,
+                None => files_skipped += 1,
             }
         }
 

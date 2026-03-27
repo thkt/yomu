@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::Serialize;
+
 use crate::storage;
 
 pub(super) struct EnrichmentContext {
@@ -143,6 +145,33 @@ fn format_siblings_line(
         return None;
     }
     Some(format!("Siblings: {}\n", filtered.join(", ")))
+}
+
+#[derive(Serialize)]
+struct JsonChunk<'a> {
+    file: &'a str,
+    name: &'a str,
+    r#type: &'a str,
+    start_line: u32,
+    end_line: u32,
+    score: f32,
+    content: &'a str,
+}
+
+pub(super) fn format_results_json(results: &[storage::SearchResult]) -> String {
+    let items: Vec<JsonChunk> = results
+        .iter()
+        .map(|r| JsonChunk {
+            file: &r.chunk.file_path,
+            name: r.chunk.name.as_deref().unwrap_or(""),
+            r#type: r.chunk.chunk_type.as_str(),
+            start_line: r.chunk.start_line,
+            end_line: r.chunk.end_line,
+            score: r.score,
+            content: &r.chunk.content,
+        })
+        .collect();
+    serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn format_file_group(

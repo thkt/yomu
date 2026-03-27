@@ -1,8 +1,10 @@
 mod format;
 
 use std::collections::HashSet;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rurico::embed::{Embed, EmbedError, Embedder, ModelPaths};
@@ -14,7 +16,7 @@ use crate::storage;
 
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_impact_all,
-    format_impact_results, format_no_results_message, format_results_grouped,
+    format_impact_results, format_no_results_message, format_results_grouped, format_results_json,
 };
 
 const DEFAULT_EMBED_BUDGET: u32 = 50;
@@ -26,6 +28,32 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputFormat {
+    Text,
+    Json,
+}
+
+impl FromStr for OutputFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            _ => Err(format!("unknown format '{s}', expected 'text' or 'json'")),
+        }
+    }
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text => write!(f, "text"),
+            Self::Json => write!(f, "json"),
+        }
+    }
+}
 
 fn parse_embed_budget() -> u32 {
     parse_budget_value(std::env::var("YOMU_EMBED_BUDGET").ok().as_deref())
@@ -175,7 +203,13 @@ impl Yomu {
         }
     }
 
-    pub fn search(&self, query: &str, limit: u32, offset: u32) -> Result<String, YomuError> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+        format: OutputFormat,
+    ) -> Result<String, YomuError> {
         if query.is_empty() {
             return Err(YomuError::InvalidInput("query must not be empty".into()));
         }
@@ -212,6 +246,10 @@ impl Yomu {
             notes.push("embedding model not loaded, results from text search only".into());
         }
 
+        if format == OutputFormat::Json {
+            return Ok(format_results_json(&outcome.results));
+        }
+
         if outcome.results.is_empty() {
             let mut msg = format_no_results_message(&stats);
             for note in &notes {
@@ -241,6 +279,24 @@ impl Yomu {
         );
         if let Some(note) = format_coverage_note(&stats) {
             text.push_str(&note);
+        }
+        Ok(text)
+    }
+
+    pub fn dry_run_index(&self, force: bool) -> Result<String, YomuError> {
+        let preview = indexer::dry_run_index(Arc::clone(&self.conn), &self.root, force)?;
+        let mut text = format!(
+            "Dry run: {} files to process, {} files unchanged (skip), {} total files",
+            preview.files_to_process, preview.files_to_skip, preview.total_files,
+        );
+        if preview.files_errored > 0 {
+            text.push_str(&format!(", {} errors", preview.files_errored));
+        }
+        if preview.orphans_to_remove > 0 {
+            text.push_str(&format!(
+                ", {} orphaned files to remove",
+                preview.orphans_to_remove
+            ));
         }
         Ok(text)
     }
