@@ -395,6 +395,10 @@ impl Yomu {
 
     fn get_embedder(&self) -> &dyn Embed {
         fn try_load_embedder() -> Option<Arc<dyn Embed>> {
+            if std::env::var("YOMU_EMBED").as_deref() == Ok("0") {
+                tracing::info!("Embedding disabled via YOMU_EMBED=0");
+                return None;
+            }
             tracing::info!("Downloading embedding model (first run may take a few minutes)");
             let paths = match rurico::embed::download_model() {
                 Ok(p) => p,
