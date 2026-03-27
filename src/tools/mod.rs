@@ -1,10 +1,11 @@
 mod format;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rurico::embed::{Embed, EmbedError, Embedder};
+use rurico::embed::{Embed, EmbedError, Embedder, ModelPaths};
 
 use crate::config;
 use crate::indexer;
@@ -67,6 +68,44 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
         IndexState::PartiallyEmbedded
     } else {
         IndexState::FullyEmbedded
+    }
+}
+
+const PROBE_EXIT_UNAVAILABLE: u8 = 10;
+
+/// Entry point for `--probe-embed <model_dir>`. Tries `Embedder::new()` only.
+/// Exit 0 = loadable, exit 10 = Rust-level failure, signal/abort = FFI crash.
+pub fn probe_embedder(model_dir: &str) -> ExitCode {
+    let dir = Path::new(model_dir);
+    let paths = ModelPaths {
+        model: dir.join("model.safetensors"),
+        config: dir.join("config.json"),
+        tokenizer: dir.join("tokenizer.json"),
+    };
+    if paths.validate().is_err() {
+        return ExitCode::from(PROBE_EXIT_UNAVAILABLE);
+    }
+    match Embedder::new(&paths) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::from(PROBE_EXIT_UNAVAILABLE),
+    }
+}
+
+fn run_embed_probe(model_dir: &Path) -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    match std::process::Command::new(exe)
+        .arg("--probe-embed")
+        .arg(model_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
     }
 }
 
@@ -407,6 +446,11 @@ impl Yomu {
                     return None;
                 }
             };
+            let model_dir = paths.model.parent()?;
+            if !run_embed_probe(model_dir) {
+                tracing::warn!("Embed probe failed (MLX unavailable), using text search only");
+                return None;
+            }
             let embedder = Embedder::new(&paths)
                 .map_err(|e| {
                     tracing::warn!(error = %e, "Embedder unavailable, using text search only");

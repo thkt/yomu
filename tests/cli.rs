@@ -145,12 +145,11 @@ fn index_then_status_then_search() {
     assert!(stdout.contains("Files: 1"), "expected Files: 1: {stdout}");
     assert!(stdout.contains("Chunks:"), "expected Chunks line: {stdout}");
 
-    // search (text-only, no embedding)
+    // search (text-only fallback via probe — no YOMU_EMBED override)
     let output = yomu_cmd()
         .args(["search", "button"])
         .current_dir(dir.path())
         .env_remove("GEMINI_API_KEY")
-        .env("YOMU_EMBED", "0")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
