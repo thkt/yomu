@@ -17,6 +17,12 @@ pub struct EmbedResult {
     pub budget_exhausted: bool,
 }
 
+pub(super) struct EmbedStoreResult {
+    pub files_processed: u32,
+    pub chunks_created: u32,
+    pub files_errored: u32,
+}
+
 enum EmbedFailure {
     Abort(EmbedError),
     Skip,
@@ -68,15 +74,14 @@ fn store_file_data(
     refs: Vec<Reference>,
 ) -> Result<(), StorageError> {
     let new_chunks = pf.to_new_chunks();
-    storage::replace_file_chunks(
-        conn,
-        &pf.rel_path,
-        &new_chunks,
-        &embeddings,
-        &pf.hash,
-        &pf.imports_text,
-        &refs,
-    )
+    let data = storage::FileData {
+        file_path: &pf.rel_path,
+        chunks: &new_chunks,
+        file_hash: &pf.hash,
+        imports_text: &pf.imports_text,
+        refs: &refs,
+    };
+    storage::replace_file_chunks_with(conn, &data, &embeddings)
 }
 
 pub(super) fn embed_and_store(
@@ -85,7 +90,7 @@ pub(super) fn embed_and_store(
     pending: Vec<PendingFile>,
     resolver: &Resolver,
     rust_resolver: &RustResolver,
-) -> Result<(u32, u32, u32), IndexError> {
+) -> Result<EmbedStoreResult, IndexError> {
     let pending_total = pending.len();
     let mut files_processed = 0u32;
     let mut chunks_created = 0u32;
@@ -143,7 +148,7 @@ pub(super) fn embed_and_store(
         }
     }
 
-    Ok((files_processed, chunks_created, files_errored))
+    Ok(EmbedStoreResult { files_processed, chunks_created, files_errored })
 }
 
 pub(super) fn order_files_for_embedding(

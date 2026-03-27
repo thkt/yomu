@@ -169,28 +169,27 @@ fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile>
     })
 }
 
+struct CollectResult {
+    pending: Vec<PendingFile>,
+    files_skipped: u32,
+    files_errored: u32,
+    rel_paths: std::collections::HashSet<String>,
+}
+
 fn collect_pending_files(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
     files: &[std::path::PathBuf],
     force: bool,
-) -> Result<
-    (
-        Vec<PendingFile>,
-        u32,
-        u32,
-        std::collections::HashSet<String>,
-    ),
-    IndexError,
-> {
+) -> Result<CollectResult, IndexError> {
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
     let mut files_errored = 0u32;
-    let mut all_rel_paths = std::collections::HashSet::with_capacity(files.len());
+    let mut rel_paths = std::collections::HashSet::with_capacity(files.len());
 
     for file_path in files {
         let rel_path = to_rel_path(root, file_path);
-        all_rel_paths.insert(rel_path.clone());
+        rel_paths.insert(rel_path.clone());
         let checked = {
             let conn_guard = conn.lock().unwrap();
             match check_file(&conn_guard, rel_path, file_path, force)? {
@@ -213,7 +212,7 @@ fn collect_pending_files(
         }
     }
 
-    Ok((pending, files_skipped, files_errored, all_rel_paths))
+    Ok(CollectResult { pending, files_skipped, files_errored, rel_paths })
 }
 
 fn remove_orphans(
@@ -444,16 +443,18 @@ pub fn run_index(
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
 
-    let (pending, files_skipped, mut files_errored, current_rel_paths) =
-        collect_pending_files(&conn, root, &files, force)?;
+    let collected = collect_pending_files(&conn, root, &files, force)?;
+    let files_skipped = collected.files_skipped;
+    let mut files_errored = collected.files_errored;
 
-    remove_orphans(&conn, current_rel_paths)?;
+    remove_orphans(&conn, collected.rel_paths)?;
 
     let resolver = Resolver::new(root);
     let rust_resolver = RustResolver::new(root);
-    let (files_processed, chunks_created, embed_errors) =
-        embed_and_store(&conn, embedder, pending, &resolver, &rust_resolver)?;
-    files_errored += embed_errors;
+    let embed_result = embed_and_store(&conn, embedder, collected.pending, &resolver, &rust_resolver)?;
+    let files_processed = embed_result.files_processed;
+    let chunks_created = embed_result.chunks_created;
+    files_errored += embed_result.files_errored;
 
     tracing::info!(
         files_processed,
