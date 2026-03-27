@@ -19,8 +19,8 @@ impl RustResolver {
     pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
         if let Some(rest) = source.strip_prefix("crate::") {
             self.resolve_crate(rest)
-        } else if let Some(rest) = source.strip_prefix("super::") {
-            self.resolve_super(rest, from_file)
+        } else if source.starts_with("super::") {
+            self.resolve_super(source, from_file)
         } else if let Some(rest) = source.strip_prefix("self::") {
             self.resolve_self(rest, from_file)
         } else {
@@ -33,14 +33,18 @@ impl RustResolver {
         self.probe_with_symbol_fallback(&segments, 1)
     }
 
-    fn resolve_super(&self, rest: &str, from_file: &str) -> Option<String> {
-        let module_path = module_path_from_file(from_file);
-        if module_path.is_empty() {
-            return None;
+    fn resolve_super(&self, source: &str, from_file: &str) -> Option<String> {
+        let mut module_path = module_path_from_file(from_file);
+        let mut rest = source;
+        while let Some(after) = rest.strip_prefix("super::") {
+            if module_path.is_empty() {
+                return None;
+            }
+            module_path.pop();
+            rest = after;
         }
-        let parent = &module_path[..module_path.len() - 1];
-        let min_len = parent.len() + 1;
-        let segments: Vec<&str> = parent.iter().map(|s| s.as_str()).chain(rest.split("::")).collect();
+        let min_len = module_path.len() + 1;
+        let segments: Vec<&str> = module_path.iter().map(|s| s.as_str()).chain(rest.split("::")).collect();
         self.probe_with_symbol_fallback(&segments, min_len)
     }
 
@@ -243,5 +247,21 @@ mod tests {
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("serde::Deserialize", "src/lib.rs");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resolve_super_super_multi_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let a = src.join("a");
+        let deep = a.join("b");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("c.rs"), "").unwrap();
+        fs::write(a.join("util.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // a::b::c → super → a::b → super → a → util → a::util
+        let result = resolver.resolve("super::super::util", "src/a/b/c.rs");
+        assert_eq!(result, Some("src/a/util.rs".to_string()));
     }
 }
