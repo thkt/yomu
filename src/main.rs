@@ -1,13 +1,19 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
+use yomu::tools::{
+    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, probe_embedder,
+};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// Probe whether the embedding model can load safely (hidden, internal use)
+    #[arg(long, hide = true)]
+    probe_embed: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -52,6 +58,10 @@ fn main() -> ExitCode {
         .init();
 
     let cli = Cli::parse();
+
+    if let Some(model_dir) = cli.probe_embed {
+        return probe_embedder(&model_dir);
+    }
 
     let yomu = match Yomu::new() {
         Ok(y) => y,

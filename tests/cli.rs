@@ -145,7 +145,7 @@ fn index_then_status_then_search() {
     assert!(stdout.contains("Files: 1"), "expected Files: 1: {stdout}");
     assert!(stdout.contains("Chunks:"), "expected Chunks line: {stdout}");
 
-    // search (text-only, no GEMINI_API_KEY)
+    // search (text-only fallback via probe — no YOMU_EMBED override)
     let output = yomu_cmd()
         .args(["search", "button"])
         .current_dir(dir.path())

@@ -164,8 +164,7 @@ fn search_incremental_embeds_chunked_only() {
         Arc::new(rurico::embed::MockEmbedder),
     );
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path())
-        .unwrap();
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     {
         let c = y.conn.lock().unwrap();
@@ -834,9 +833,7 @@ fn impact_filters_by_symbol() {
         .unwrap();
     }
 
-    let text = y
-        .impact("src/hooks/useAuth.ts:useAuth", None, 3)
-        .unwrap();
+    let text = y.impact("src/hooks/useAuth.ts:useAuth", None, 3).unwrap();
     assert!(
         text.contains("Direct symbol references"),
         "expected symbol section: {text}"
@@ -1098,8 +1095,7 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         Arc::new(rurico::embed::MockEmbedder),
     );
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path())
-        .unwrap();
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let stats_before = {
         let c = y.conn.lock().unwrap();

@@ -1,10 +1,11 @@
 mod format;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rurico::embed::{Embed, EmbedError, Embedder};
+use rurico::embed::{Embed, EmbedError, Embedder, ModelPaths};
 
 use crate::config;
 use crate::indexer;
@@ -67,6 +68,44 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
         IndexState::PartiallyEmbedded
     } else {
         IndexState::FullyEmbedded
+    }
+}
+
+const PROBE_EXIT_UNAVAILABLE: u8 = 10;
+
+/// Entry point for `--probe-embed <model_dir>`. Tries `Embedder::new()` only.
+/// Exit 0 = loadable, exit 10 = Rust-level failure, signal/abort = FFI crash.
+pub fn probe_embedder(model_dir: &str) -> ExitCode {
+    let dir = Path::new(model_dir);
+    let paths = ModelPaths {
+        model: dir.join("model.safetensors"),
+        config: dir.join("config.json"),
+        tokenizer: dir.join("tokenizer.json"),
+    };
+    if paths.validate().is_err() {
+        return ExitCode::from(PROBE_EXIT_UNAVAILABLE);
+    }
+    match Embedder::new(&paths) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::from(PROBE_EXIT_UNAVAILABLE),
+    }
+}
+
+fn run_embed_probe(model_dir: &Path) -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    match std::process::Command::new(exe)
+        .arg("--probe-embed")
+        .arg(model_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
     }
 }
 
@@ -190,8 +229,7 @@ impl Yomu {
     }
 
     pub fn index(&self) -> Result<String, YomuError> {
-        let chunk_result =
-            indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
 
         let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
@@ -208,8 +246,7 @@ impl Yomu {
     }
 
     pub fn rebuild(&self) -> Result<String, YomuError> {
-        let chunk_result =
-            indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
 
         let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
@@ -253,16 +290,15 @@ impl Yomu {
         let fp = file_path.to_string();
         let sym_owned = symbol_filter.map(|s| s.to_string());
 
-        let (file_in_index, dependents, symbol_refs) = self
-            .with_db(move |conn| {
-                let exists = storage::file_exists_in_index(conn, &fp)?;
-                let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
-                let refs = match &sym_owned {
-                    Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
-                    None => vec![],
-                };
-                Ok((exists, dependents, refs))
-            })?;
+        let (file_in_index, dependents, symbol_refs) = self.with_db(move |conn| {
+            let exists = storage::file_exists_in_index(conn, &fp)?;
+            let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
+            let refs = match &sym_owned {
+                Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
+                None => vec![],
+            };
+            Ok((exists, dependents, refs))
+        })?;
 
         if dependents.is_empty() {
             return Ok(if file_in_index {
@@ -285,12 +321,11 @@ impl Yomu {
     }
 
     pub fn status(&self) -> Result<String, YomuError> {
-        let (stats, ref_count) = self
-            .with_db(|conn| {
-                let stats = storage::get_stats(conn)?;
-                let ref_count = storage::get_reference_count(conn)?;
-                Ok((stats, ref_count))
-            })?;
+        let (stats, ref_count) = self.with_db(|conn| {
+            let stats = storage::get_stats(conn)?;
+            let ref_count = storage::get_reference_count(conn)?;
+            Ok((stats, ref_count))
+        })?;
 
         Ok(format!(
             "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}\n  References: {}\n  Last indexed: {}",
@@ -357,9 +392,10 @@ impl Yomu {
 
     fn try_rechunk(&self) -> Option<String> {
         match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root) {
-            Ok(r) if r.files_errored > 0 => {
-                Some(format!("{} files had errors during re-indexing", r.files_errored))
-            }
+            Ok(r) if r.files_errored > 0 => Some(format!(
+                "{} files had errors during re-indexing",
+                r.files_errored
+            )),
             Ok(_) => None,
             Err(e) => Some(format!("re-chunking failed: {e}")),
         }
@@ -382,9 +418,7 @@ impl Yomu {
     }
 
     fn check_index_fresh(&self) -> bool {
-        match self
-            .with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS))
-        {
+        match self.with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS)) {
             Ok(fresh) => fresh,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");
@@ -395,6 +429,10 @@ impl Yomu {
 
     fn get_embedder(&self) -> &dyn Embed {
         fn try_load_embedder() -> Option<Arc<dyn Embed>> {
+            if std::env::var("YOMU_EMBED").as_deref() == Ok("0") {
+                tracing::info!("Embedding disabled via YOMU_EMBED=0");
+                return None;
+            }
             tracing::info!("Downloading embedding model (first run may take a few minutes)");
             let paths = match rurico::embed::download_model() {
                 Ok(p) => p,
@@ -403,6 +441,11 @@ impl Yomu {
                     return None;
                 }
             };
+            let model_dir = paths.model.parent()?;
+            if !run_embed_probe(model_dir) {
+                tracing::warn!("Embed probe failed (MLX unavailable), using text search only");
+                return None;
+            }
             let embedder = Embedder::new(&paths)
                 .map_err(|e| {
                     tracing::warn!(error = %e, "Embedder unavailable, using text search only");
@@ -415,10 +458,7 @@ impl Yomu {
 
         static NOOP: NoOpEmbedder = NoOpEmbedder;
         if self.embedder.get().is_none() {
-            let result = try_load_embedder();
-            if result.is_some() {
-                let _ = self.embedder.set(result);
-            }
+            let _ = self.embedder.set(try_load_embedder());
         }
         self.embedder
             .get()

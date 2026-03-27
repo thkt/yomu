@@ -286,9 +286,7 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth", 5, 0)
-        .unwrap()
-        .results;
+    let results = search(conn, &MockEmbedder, "auth", 5, 0).unwrap().results;
 
     let auth_count = results
         .iter()

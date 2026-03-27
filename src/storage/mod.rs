@@ -250,7 +250,15 @@ pub fn replace_file_chunks(
             embeddings: embeddings.len(),
         });
     }
-    replace_file_chunks_inner(conn, file_path, chunks, Some(embeddings), file_hash, imports_text, refs)
+    replace_file_chunks_inner(
+        conn,
+        file_path,
+        chunks,
+        Some(embeddings),
+        file_hash,
+        imports_text,
+        refs,
+    )
 }
 
 pub fn replace_file_chunks_only(

@@ -1955,11 +1955,13 @@ fn migration_v3_to_v4_creates_vocab_table() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(exists, "fts_chunks_vocab should exist after v3->v4 migration");
+    assert!(
+        exists,
+        "fts_chunks_vocab should exist after v3->v4 migration"
+    );
 
     // Verify data preserved: chunk should still be searchable
-    let results =
-        search_by_content(&conn, &["migrationTest"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_content(&conn, &["migrationTest"], None, &HashSet::new(), 10).unwrap();
     assert!(
         !results.is_empty(),
         "seeded chunk should survive v3->v4 migration"
@@ -2124,7 +2126,10 @@ fn search_by_name_escapes_like_wildcards() {
 
     // Searching for "use_auth" should NOT match "useXAuth" via _ wildcard
     let results = search_by_name(&conn, &["use_auth"], None, &HashSet::new(), 10).unwrap();
-    let names: Vec<_> = results.iter().filter_map(|r| r.chunk.name.as_deref()).collect();
+    let names: Vec<_> = results
+        .iter()
+        .filter_map(|r| r.chunk.name.as_deref())
+        .collect();
     assert!(
         names.contains(&"use_Auth"),
         "should find use_Auth, got: {names:?}"

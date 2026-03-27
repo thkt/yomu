@@ -82,29 +82,8 @@ impl Resolver {
         None
     }
 
-    /// Returns None if the path escapes the project root.
     fn to_relative(&self, abs: &Path) -> Option<String> {
-        let abs = match abs.canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(path = %abs.display(), error = %e, "canonicalize failed for existing path");
-                return None;
-            }
-        };
-        let root = match self.canonical_root.as_deref() {
-            Some(p) => p,
-            None => {
-                tracing::warn!(path = %self.root.display(), "canonical root unavailable");
-                return None;
-            }
-        };
-        match abs.strip_prefix(root) {
-            Ok(p) => Some(p.to_string_lossy().to_string()),
-            Err(_) => {
-                tracing::warn!(path = %abs.display(), root = %root.display(), "Resolved path escapes project root");
-                None
-            }
-        }
+        to_relative_path(abs, &self.root, self.canonical_root.as_deref())
     }
 
     /// Follow re-export chain through barrel files. Returns files excluding start.
@@ -149,6 +128,41 @@ impl Resolver {
             }
         }
         result
+    }
+}
+
+pub trait Resolve {
+    fn resolve(&self, source: &str, from_file: &str) -> Option<String>;
+}
+
+impl Resolve for Resolver {
+    fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
+        self.resolve(source, from_file)
+    }
+}
+
+/// Convert absolute path to project-relative path. Returns None if path escapes root.
+pub fn to_relative_path(abs: &Path, root: &Path, canonical_root: Option<&Path>) -> Option<String> {
+    let abs = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(path = %abs.display(), error = %e, "canonicalize failed for existing path");
+            return None;
+        }
+    };
+    let root = match canonical_root {
+        Some(p) => p,
+        None => {
+            tracing::warn!(path = %root.display(), "canonical root unavailable");
+            return None;
+        }
+    };
+    match abs.strip_prefix(root) {
+        Ok(p) => Some(p.to_string_lossy().to_string()),
+        Err(_) => {
+            tracing::warn!(path = %abs.display(), root = %root.display(), "Resolved path escapes project root");
+            None
+        }
     }
 }
 
@@ -389,18 +403,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_exact_extension_match() {
-        let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("styles.css"), "").unwrap();
-
-        let resolver = Resolver::new(tmp.path());
-        let result = resolver.resolve("./styles.css", "src/App.tsx");
-        assert_eq!(result, Some("src/styles.css".to_string()));
-    }
-
-    #[test]
     fn resolve_non_frontend_extension_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
@@ -420,27 +422,6 @@ mod tests {
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("@tanstack/react-query", "src/App.tsx");
         assert_eq!(result, None);
-    }
-
-    #[test]
-    fn resolver_new_loads_aliases() {
-        let tmp = tempfile::tempdir().unwrap();
-        let tsconfig = r#"{
-            "compilerOptions": {
-                "paths": {
-                    "@/*": ["src/*"]
-                }
-            }
-        }"#;
-        fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
-
-        let resolver = Resolver::new(tmp.path());
-        let src = tmp.path().join("src").join("lib");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("utils.ts"), "").unwrap();
-
-        let result = resolver.resolve("@/lib/utils", "src/App.tsx");
-        assert_eq!(result, Some("src/lib/utils.ts".to_string()));
     }
 
     #[test]

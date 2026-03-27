@@ -33,8 +33,7 @@ fn benchmark_chunk_only_index() {
     let conn = Arc::new(std::sync::Mutex::new(conn));
 
     let start = Instant::now();
-    yomu::indexer::run_chunk_only_index(Arc::clone(&conn), &root)
-        .unwrap();
+    yomu::indexer::run_chunk_only_index(Arc::clone(&conn), &root).unwrap();
     let chunk_time = start.elapsed();
 
     let stats = {

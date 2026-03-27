@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embed, EmbedError};
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
+use rurico::embed::{Embed, EmbedError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -55,7 +55,10 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
     for token in query.split_whitespace() {
         let lower = token.to_lowercase();
-        if lower.chars().count() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !base.contains(&lower) {
+        if lower.chars().count() >= 2
+            && !STOP_WORDS.contains(&lower.as_str())
+            && !base.contains(&lower)
+        {
             base.push(lower);
         }
         for part in split_identifier(token) {
@@ -329,8 +332,9 @@ fn search_pipeline(
     let type_hints = extract_type_hints(query);
     let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
 
+    let fetch_limit = limit.saturating_add(offset);
     let mut results = match query_embedding {
-        Some(emb) => storage::search_similar(conn, emb, limit, offset)?,
+        Some(emb) => storage::search_similar(conn, emb, fetch_limit, 0)?,
         None => Vec::new(),
     };
 
@@ -387,6 +391,10 @@ fn search_pipeline(
     };
     rerank(&mut results, &ctx, &import_counts);
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
+    if offset > 0 {
+        let skip = std::cmp::min(offset as usize, results.len());
+        results.drain(..skip);
+    }
     results.truncate(limit as usize);
 
     Ok(results)
@@ -408,13 +416,7 @@ pub fn search(
     };
 
     let conn = conn.lock().unwrap();
-    let results = search_pipeline(
-        &conn,
-        query,
-        query_embedding.as_deref(),
-        limit,
-        offset,
-    )?;
+    let results = search_pipeline(&conn, query, query_embedding.as_deref(), limit, offset)?;
     Ok(SearchOutcome { results, degraded })
 }
 

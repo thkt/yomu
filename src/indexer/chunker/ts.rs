@@ -1,9 +1,9 @@
 use crate::storage::ChunkType;
 
 use super::{
+    FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk, ReExport,
     attach_pending_comments, chunk_fallback, classify_function, extract_name, find_child_by_kind,
-    make_chunk, make_parser, other_or_skip, FileChunks, ImportKind, ImportSpecifier, ParsedImport,
-    RawChunk, ReExport,
+    make_chunk, make_parser, other_or_skip,
 };
 
 pub(super) fn chunk_tsx(source: &str) -> FileChunks {
@@ -67,8 +67,7 @@ pub(crate) fn parse_structured_imports(source: &str, extension: &str) -> Vec<Par
             parse_imports_from_ast(source, &mut parser)
         }
         "ts" | "js" | "mjs" => {
-            let Some(mut parser) =
-                make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            let Some(mut parser) = make_parser(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
             else {
                 return Vec::new();
             };
