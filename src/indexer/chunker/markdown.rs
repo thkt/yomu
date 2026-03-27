@@ -1,6 +1,6 @@
 use crate::storage::ChunkType;
 
-use super::{chunk_fallback, RawChunk};
+use super::{RawChunk, chunk_fallback};
 
 pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
     let lines: Vec<&str> = source.lines().collect();

@@ -1,8 +1,8 @@
 use crate::storage::ChunkType;
 
 use super::{
-    attach_pending_comments, chunk_fallback, extract_name, make_chunk, make_parser, other_or_skip,
-    FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk,
+    FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk, attach_pending_comments,
+    chunk_fallback, extract_name, make_chunk, make_parser, other_or_skip,
 };
 
 pub(super) fn chunk_rust(source: &str) -> FileChunks {
@@ -70,7 +70,9 @@ fn parse_rust_use(node: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {
         return vec![];
     };
     match argument.kind() {
-        "scoped_identifier" => parse_scoped_identifier(&argument, source).into_iter().collect(),
+        "scoped_identifier" => parse_scoped_identifier(&argument, source)
+            .into_iter()
+            .collect(),
         "scoped_use_list" => parse_scoped_use_list(&argument, source),
         "use_wildcard" => parse_use_wildcard(&argument, source).into_iter().collect(),
         "use_as_clause" => parse_use_as_clause(&argument, source).into_iter().collect(),
@@ -187,8 +189,13 @@ fn collect_use_list_imports(
                     child.child_by_field_name("path"),
                     child.child_by_field_name("list"),
                 ) {
-                    let nested_path = format!("{}::{}", base_path, &source[inner_path.byte_range()]);
-                    extra_imports.extend(collect_use_list_imports(&nested_path, &inner_list, source));
+                    let nested_path =
+                        format!("{}::{}", base_path, &source[inner_path.byte_range()]);
+                    extra_imports.extend(collect_use_list_imports(
+                        &nested_path,
+                        &inner_list,
+                        source,
+                    ));
                 }
             }
             "use_wildcard" => {
@@ -202,10 +209,13 @@ fn collect_use_list_imports(
         }
     }
     if !base_specifiers.is_empty() {
-        extra_imports.insert(0, ParsedImport {
-            source: base_path.to_string(),
-            specifiers: base_specifiers,
-        });
+        extra_imports.insert(
+            0,
+            ParsedImport {
+                source: base_path.to_string(),
+                specifiers: base_specifiers,
+            },
+        );
     }
     extra_imports
 }

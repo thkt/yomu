@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embed, EmbedError};
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
+use rurico::embed::{Embed, EmbedError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -55,7 +55,10 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
     for token in query.split_whitespace() {
         let lower = token.to_lowercase();
-        if lower.chars().count() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !base.contains(&lower) {
+        if lower.chars().count() >= 2
+            && !STOP_WORDS.contains(&lower.as_str())
+            && !base.contains(&lower)
+        {
             base.push(lower);
         }
         for part in split_identifier(token) {
@@ -413,13 +416,7 @@ pub fn search(
     };
 
     let conn = conn.lock().unwrap();
-    let results = search_pipeline(
-        &conn,
-        query,
-        query_embedding.as_deref(),
-        limit,
-        offset,
-    )?;
+    let results = search_pipeline(&conn, query, query_embedding.as_deref(), limit, offset)?;
     Ok(SearchOutcome { results, degraded })
 }
 

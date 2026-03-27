@@ -1,0 +1,320 @@
+- generic [ref=e2]:
+  - region
+  - generic [ref=e3]:
+    - link "Skip to content" [ref=e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=e6]:
+      - heading "Navigation Menu" [level=2] [ref=e7]
+      - generic [ref=e8]:
+        - link "Homepage" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img [ref=e11]
+        - generic [ref=e13]:
+          - navigation "Global" [ref=e16]:
+            - list [ref=e17]:
+              - listitem [ref=e18]:
+                - button "Platform" [ref=e20] [cursor=pointer]:
+                  - text: Platform
+                  - img [ref=e21]
+              - listitem [ref=e23]:
+                - button "Solutions" [ref=e25] [cursor=pointer]:
+                  - text: Solutions
+                  - img [ref=e26]
+              - listitem [ref=e28]:
+                - button "Resources" [ref=e30] [cursor=pointer]:
+                  - text: Resources
+                  - img [ref=e31]
+              - listitem [ref=e33]:
+                - button "Open Source" [ref=e35] [cursor=pointer]:
+                  - text: Open Source
+                  - img [ref=e36]
+              - listitem [ref=e38]:
+                - button "Enterprise" [ref=e40] [cursor=pointer]:
+                  - text: Enterprise
+                  - img [ref=e41]
+              - listitem [ref=e43]:
+                - link "Pricing" [ref=e44] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+                  - generic [ref=e45]: Pricing
+          - generic [ref=e46]:
+            - button "Search or jump to…" [ref=e49] [cursor=pointer]:
+              - img [ref=e51]
+            - link "Sign in" [ref=e54] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Frusqlite%2Frusqlite%2Freleases%2Ftag%2Fv0.39.0
+            - link "Sign up" [ref=e55] [cursor=pointer]:
+              - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E%2Freleases%2Fshow&source=header-repo&source_repo=rusqlite%2Frusqlite
+            - button "Appearance settings" [ref=e58] [cursor=pointer]:
+              - img
+  - main [ref=e62]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e66]:
+          - img [ref=e67]
+          - link "rusqlite" [ref=e70] [cursor=pointer]:
+            - /url: /rusqlite
+          - generic [ref=e71]: /
+          - strong [ref=e72]:
+            - link "rusqlite" [ref=e73] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite
+          - generic [ref=e74]: Public
+        - generic [ref=e75]:
+          - list:
+            - listitem [ref=e76]:
+              - link "You must be signed in to change notification settings" [ref=e77] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e78]
+                - text: Notifications
+            - listitem [ref=e80]:
+              - link "Fork 455" [ref=e81] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e82]
+                - text: Fork
+                - generic "455" [ref=e84]
+            - listitem [ref=e85]:
+              - link "You must be signed in to star a repository" [ref=e87] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e88]
+                - text: Star
+                - generic "4114 users starred this repository" [ref=e90]: 4.1k
+      - navigation "Repository" [ref=e91]:
+        - list [ref=e92]:
+          - listitem [ref=e93]:
+            - link "Code" [ref=e94] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/tree/v0.39.0
+              - img [ref=e95]
+              - generic [ref=e97]: Code
+          - listitem [ref=e98]:
+            - link "Issues 130" [ref=e99] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/issues
+              - img [ref=e100]
+              - generic [ref=e103]: Issues
+              - generic "130" [ref=e104]
+          - listitem [ref=e105]:
+            - link "Pull requests 38" [ref=e106] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/pulls
+              - img [ref=e107]
+              - generic [ref=e109]: Pull requests
+              - generic "38" [ref=e110]
+          - listitem [ref=e111]:
+            - link "Discussions" [ref=e112] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/discussions
+              - img [ref=e113]
+              - generic [ref=e115]: Discussions
+          - listitem [ref=e116]:
+            - link "Actions" [ref=e117] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/actions
+              - img [ref=e118]
+              - generic [ref=e120]: Actions
+          - listitem [ref=e121]:
+            - link "Projects" [ref=e122] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/projects
+              - img [ref=e123]
+              - generic [ref=e125]: Projects
+          - listitem [ref=e126]:
+            - link "Wiki" [ref=e127] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/wiki
+              - img [ref=e128]
+              - generic [ref=e130]: Wiki
+          - listitem [ref=e131]:
+            - link "Security" [ref=e132] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/security
+              - img [ref=e133]
+              - generic [ref=e135]: Security
+          - listitem [ref=e136]:
+            - link "Insights" [ref=e137] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/pulse
+              - img [ref=e138]
+              - generic [ref=e140]: Insights
+    - generic [ref=e143]:
+      - navigation "Breadcrumb" [ref=e144]:
+        - list [ref=e145]:
+          - listitem [ref=e146]:
+            - link "Releases" [ref=e147] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/releases
+          - listitem [ref=e148]:
+            - link "v0.39.0" [ref=e149]:
+              - /url: /rusqlite/rusqlite/releases/tag/v0.39.0
+      - generic [ref=e151]:
+        - generic [ref=e152]:
+          - generic [ref=e153]:
+            - generic [ref=e155]:
+              - heading "0.39.0" [level=1] [ref=e156]
+              - link "Latest" [ref=e158] [cursor=pointer]:
+                - /url: /rusqlite/rusqlite/releases/latest
+                - generic [ref=e159]: Latest
+            - button "Compare" [ref=e163] [cursor=pointer]:
+              - generic [ref=e164]:
+                - generic [ref=e165]: Compare
+                - generic:
+                  - img
+          - generic [ref=e167]:
+            - generic [ref=e168]:
+              - img "@gwenn" [ref=e169]
+              - link "gwenn" [ref=e170] [cursor=pointer]:
+                - /url: /gwenn
+              - text: released this 15 Mar 10:36 last week
+            - generic [ref=e171]:
+              - text: ·
+              - link "2 commits" [ref=e172] [cursor=pointer]:
+                - /url: /rusqlite/rusqlite/compare/v0.39.0...master
+              - text: to master since this release
+            - link "Tag v0.39.0" [ref=e174] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/tree/v0.39.0
+              - generic [ref=e175]:
+                - img "Tag" [ref=e176]
+                - text: v0.39.0
+            - generic [ref=e178]:
+              - link "Commit 2a1790a" [ref=e179] [cursor=pointer]:
+                - /url: /rusqlite/rusqlite/commit/2a1790a69107cd03dae85d501dcbdb11c5b32ef3
+                - img "Commit" [ref=e180]
+                - code [ref=e182]: 2a1790a
+              - group [ref=e183]:
+                - generic "Verified commit signature" [ref=e184] [cursor=pointer]:
+                  - img "Verified commit signature" [ref=e185]
+          - generic [ref=e187]:
+            - heading "What's Changed" [level=2] [ref=e188]
+            - list [ref=e189]:
+              - listitem [ref=e190]:
+                - text: Fix constraints on VTab Aux data
+                - link "#1778" [ref=e191] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1778
+                - text: ","
+                - link "#1771" [ref=e192] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/issues/1771
+              - listitem [ref=e193]:
+                - text: Fix docs.rs generation
+                - link "#1779" [ref=e194] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1779
+              - listitem [ref=e195]:
+                - text: Fix a small typo in
+                - code [ref=e196]: rollback_hook
+                - text: docstring
+                - link "#1780" [ref=e197] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1780
+              - listitem [ref=e198]:
+                - text: Fix some warnings from Intellij
+                - link "#1781" [ref=e199] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1781
+              - listitem [ref=e200]:
+                - text: Minimal doc for features
+                - link "#1783" [ref=e201] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1783
+              - listitem [ref=e202]:
+                - text: Clear hooks only for owning connections
+                - link "#1785" [ref=e203] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1785
+                - text: ","
+                - link "#1784" [ref=e204] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/issues/1784
+              - listitem [ref=e205]:
+                - text: Fix link to SQLite C Interface, Prepare Flags
+                - link "#1787" [ref=e206] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1787
+              - listitem [ref=e207]:
+                - text: Comment functions which are not usable from a loadable extension
+                - link "#1789" [ref=e208] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1789
+              - listitem [ref=e209]:
+                - text: Factorize code
+                - link "#1792" [ref=e210] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1792
+              - listitem [ref=e211]:
+                - text: Update getrandom to 0.4
+                - link "#1798" [ref=e212] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1798
+              - listitem [ref=e213]:
+                - text: Update Cargo.toml
+                - link "#1800" [ref=e214] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1800
+              - listitem [ref=e215]:
+                - text: Fix appveyor
+                - link "#1807" [ref=e216] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1807
+              - listitem [ref=e217]:
+                - text: Add support to unix timestamp for chrono, jiff and time
+                - link "#1808" [ref=e218] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1808
+                - text: ","
+                - link "#1803" [ref=e219] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1803
+              - listitem [ref=e220]:
+                - text: "fix(trace): check that the sql string pointer is not NULL"
+                - link "#1805" [ref=e221] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1805
+              - listitem [ref=e222]:
+                - text: Bump bundled SQLite version to 3.51.3
+                - link "#1818" [ref=e223] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1818
+              - listitem [ref=e224]:
+                - text: Use TryFrom for Value
+                - link "#1819" [ref=e225] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1819
+                - text: ","
+                - link "#1817" [ref=e226] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/issues/1817
+              - listitem [ref=e227]:
+                - text: Make possible to pass your own pointers
+                - link "#1626" [ref=e228] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/pull/1626
+                - text: ","
+                - link "#1602" [ref=e229] [cursor=pointer]:
+                  - /url: https://github.com/rusqlite/rusqlite/issues/1602
+            - paragraph [ref=e230]:
+              - strong [ref=e231]: Full Changelog
+              - text: ":"
+              - link "v0.38.0...v0.39.0" [ref=e232] [cursor=pointer]:
+                - /url: https://github.com/rusqlite/rusqlite/compare/v0.38.0...v0.39.0
+        - generic [ref=e233]:
+          - group [ref=e236]:
+            - button "Assets 2" [expanded] [ref=e237] [cursor=pointer]:
+              - generic [ref=e238]:
+                - generic [ref=e239]: Assets
+                - generic "2" [ref=e240]
+            - generic [ref=e243]:
+              - img [ref=e244]
+              - generic [ref=e247]: Loading
+          - generic [ref=e249]:
+            - generic [ref=e251]:
+              - 'button "thumbs up (3): gwenn, 10:28AM on March 15" [disabled] [ref=e252]':
+                - generic [ref=e253]: 👍
+                - generic [ref=e254]: "3"
+              - 'button "heart (2): gwenn, 10:28AM on March 15" [disabled] [ref=e255]':
+                - generic [ref=e256]: ❤️
+                - generic [ref=e257]: "2"
+            - generic [ref=e258]: 3 people reacted
+  - contentinfo [ref=e259]:
+    - heading "Footer" [level=2] [ref=e260]
+    - generic [ref=e261]:
+      - generic [ref=e262]:
+        - link "GitHub Homepage" [ref=e263] [cursor=pointer]:
+          - /url: https://github.com
+          - img [ref=e264]
+        - generic [ref=e266]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=e267]:
+        - heading "Footer navigation" [level=3] [ref=e268]
+        - list "Footer navigation" [ref=e269]:
+          - listitem [ref=e270]:
+            - link "Terms" [ref=e271] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=e272]:
+            - link "Privacy" [ref=e273] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=e274]:
+            - link "Security" [ref=e275] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=e276]:
+            - link "Status" [ref=e277] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=e278]:
+            - link "Community" [ref=e279] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=e280]:
+            - link "Docs" [ref=e281] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=e282]:
+            - link "Contact" [ref=e283] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=e284]:
+            - button "Manage cookies" [ref=e286] [cursor=pointer]
+          - listitem [ref=e287]:
+            - button "Do not share my personal information" [ref=e289] [cursor=pointer]

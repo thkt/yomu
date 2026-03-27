@@ -6,7 +6,7 @@ use crate::resolver::Resolver;
 use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, Reference, StorageError};
 
-use super::{build_references, IndexError, PendingFile};
+use super::{IndexError, PendingFile, build_references};
 
 pub(super) const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 
@@ -22,7 +22,12 @@ enum EmbedFailure {
     Skip,
 }
 
-pub(super) fn enrich_for_embedding(file_path: &str, chunk_type: &str, imports: &str, content: &str) -> String {
+pub(super) fn enrich_for_embedding(
+    file_path: &str,
+    chunk_type: &str,
+    imports: &str,
+    content: &str,
+) -> String {
     let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
     if !imports.is_empty() {
         for line in imports.lines() {

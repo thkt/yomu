@@ -1,0 +1,366 @@
+- generic [ref=e2]:
+  - region
+  - generic [ref=e3]:
+    - link "Skip to content" [ref=e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=e6]:
+      - heading "Navigation Menu" [level=2] [ref=e7]
+      - generic [ref=e8]:
+        - link "Homepage" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img [ref=e11]
+        - generic [ref=e13]:
+          - navigation "Global" [ref=e16]:
+            - list [ref=e17]:
+              - listitem [ref=e18]:
+                - button "Platform" [ref=e20] [cursor=pointer]:
+                  - text: Platform
+                  - img [ref=e21]
+              - listitem [ref=e23]:
+                - button "Solutions" [ref=e25] [cursor=pointer]:
+                  - text: Solutions
+                  - img [ref=e26]
+              - listitem [ref=e28]:
+                - button "Resources" [ref=e30] [cursor=pointer]:
+                  - text: Resources
+                  - img [ref=e31]
+              - listitem [ref=e33]:
+                - button "Open Source" [ref=e35] [cursor=pointer]:
+                  - text: Open Source
+                  - img [ref=e36]
+              - listitem [ref=e38]:
+                - button "Enterprise" [ref=e40] [cursor=pointer]:
+                  - text: Enterprise
+                  - img [ref=e41]
+              - listitem [ref=e43]:
+                - link "Pricing" [ref=e44] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+                  - generic [ref=e45]: Pricing
+          - generic [ref=e46]:
+            - button "Search or jump to…" [ref=e49] [cursor=pointer]:
+              - img [ref=e51]
+            - link "Sign in" [ref=e54] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Frusqlite%2Frusqlite%2Fpull%2F1764
+            - link "Sign up" [ref=e55] [cursor=pointer]:
+              - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E%2Fvoltron%2Fpull_requests_fragments%2Fpull_request_layout&source=header-repo&source_repo=rusqlite%2Frusqlite
+            - button "Appearance settings" [disabled] [ref=e58]:
+              - img
+  - main [ref=e62]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e66]:
+          - img [ref=e67]
+          - link "rusqlite" [ref=e70] [cursor=pointer]:
+            - /url: /rusqlite
+          - generic [ref=e71]: /
+          - strong [ref=e72]:
+            - link "rusqlite" [ref=e73] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite
+          - generic [ref=e74]: Public
+        - generic [ref=e75]:
+          - list:
+            - listitem [ref=e76]:
+              - link "You must be signed in to change notification settings" [ref=e77] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e78]
+                - text: Notifications
+            - listitem [ref=e80]:
+              - link "Fork 455" [ref=e81] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e82]
+                - text: Fork
+                - generic "455" [ref=e84]
+            - listitem [ref=e85]:
+              - link "You must be signed in to star a repository" [ref=e87] [cursor=pointer]:
+                - /url: /login?return_to=%2Frusqlite%2Frusqlite
+                - img [ref=e88]
+                - text: Star
+                - generic "4114 users starred this repository" [ref=e90]: 4.1k
+      - navigation "Repository" [ref=e91]:
+        - list [ref=e92]:
+          - listitem [ref=e93]:
+            - link "Code" [ref=e94] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite
+              - img [ref=e95]
+              - generic [ref=e97]: Code
+          - listitem [ref=e98]:
+            - link "Issues 130" [ref=e99] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/issues
+              - img [ref=e100]
+              - generic [ref=e103]: Issues
+              - generic "130" [ref=e104]
+          - listitem [ref=e105]:
+            - link "Pull requests 38" [ref=e106] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/pulls
+              - img [ref=e107]
+              - generic [ref=e109]: Pull requests
+              - generic "38" [ref=e110]
+          - listitem [ref=e111]:
+            - link "Discussions" [ref=e112] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/discussions
+              - img [ref=e113]
+              - generic [ref=e115]: Discussions
+          - listitem [ref=e116]:
+            - link "Actions" [ref=e117] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/actions
+              - img [ref=e118]
+              - generic [ref=e120]: Actions
+          - listitem [ref=e121]:
+            - link "Projects" [ref=e122] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/projects
+              - img [ref=e123]
+              - generic [ref=e125]: Projects
+          - listitem [ref=e126]:
+            - link "Wiki" [ref=e127] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/wiki
+              - img [ref=e128]
+              - generic [ref=e130]: Wiki
+          - listitem [ref=e131]:
+            - link "Security" [ref=e132] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/security
+              - img [ref=e133]
+              - generic [ref=e135]: Security
+          - listitem [ref=e136]:
+            - link "Insights" [ref=e137] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/pulse
+              - img [ref=e138]
+              - generic [ref=e140]: Insights
+    - generic [ref=e147]:
+      - generic [ref=e150]:
+        - 'heading "Check Connection is owned when registering Closure as hook #1764" [level=1] [ref=e152]':
+          - text: Check Connection is owned when registering Closure as hook
+          - generic [ref=e154]: "#1764"
+        - generic [ref=e157]:
+          - generic [ref=e158]:
+            - img "Pull request" [ref=e159]
+            - text: Merged
+          - generic [ref=e162]:
+            - link "gwenn" [ref=e163] [cursor=pointer]:
+              - /url: /gwenn
+            - text: merged 1 commit into
+            - link "rusqlite:master" [ref=e164] [cursor=pointer]:
+              - /url: /rusqlite/rusqlite/tree/master
+            - generic [ref=e165]: from
+            - generic [ref=e166]:
+              - link "gwenn:check_owned" [ref=e167] [cursor=pointer]:
+                - /url: /gwenn/rusqlite/tree/check_owned
+              - button "Copy head branch name to clipboard" [ref=e168] [cursor=pointer]:
+                - img [ref=e169]
+            - generic "Dec 3, 2025, 4:33 AM GMT+9" [ref=e172]: Dec 2, 2025on Dec 3, 2025
+        - navigation "Pull request navigation tabs" [ref=e176]:
+          - tablist [ref=e177]:
+            - tab "Conversation" [selected] [ref=e178] [cursor=pointer]:
+              - img [ref=e179]
+              - text: Conversation
+            - tab "Commits (1)" [ref=e181] [cursor=pointer]:
+              - img [ref=e182]
+              - text: Commits
+              - generic [ref=e184]: "1"
+              - generic [ref=e185]: (1)
+            - tab "Checks" [ref=e186] [cursor=pointer]:
+              - img [ref=e187]
+              - text: Checks
+            - tab "Files changed" [ref=e189] [cursor=pointer]:
+              - img [ref=e190]
+              - text: Files changed
+      - generic [ref=e196]:
+        - generic [ref=e198]:
+          - heading "Conversation" [level=2] [ref=e199]
+          - generic [ref=e200]:
+            - generic [ref=e201]:
+              - generic [ref=e203]:
+                - link "@gwenn" [ref=e204] [cursor=pointer]:
+                  - /url: /gwenn
+                  - img "@gwenn" [ref=e205]
+                - generic [ref=e207]:
+                  - generic [ref=e208]:
+                    - generic [ref=e209]:
+                      - group [ref=e211]:
+                        - button "Show options" [ref=e212] [cursor=pointer]:
+                          - img "Show options" [ref=e215]
+                      - generic "This user has been invited to collaborate on the rusqlite repository." [ref=e218]:
+                        - generic [ref=e219]: Collaborator
+                    - heading "gwenn commented Dec 2, 2025on Dec 3, 2025" [level=3] [ref=e220]:
+                      - generic [ref=e221]:
+                        - strong [ref=e222]:
+                          - link "gwenn" [ref=e223] [cursor=pointer]:
+                            - /url: /gwenn
+                        - text: commented
+                        - link "Dec 2, 2025on Dec 3, 2025" [ref=e224] [cursor=pointer]:
+                          - /url: "#issue-3687250788"
+                  - paragraph [ref=e229]: If the Connection is not owned (ie Connection::from_handle), SQLite handle references dangling pointer after Connection is dropped.
+              - generic [ref=e230]:
+                - generic [ref=e234]:
+                  - img [ref=e236]
+                  - generic [ref=e241]:
+                    - link "@gwenn" [ref=e244] [cursor=pointer]:
+                      - /url: /gwenn
+                      - img "@gwenn" [ref=e245]
+                    - generic [ref=e246]:
+                      - code [ref=e247]:
+                        - link "Check Connection is owned when registering Closure as hook" [ref=e248] [cursor=pointer]:
+                          - /url: /rusqlite/rusqlite/pull/1764/commits/806cdd35ddd0fc55dec4900cf5dfa68aaea1f82a
+                      - button "…" [ref=e250] [cursor=pointer]
+                    - code [ref=e258]:
+                      - link "806cdd3" [ref=e259] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/pull/1764/commits/806cdd35ddd0fc55dec4900cf5dfa68aaea1f82a
+                - generic [ref=e260]:
+                  - generic [ref=e261]:
+                    - img [ref=e263]
+                    - generic [ref=e265]:
+                      - link "@gwenn" [ref=e266] [cursor=pointer]:
+                        - /url: /gwenn
+                        - img "@gwenn" [ref=e267]
+                      - link "gwenn" [ref=e268] [cursor=pointer]:
+                        - /url: /gwenn
+                      - link "force-pushed" [ref=e269] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/compare/904f627efe62f53096f588624f0d5ec84f4e9faa..806cdd35ddd0fc55dec4900cf5dfa68aaea1f82a
+                      - text: the
+                      - generic [ref=e271]: check_owned
+                      - text: branch from
+                      - link "904f627" [ref=e272] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/commit/904f627efe62f53096f588624f0d5ec84f4e9faa
+                        - code [ref=e273]: 904f627
+                      - text: to
+                      - link "806cdd3" [ref=e274] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/commit/806cdd35ddd0fc55dec4900cf5dfa68aaea1f82a
+                        - code [ref=e275]: 806cdd3
+                      - link "Compare" [ref=e276] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/compare/904f627efe62f53096f588624f0d5ec84f4e9faa..806cdd35ddd0fc55dec4900cf5dfa68aaea1f82a
+                        - generic [ref=e278]: Compare
+                      - link "December 2, 2025 19:283 months ago" [ref=e279] [cursor=pointer]:
+                        - /url: "#event-21315089471"
+                  - generic [ref=e280]:
+                    - img [ref=e282]
+                    - generic [ref=e284]:
+                      - button "View details" [ref=e285] [cursor=pointer]
+                      - link "@gwenn" [ref=e286] [cursor=pointer]:
+                        - /url: /gwenn
+                        - img "@gwenn" [ref=e287]
+                      - link "gwenn" [ref=e288] [cursor=pointer]:
+                        - /url: /gwenn
+                      - text: merged commit
+                      - link "cd39ac8" [ref=e289] [cursor=pointer]:
+                        - /url: /rusqlite/rusqlite/commit/cd39ac829ea2bbe62228027b7cad1fbd197d033e
+                        - code [ref=e290]: cd39ac8
+                      - text: into
+                      - generic [ref=e292]: rusqlite:master
+                      - link "Dec 2, 2025on Dec 3, 2025" [ref=e293] [cursor=pointer]:
+                        - /url: https://github.com/rusqlite/rusqlite/pull/1764#event-21315177496
+                      - generic [ref=e294]: 13 of 14 checks passed
+                  - generic [ref=e296]:
+                    - img [ref=e298]
+                    - generic [ref=e300]:
+                      - link "@gwenn" [ref=e301] [cursor=pointer]:
+                        - /url: /gwenn
+                        - img "@gwenn" [ref=e302]
+                      - link "gwenn" [ref=e303] [cursor=pointer]:
+                        - /url: /gwenn
+                      - text: deleted the
+                      - generic [ref=e305]: check_owned
+                      - text: branch
+                      - link "December 2, 2025 19:333 months ago" [ref=e306] [cursor=pointer]:
+                        - /url: "#event-21315179133"
+                  - generic [ref=e307]:
+                    - img [ref=e309]
+                    - generic [ref=e311]:
+                      - generic [ref=e312]:
+                        - link "@gwenn" [ref=e313] [cursor=pointer]:
+                          - /url: /gwenn
+                          - img "@gwenn" [ref=e314]
+                        - link "gwenn" [ref=e315] [cursor=pointer]:
+                          - /url: /gwenn
+                        - text: mentioned this pull request
+                        - link "Jan 7, 2026on Jan 8" [ref=e316] [cursor=pointer]:
+                          - /url: "#ref-issue-3787863285"
+                      - generic [ref=e317]:
+                        - 'link "Non-owning connection clears up hooks #1784" [ref=e319] [cursor=pointer]':
+                          - /url: /rusqlite/rusqlite/issues/1784
+                        - 'generic "Status: Closed" [ref=e321]':
+                          - img [ref=e322]
+                          - text: Closed
+                  - generic [ref=e325]:
+                    - img [ref=e327]
+                    - generic [ref=e329]:
+                      - generic [ref=e330]:
+                        - link "@marco6" [ref=e331] [cursor=pointer]:
+                          - /url: /marco6
+                          - img "@marco6" [ref=e332]
+                        - link "marco6" [ref=e333] [cursor=pointer]:
+                          - /url: /marco6
+                        - text: mentioned this pull request
+                        - link "Jan 9, 2026on Jan 9" [ref=e334] [cursor=pointer]:
+                          - /url: "#ref-pullrequest-3796947198"
+                      - generic [ref=e335]:
+                        - 'link "Clear hooks only for owning connections #1785" [ref=e337] [cursor=pointer]':
+                          - /url: /rusqlite/rusqlite/pull/1785
+                        - 'generic "Status: Merged" [ref=e339]':
+                          - img [ref=e340]
+                          - text: Merged
+            - generic [ref=e345]:
+              - link "Sign up for free" [ref=e346] [cursor=pointer]:
+                - /url: /join?source=comment-repo
+              - strong [ref=e347]: to join this conversation on GitHub
+              - text: . Already have an account?
+              - link "Sign in to comment" [ref=e348] [cursor=pointer]:
+                - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Frusqlite%2Frusqlite%2Fpull%2F1764
+        - generic [ref=e352]:
+          - form "Select reviewers" [ref=e354]:
+            - heading "Reviewers" [level=3] [ref=e355]
+            - text: No reviews
+          - form "Select assignees" [ref=e357]:
+            - heading "Assignees" [level=3] [ref=e358]
+            - text: No one assigned
+          - generic [ref=e359]:
+            - heading "Labels" [level=3] [ref=e360]
+            - generic [ref=e361]: None yet
+          - form "Select projects" [ref=e363]:
+            - heading "Projects" [level=3] [ref=e364]
+            - text: None yet
+          - form "Select milestones" [ref=e366]:
+            - heading "Milestone" [level=3] [ref=e367]
+            - text: No milestone
+          - form "Link issues" [ref=e373]:
+            - heading "Development" [level=3] [ref=e374]
+            - paragraph [ref=e375]: Successfully merging this pull request may close these issues.
+          - generic [ref=e377]:
+            - heading "1 participant" [level=3] [ref=e378]
+            - link "@gwenn" [ref=e380] [cursor=pointer]:
+              - /url: /gwenn
+              - img "@gwenn" [ref=e381]
+  - contentinfo [ref=e382]:
+    - heading "Footer" [level=2] [ref=e383]
+    - generic [ref=e384]:
+      - generic [ref=e385]:
+        - link "GitHub Homepage" [ref=e386] [cursor=pointer]:
+          - /url: https://github.com
+          - img [ref=e387]
+        - generic [ref=e389]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=e390]:
+        - heading "Footer navigation" [level=3] [ref=e391]
+        - list "Footer navigation" [ref=e392]:
+          - listitem [ref=e393]:
+            - link "Terms" [ref=e394] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=e395]:
+            - link "Privacy" [ref=e396] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=e397]:
+            - link "Security" [ref=e398] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=e399]:
+            - link "Status" [ref=e400] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=e401]:
+            - link "Community" [ref=e402] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=e403]:
+            - link "Docs" [ref=e404] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=e405]:
+            - link "Contact" [ref=e406] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=e407]:
+            - button "Manage cookies" [ref=e409] [cursor=pointer]
+          - listitem [ref=e410]:
+            - button "Do not share my personal information" [ref=e412] [cursor=pointer]

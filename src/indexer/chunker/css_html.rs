@@ -1,6 +1,6 @@
 use crate::storage::ChunkType;
 
-use super::{chunk_fallback, chunk_with_ast, make_chunk, make_parser, other_or_skip, RawChunk};
+use super::{RawChunk, chunk_fallback, chunk_with_ast, make_chunk, make_parser, other_or_skip};
 
 pub(super) fn chunk_css(source: &str) -> Vec<RawChunk> {
     let Some(mut parser) = make_parser(&tree_sitter_css::LANGUAGE.into()) else {

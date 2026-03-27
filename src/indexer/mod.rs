@@ -13,10 +13,10 @@ use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
 
-pub use embed::{run_incremental_embed, EmbedResult};
 use embed::embed_and_store;
+pub use embed::{EmbedResult, run_incremental_embed};
 #[cfg(test)]
-use embed::{enrich_for_embedding, order_files_for_embedding, MAX_CONSECUTIVE_EMBED_ERRORS};
+use embed::{MAX_CONSECUTIVE_EMBED_ERRORS, enrich_for_embedding, order_files_for_embedding};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
@@ -151,7 +151,15 @@ fn collect_pending_files(
     root: &Path,
     files: &[std::path::PathBuf],
     force: bool,
-) -> Result<(Vec<PendingFile>, u32, u32, std::collections::HashSet<String>), IndexError> {
+) -> Result<
+    (
+        Vec<PendingFile>,
+        u32,
+        u32,
+        std::collections::HashSet<String>,
+    ),
+    IndexError,
+> {
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
     let mut files_errored = 0u32;
@@ -255,10 +263,7 @@ fn build_references(
         .collect()
 }
 
-pub fn run_chunk_only_index(
-    conn: Arc<Mutex<Db>>,
-    root: &Path,
-) -> Result<IndexResult, IndexError> {
+pub fn run_chunk_only_index(conn: Arc<Mutex<Db>>, root: &Path) -> Result<IndexResult, IndexError> {
     run_chunk_only_index_inner(conn, root, false)
 }
 
@@ -289,8 +294,7 @@ fn run_chunk_only_index_inner(
         let mut chunks_created = 0u32;
         let mut files_skipped = 0u32;
         let mut files_errored = 0u32;
-        let mut current_rel_paths =
-            std::collections::HashSet::with_capacity(files.len());
+        let mut current_rel_paths = std::collections::HashSet::with_capacity(files.len());
 
         let conn_guard = conn.lock().unwrap();
         storage::fts_set_automerge(&conn_guard, false)?;
@@ -328,7 +332,13 @@ fn run_chunk_only_index_inner(
         }
         storage::fts_set_automerge(&conn_guard, true)?;
 
-        (files_processed, chunks_created, files_skipped, files_errored, current_rel_paths)
+        (
+            files_processed,
+            chunks_created,
+            files_skipped,
+            files_errored,
+            current_rel_paths,
+        )
     };
 
     remove_orphans(&conn, current_rel_paths)?;

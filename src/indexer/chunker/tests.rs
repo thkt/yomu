@@ -387,8 +387,16 @@ fn chunk_rust_function_variants() {
     for (source, expected_name) in cases {
         let result = chunk_file(source, "rs");
         assert_eq!(result.chunks.len(), 1, "source: {source}");
-        assert_eq!(result.chunks[0].chunk_type, ChunkType::RustFn, "source: {source}");
-        assert_eq!(result.chunks[0].name.as_deref(), Some(expected_name), "source: {source}");
+        assert_eq!(
+            result.chunks[0].chunk_type,
+            ChunkType::RustFn,
+            "source: {source}"
+        );
+        assert_eq!(
+            result.chunks[0].name.as_deref(),
+            Some(expected_name),
+            "source: {source}"
+        );
     }
 }
 
@@ -643,7 +651,9 @@ export function useAuth() { return { user: null }; }"#;
     let result = chunk_file(source, "tsx");
     assert_eq!(result.chunks.len(), 1);
     assert!(
-        result.chunks[0].content.contains("/** Manages authentication state */"),
+        result.chunks[0]
+            .content
+            .contains("/** Manages authentication state */"),
         "JSDoc should be attached to the chunk"
     );
     assert_eq!(result.chunks[0].start_line, 1);
@@ -656,7 +666,9 @@ function formatDate() { return '2024-01-01'; }"#;
     let result = chunk_file(source, "tsx");
     assert_eq!(result.chunks.len(), 1);
     assert!(
-        result.chunks[0].content.contains("// Helper to format dates"),
+        result.chunks[0]
+            .content
+            .contains("// Helper to format dates"),
         "Line comment should be attached to the chunk"
     );
 }
@@ -703,7 +715,9 @@ function second() { return 2; }"#;
         "Comment should not attach to preceding declaration"
     );
     assert!(
-        result.chunks[1].content.contains("/** Second function docs */"),
+        result.chunks[1]
+            .content
+            .contains("/** Second function docs */"),
         "Comment should attach to following declaration"
     );
 }
@@ -746,15 +760,33 @@ fn chunk_rust_comment_before_use_not_attached_to_fn() {
 fn chunk_rust_parses_internal_use_prefixes() {
     let cases = [
         ("use crate::foo::Bar;\nfn main() {}", "crate::foo", "Bar"),
-        ("use super::utils::helper;\nfn run() {}", "super::utils", "helper"),
-        ("use self::inner::Thing;\nfn run() {}", "self::inner", "Thing"),
+        (
+            "use super::utils::helper;\nfn run() {}",
+            "super::utils",
+            "helper",
+        ),
+        (
+            "use self::inner::Thing;\nfn run() {}",
+            "self::inner",
+            "Thing",
+        ),
     ];
     for (source, expected_source, expected_name) in cases {
         let result = chunk_file(source, "rs");
         assert_eq!(result.parsed_imports.len(), 1, "source: {source}");
-        assert_eq!(result.parsed_imports[0].source, expected_source, "source: {source}");
-        assert_eq!(result.parsed_imports[0].specifiers[0].name, expected_name, "source: {source}");
-        assert_eq!(result.parsed_imports[0].specifiers[0].kind, ImportKind::Named, "source: {source}");
+        assert_eq!(
+            result.parsed_imports[0].source, expected_source,
+            "source: {source}"
+        );
+        assert_eq!(
+            result.parsed_imports[0].specifiers[0].name, expected_name,
+            "source: {source}"
+        );
+        assert_eq!(
+            result.parsed_imports[0].specifiers[0].kind,
+            ImportKind::Named,
+            "source: {source}"
+        );
     }
 }
 
@@ -777,7 +809,10 @@ fn chunk_rust_parses_glob_use() {
     assert_eq!(result.parsed_imports[0].source, "crate::prelude");
     assert_eq!(result.parsed_imports[0].specifiers.len(), 1);
     assert_eq!(result.parsed_imports[0].specifiers[0].name, "*");
-    assert_eq!(result.parsed_imports[0].specifiers[0].kind, ImportKind::Namespace);
+    assert_eq!(
+        result.parsed_imports[0].specifiers[0].kind,
+        ImportKind::Namespace
+    );
 }
 
 #[test]
@@ -791,7 +826,11 @@ fn chunk_rust_skips_external_crate_use() {
 fn chunk_rust_stores_all_use_as_import_text() {
     let source = "use std::fmt::Display;\nuse crate::foo::Bar;\nfn run() {}";
     let result = chunk_file(source, "rs");
-    assert_eq!(result.imports.len(), 2, "all use declarations stored as text");
+    assert_eq!(
+        result.imports.len(),
+        2,
+        "all use declarations stored as text"
+    );
     assert!(result.imports[0].contains("std::fmt::Display"));
     assert!(result.imports[1].contains("crate::foo::Bar"));
     assert_eq!(result.parsed_imports.len(), 1, "only internal parsed");
@@ -853,7 +892,11 @@ fn chunk_rust_skips_external_use_as_clause() {
         result.parsed_imports.is_empty(),
         "external use-as should not produce a parsed import"
     );
-    assert_eq!(result.imports.len(), 1, "raw import text should still be stored");
+    assert_eq!(
+        result.imports.len(),
+        1,
+        "raw import text should still be stored"
+    );
 }
 
 #[test]

@@ -98,8 +98,7 @@ fn run_index_with_mock_embedder() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    let result = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -122,13 +121,11 @@ fn run_index_skips_unchanged_files() {
     let conn = Arc::new(Mutex::new(conn));
 
     // First run: processes file
-    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
     assert_eq!(r1.files_processed, 1);
 
     // Second run: skips unchanged file
-    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
     assert_eq!(r2.files_processed, 0);
     assert_eq!(r2.files_skipped, 1);
 }
@@ -144,11 +141,9 @@ fn run_index_force_reindexes() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
 
-    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true)
-        .unwrap();
+    let r2 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, true).unwrap();
     assert_eq!(r2.files_processed, 1);
     assert_eq!(r2.files_skipped, 0);
 }
@@ -166,8 +161,7 @@ fn run_index_removes_deleted_file_chunks() {
     let conn = Arc::new(Mutex::new(conn));
 
     // Index both files
-    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    let r1 = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
     assert_eq!(r1.files_processed, 2);
     assert_eq!(
         storage::get_stats(&conn.lock().unwrap())
@@ -180,8 +174,7 @@ fn run_index_removes_deleted_file_chunks() {
     std::fs::remove_file(src_dir.join("B.tsx")).unwrap();
 
     // Re-index: should remove orphaned B.tsx chunks
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
@@ -285,8 +278,7 @@ fn run_index_stores_imports_in_file_context() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false)
-        .unwrap();
+    run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
 
     let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
@@ -321,8 +313,7 @@ fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .unwrap();
+    let result = run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -371,13 +362,11 @@ fn run_incremental_embed_within_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .unwrap();
+    run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
     let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
-    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
-        .unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None).unwrap();
 
     assert!(result.chunks_embedded >= 3);
     assert_eq!(result.files_completed, 3);
@@ -404,11 +393,9 @@ fn run_incremental_embed_exhausts_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .unwrap();
+    run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
 
-    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 2, None)
-        .unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 2, None).unwrap();
 
     assert!(result.budget_exhausted);
     assert!(result.chunks_embedded <= 2);
@@ -526,8 +513,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None)
-        .unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MockEmbedder, 50, None).unwrap();
 
     assert_eq!(result.files_completed, 2);
     assert!(result.chunks_embedded >= 2);
@@ -563,13 +549,7 @@ fn run_incremental_embed_recovers_after_intermittent_failure() {
 
     // AlternatingEmbedder: call 0 fails, 1 succeeds, 2 fails, 3 succeeds, ...
     // consecutive_errors resets to 0 on each success, so it never reaches MAX (5).
-    let result = run_incremental_embed(
-        Arc::clone(&conn),
-        &AlternatingEmbedder::new(),
-        50,
-        None,
-    )
-    ;
+    let result = run_incremental_embed(Arc::clone(&conn), &AlternatingEmbedder::new(), 50, None);
 
     assert!(
         result.is_ok(),
@@ -613,8 +593,7 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
         &FailingEmbedder::all_fail("mock failure"),
         50,
         None,
-    )
-    ;
+    );
 
     assert!(
         result.is_err(),
@@ -647,8 +626,7 @@ fn embed_and_store_aborts_after_consecutive_failures() {
         dir.path(),
         &FailingEmbedder::all_fail("mock failure"),
         false,
-    )
-    ;
+    );
 
     assert!(
         result.is_err(),
@@ -867,8 +845,7 @@ fn run_incremental_embed_skips_count_mismatch() {
         .unwrap();
     }
 
-    let result = run_incremental_embed(Arc::clone(&conn), &MismatchEmbedder, 50, None)
-        .unwrap();
+    let result = run_incremental_embed(Arc::clone(&conn), &MismatchEmbedder, 50, None).unwrap();
 
     // Multi.tsx should be skipped (2 chunks, 1 embedding), single-chunk files should succeed
     assert!(
@@ -899,8 +876,7 @@ fn run_chunk_only_index_handles_rust_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(Arc::clone(&conn), dir.path())
-        .unwrap();
+    let result = run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
 
     assert_eq!(result.files_processed, 1);
     assert_eq!(result.chunks_created, 2);
@@ -924,11 +900,7 @@ fn run_index_counts_unreadable_files_as_errors() {
     std::fs::create_dir_all(&src_dir).unwrap();
 
     // Normal file
-    std::fs::write(
-        src_dir.join("Good.tsx"),
-        "function Good() { return 1; }",
-    )
-    .unwrap();
+    std::fs::write(src_dir.join("Good.tsx"), "function Good() { return 1; }").unwrap();
 
     // Unreadable file (permission 000)
     let bad_path = src_dir.join("Bad.tsx");
@@ -939,13 +911,7 @@ fn run_index_counts_unreadable_files_as_errors() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder,
-        false,
-    )
-    .unwrap();
+    let result = run_index(Arc::clone(&conn), dir.path(), &MockEmbedder, false).unwrap();
 
     // Restore permissions for cleanup
     std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o644)).unwrap();

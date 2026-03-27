@@ -229,8 +229,7 @@ impl Yomu {
     }
 
     pub fn index(&self) -> Result<String, YomuError> {
-        let chunk_result =
-            indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
 
         let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
@@ -247,8 +246,7 @@ impl Yomu {
     }
 
     pub fn rebuild(&self) -> Result<String, YomuError> {
-        let chunk_result =
-            indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
 
         let stats = self.with_db(storage::get_stats)?;
         let mut text = format!(
@@ -292,16 +290,15 @@ impl Yomu {
         let fp = file_path.to_string();
         let sym_owned = symbol_filter.map(|s| s.to_string());
 
-        let (file_in_index, dependents, symbol_refs) = self
-            .with_db(move |conn| {
-                let exists = storage::file_exists_in_index(conn, &fp)?;
-                let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
-                let refs = match &sym_owned {
-                    Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
-                    None => vec![],
-                };
-                Ok((exists, dependents, refs))
-            })?;
+        let (file_in_index, dependents, symbol_refs) = self.with_db(move |conn| {
+            let exists = storage::file_exists_in_index(conn, &fp)?;
+            let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
+            let refs = match &sym_owned {
+                Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
+                None => vec![],
+            };
+            Ok((exists, dependents, refs))
+        })?;
 
         if dependents.is_empty() {
             return Ok(if file_in_index {
@@ -324,12 +321,11 @@ impl Yomu {
     }
 
     pub fn status(&self) -> Result<String, YomuError> {
-        let (stats, ref_count) = self
-            .with_db(|conn| {
-                let stats = storage::get_stats(conn)?;
-                let ref_count = storage::get_reference_count(conn)?;
-                Ok((stats, ref_count))
-            })?;
+        let (stats, ref_count) = self.with_db(|conn| {
+            let stats = storage::get_stats(conn)?;
+            let ref_count = storage::get_reference_count(conn)?;
+            Ok((stats, ref_count))
+        })?;
 
         Ok(format!(
             "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}\n  References: {}\n  Last indexed: {}",
@@ -396,9 +392,10 @@ impl Yomu {
 
     fn try_rechunk(&self) -> Option<String> {
         match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root) {
-            Ok(r) if r.files_errored > 0 => {
-                Some(format!("{} files had errors during re-indexing", r.files_errored))
-            }
+            Ok(r) if r.files_errored > 0 => Some(format!(
+                "{} files had errors during re-indexing",
+                r.files_errored
+            )),
             Ok(_) => None,
             Err(e) => Some(format!("re-chunking failed: {e}")),
         }
@@ -421,9 +418,7 @@ impl Yomu {
     }
 
     fn check_index_fresh(&self) -> bool {
-        match self
-            .with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS))
-        {
+        match self.with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS)) {
             Ok(fresh) => fresh,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");

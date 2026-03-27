@@ -44,20 +44,31 @@ impl RustResolver {
             rest = after;
         }
         let min_len = module_path.len() + 1;
-        let segments: Vec<&str> = module_path.iter().map(|s| s.as_str()).chain(rest.split("::")).collect();
+        let segments: Vec<&str> = module_path
+            .iter()
+            .map(|s| s.as_str())
+            .chain(rest.split("::"))
+            .collect();
         self.probe_with_symbol_fallback(&segments, min_len)
     }
 
     fn resolve_self(&self, rest: &str, from_file: &str) -> Option<String> {
         let module_path = module_path_from_file(from_file);
         let min_len = module_path.len() + 1;
-        let segments: Vec<&str> = module_path.iter().map(|s| s.as_str()).chain(rest.split("::")).collect();
+        let segments: Vec<&str> = module_path
+            .iter()
+            .map(|s| s.as_str())
+            .chain(rest.split("::"))
+            .collect();
         self.probe_with_symbol_fallback(&segments, min_len)
     }
 
     fn probe_with_symbol_fallback(&self, segments: &[&str], min_len: usize) -> Option<String> {
-        self.probe_module(segments)
-            .or_else(|| (segments.len() > min_len).then(|| self.probe_module(&segments[..segments.len() - 1])).flatten())
+        self.probe_module(segments).or_else(|| {
+            (segments.len() > min_len)
+                .then(|| self.probe_module(&segments[..segments.len() - 1]))
+                .flatten()
+        })
     }
 
     fn probe_module(&self, segments: &[&str]) -> Option<String> {
@@ -83,12 +94,17 @@ impl Resolve for RustResolver {
 
 fn relative_from_canonical(abs: &Path, canonical_root: Option<&Path>) -> Option<String> {
     let root = canonical_root?;
-    abs.strip_prefix(root).ok().map(|p| p.to_string_lossy().to_string())
+    abs.strip_prefix(root)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 fn module_path_from_file(from_file: &str) -> Vec<String> {
     let path = from_file.strip_prefix("src/").unwrap_or(from_file);
-    let stem = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
     let parent = Path::new(path).parent().unwrap_or(Path::new(""));
 
     if stem == "lib" || stem == "main" {
