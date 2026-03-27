@@ -2139,3 +2139,52 @@ fn search_by_name_escapes_like_wildcards() {
         "_ should be escaped, not match useXAuth, got: {names:?}"
     );
 }
+
+#[test]
+fn fts_automerge_guard_restores_on_drop() {
+    let (conn, _dir) = test_db();
+
+    replace_file_chunks_only(
+        &conn,
+        "src/A.tsx",
+        &[NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("A"),
+            content: "function A() {}",
+            start_line: 1,
+            end_line: 1,
+        }],
+        "h1",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    {
+        let _guard = FtsAutomergeGuard::new(&conn).unwrap();
+        // guard drops here, restoring automerge
+    }
+
+    // FTS operations should work normally after guard drop
+    replace_file_chunks_only(
+        &conn,
+        "src/B.tsx",
+        &[NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("B"),
+            content: "function B() {}",
+            start_line: 1,
+            end_line: 1,
+        }],
+        "h2",
+        "",
+        &[],
+    )
+    .unwrap();
+    let results = search_by_content(&conn, &["function"], None, &HashSet::new(), 10).unwrap();
+    assert!(
+        results.len() >= 2,
+        "FTS should work after guard drop, got {} results",
+        results.len()
+    );
+}

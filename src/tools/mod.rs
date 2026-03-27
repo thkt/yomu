@@ -354,7 +354,7 @@ impl Yomu {
             IndexState::FullyEmbedded => self.handle_fully_embedded()?,
         };
 
-        let embed_note = if needs_embed {
+        let embed_note = if needs_embed && self.embedding_available() {
             match indexer::run_incremental_embed(
                 Arc::clone(&self.conn),
                 embedder,
@@ -464,6 +464,14 @@ impl Yomu {
             .get()
             .and_then(|o| o.as_deref())
             .unwrap_or(&NOOP)
+    }
+
+    fn embedding_available(&self) -> bool {
+        self.get_embedder();
+        self.embedder
+            .get()
+            .and_then(|o| o.as_ref())
+            .is_some()
     }
 
     fn fetch_enrichment_context(

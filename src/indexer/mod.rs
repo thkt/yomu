@@ -297,7 +297,7 @@ fn run_chunk_only_index_inner(
         let mut current_rel_paths = std::collections::HashSet::with_capacity(files.len());
 
         let conn_guard = conn.lock().unwrap();
-        storage::fts_set_automerge(&conn_guard, false)?;
+        let _automerge = storage::FtsAutomergeGuard::new(&conn_guard)?;
 
         for file_path in &files {
             let rel_path = to_rel_path(root, file_path);
@@ -330,7 +330,6 @@ fn run_chunk_only_index_inner(
         if files_processed > 0 {
             storage::fts_optimize(&conn_guard)?;
         }
-        storage::fts_set_automerge(&conn_guard, true)?;
 
         (
             files_processed,

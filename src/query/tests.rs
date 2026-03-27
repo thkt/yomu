@@ -1008,3 +1008,42 @@ fn search_pipeline_caps_per_file() {
         "expected at most {MAX_RESULTS_PER_FILE} per file, got {file_count}"
     );
 }
+
+#[test]
+fn text_only_search_with_offset_returns_results() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    for i in 0..15 {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/Widget{i}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&format!("Widget{i}")),
+                content: &format!("function Widget{i}() {{ return <div/>; }}"),
+                start_line: 1,
+                end_line: 1,
+            }],
+            &format!("h{i}"),
+            "",
+            &[],
+        )
+        .unwrap();
+    }
+
+    let conn = Arc::new(Mutex::new(conn));
+    let outcome = search(
+        conn,
+        &FailingEmbedder::query_only("unavailable"),
+        "widget",
+        3,
+        10,
+    )
+    .unwrap();
+    assert!(
+        !outcome.results.is_empty(),
+        "text-only search with offset=10 should still return results"
+    );
+}

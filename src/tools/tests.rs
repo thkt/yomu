@@ -1197,3 +1197,26 @@ fn with_root_creates_db_and_returns_yomu() {
     assert_eq!(yomu.root, dir.path());
     assert!(dir.path().join(".yomu").join("index.db").exists());
 }
+
+#[test]
+fn search_without_embedder_skips_embed_attempt() {
+    let (y, _dir) = test_yomu_with_files(&[(
+        "src/Card.tsx",
+        "export function Card() { return <div/>; }",
+    )]);
+
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    {
+        let c = y.conn.lock().unwrap();
+        let stats = storage::get_stats(&c).unwrap();
+        assert!(stats.total_chunks > 0, "should have chunks");
+        assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
+    }
+
+    let text = y.search("card", 10, 0).unwrap();
+    assert!(
+        !text.contains("embedding failed"),
+        "should not attempt embed when embedder unavailable: {text}"
+    );
+}
