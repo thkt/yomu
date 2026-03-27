@@ -1,8 +1,10 @@
+use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use yomu::tools::{
-    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, probe_embedder,
+    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, OutputFormat, Yomu, YomuError,
+    probe_embedder,
 };
 
 #[derive(Parser)]
@@ -20,19 +22,30 @@ struct Cli {
 enum Command {
     /// Semantic code search. Finds components, hooks, types by meaning.
     Search {
-        /// Natural language query
-        query: String,
+        /// Natural language query (reads from stdin if omitted or "-")
+        query: Option<String>,
         /// Maximum results (default: 10)
         #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u32).range(1..=MAX_SEARCH_LIMIT as i64))]
         limit: u32,
         /// Skip N results (default: 0)
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=MAX_SEARCH_OFFSET as i64))]
         offset: u32,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
     },
     /// Update chunk index incrementally. No API calls.
-    Index,
+    Index {
+        /// Show what would be indexed without writing to the database
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Rebuild chunk index from scratch. No API calls.
-    Rebuild,
+    Rebuild {
+        /// Show what would be rebuilt without writing to the database
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Analyze impact of changes to a file or symbol.
     Impact {
         /// File path relative to project root (e.g. "src/hooks/useAuth.ts")
@@ -76,9 +89,31 @@ fn main() -> ExitCode {
             query,
             limit,
             offset,
-        } => yomu.search(&query, limit, offset),
-        Command::Index => yomu.index(),
-        Command::Rebuild => yomu.rebuild(),
+            format,
+        } => {
+            let query = match resolve_query(query) {
+                Ok(q) => q,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            yomu.search(&query, limit, offset, format)
+        }
+        Command::Index { dry_run } => {
+            if dry_run {
+                yomu.dry_run_index(false)
+            } else {
+                yomu.index()
+            }
+        }
+        Command::Rebuild { dry_run } => {
+            if dry_run {
+                yomu.dry_run_index(true)
+            } else {
+                yomu.rebuild()
+            }
+        }
         Command::Impact {
             target,
             symbol,
@@ -96,6 +131,75 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             exit_code_for(&e)
         }
+    }
+}
+
+fn resolve_query(arg: Option<String>) -> Result<String, String> {
+    resolve_query_with(arg, &mut std::io::stdin(), std::io::stdin().is_terminal())
+}
+
+fn resolve_query_with(
+    arg: Option<String>,
+    stdin: &mut impl Read,
+    stdin_is_terminal: bool,
+) -> Result<String, String> {
+    match arg {
+        Some(q) if q != "-" => Ok(q),
+        _ => {
+            if stdin_is_terminal {
+                return Err("query required: pass as argument or pipe via stdin".into());
+            }
+            let mut buf = String::new();
+            stdin
+                .read_to_string(&mut buf)
+                .map_err(|e| format!("failed to read from stdin: {e}"))?;
+            let trimmed = buf.trim().to_string();
+            if trimmed.is_empty() {
+                return Err("empty query from stdin".into());
+            }
+            Ok(trimmed)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn resolve_query_with_direct_arg() {
+        let mut stdin = Cursor::new(b"");
+        let result = resolve_query_with(Some("auth hooks".into()), &mut stdin, true);
+        assert_eq!(result.unwrap(), "auth hooks");
+    }
+
+    #[test]
+    fn resolve_query_with_dash_reads_stdin() {
+        let mut stdin = Cursor::new(b"piped query");
+        let result = resolve_query_with(Some("-".into()), &mut stdin, false);
+        assert_eq!(result.unwrap(), "piped query");
+    }
+
+    #[test]
+    fn resolve_query_with_none_reads_stdin() {
+        let mut stdin = Cursor::new(b"  streaming hooks  ");
+        let result = resolve_query_with(None, &mut stdin, false);
+        assert_eq!(result.unwrap(), "streaming hooks");
+    }
+
+    #[test]
+    fn resolve_query_with_none_terminal_returns_error() {
+        let mut stdin = Cursor::new(b"");
+        let result = resolve_query_with(None, &mut stdin, true);
+        assert!(result.unwrap_err().contains("query required"));
+    }
+
+    #[test]
+    fn resolve_query_with_empty_stdin_returns_error() {
+        let mut stdin = Cursor::new(b"   ");
+        let result = resolve_query_with(None, &mut stdin, false);
+        assert!(result.unwrap_err().contains("empty query"));
     }
 }
 

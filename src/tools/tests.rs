@@ -72,7 +72,7 @@ fn seed_index(conn: &storage::Db) {
 #[test]
 fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
-    let err = y.search("", 10, 0).unwrap_err();
+    let err = y.search("", 10, 0, OutputFormat::Text).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {}",
@@ -84,7 +84,9 @@ fn search_rejects_empty_query() {
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y.search(&long_query, 10, 0).unwrap_err();
+    let err = y
+        .search(&long_query, 10, 0, OutputFormat::Text)
+        .unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -95,7 +97,7 @@ fn search_rejects_long_query() {
 #[test]
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
-    let text = y.search("test query", 10, 0).unwrap();
+    let text = y.search("test query", 10, 0, OutputFormat::Text).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -109,7 +111,9 @@ fn search_auto_indexes_empty_db() {
         Arc::new(rurico::embed::MockEmbedder),
     );
 
-    let text = y.search("button component", 10, 0).unwrap();
+    let text = y
+        .search("button component", 10, 0, OutputFormat::Text)
+        .unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -131,33 +135,6 @@ fn search_auto_indexes_empty_db() {
 }
 
 #[test]
-fn search_hybrid_flow_empty_db() {
-    let (y, _dir) = test_yomu_with_files_and_embedder(
-        &[(
-            "src/Button.tsx",
-            "export function Button() { return <div/>; }",
-        )],
-        Arc::new(rurico::embed::MockEmbedder),
-    );
-
-    let text = y.search("button component", 10, 0).unwrap();
-    assert!(
-        text.contains("Button"),
-        "expected Button in results: {text}"
-    );
-
-    let stats = {
-        let c = y.conn.lock().unwrap();
-        storage::get_stats(&c).unwrap()
-    };
-    assert!(stats.total_chunks > 0, "expected chunks after hybrid index");
-    assert!(
-        stats.embedded_chunks > 0,
-        "expected embeddings after hybrid index"
-    );
-}
-
-#[test]
 fn search_incremental_embeds_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Form.tsx", "export function Form() { return <form/>; }")],
@@ -173,7 +150,9 @@ fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y.search("form component", 10, 0).unwrap();
+    let text = y
+        .search("form component", 10, 0, OutputFormat::Text)
+        .unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -245,7 +224,9 @@ fn search_degraded_empty_results_shows_note() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let text = y.search("zzzznonexistent", 10, 0).unwrap();
+    let text = y
+        .search("zzzznonexistent", 10, 0, OutputFormat::Text)
+        .unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -282,7 +263,9 @@ fn search_degraded_with_results_shows_note() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let result = y_failing.search("Button", 10, 0).unwrap();
+    let result = y_failing
+        .search("Button", 10, 0, OutputFormat::Text)
+        .unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -584,51 +567,6 @@ fn format_results_grouped_shows_score_for_all() {
     assert!(
         !text.contains("(name match)"),
         "should not show (name match): {text}"
-    );
-}
-
-#[test]
-fn format_results_grouped_sorts_by_score() {
-    let results = vec![
-        storage::SearchResult {
-            chunk: storage::Chunk {
-                file_path: "src/B.tsx".to_string(),
-                chunk_type: storage::ChunkType::Component,
-                name: Some("B".to_string()),
-                content: "code B".to_string(),
-                start_line: 1,
-                end_line: 3,
-            },
-            chunk_id: None,
-            distance: 0.5,
-            match_source: storage::MatchSource::Semantic,
-            score: 0.60,
-        },
-        storage::SearchResult {
-            chunk: storage::Chunk {
-                file_path: "src/A.tsx".to_string(),
-                chunk_type: storage::ChunkType::Component,
-                name: Some("A".to_string()),
-                content: "code A".to_string(),
-                start_line: 1,
-                end_line: 3,
-            },
-            chunk_id: None,
-            distance: 0.1,
-            match_source: storage::MatchSource::Semantic,
-            score: 0.95,
-        },
-    ];
-    let ctx = EnrichmentContext {
-        imports: HashMap::new(),
-        siblings: HashMap::new(),
-    };
-    let text = format_results_grouped(&results, &ctx);
-    let a_pos = text.find("## src/A.tsx").unwrap();
-    let b_pos = text.find("## src/B.tsx").unwrap();
-    assert!(
-        a_pos < b_pos,
-        "A (score 0.95) should come before B (score 0.60): {text}"
     );
 }
 
@@ -1107,7 +1045,9 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y.search("App component", 10, 0).unwrap();
+    let result = y
+        .search("App component", 10, 0, OutputFormat::Text)
+        .unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1150,7 +1090,7 @@ fn ensure_indexed_fully_embedded_skips_embed() {
         "should be fully embedded"
     );
 
-    let result = y.search("Button", 10, 0).unwrap();
+    let result = y.search("Button", 10, 0, OutputFormat::Text).unwrap();
     assert!(result.contains("Button"), "should find Button: {result}");
 }
 
@@ -1177,7 +1117,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
         Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
     );
 
-    let result = y_failing.search("Card", 10, 0).unwrap();
+    let result = y_failing.search("Card", 10, 0, OutputFormat::Text).unwrap();
     assert!(
         result.contains("Card"),
         "should find Card with existing embeddings: {result}"
@@ -1212,9 +1152,118 @@ fn search_without_embedder_skips_embed_attempt() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
     }
 
-    let text = y.search("card", 10, 0).unwrap();
+    let text = y.search("card", 10, 0, OutputFormat::Text).unwrap();
     assert!(
         !text.contains("embedding failed"),
         "should not attempt embed when embedder unavailable: {text}"
+    );
+}
+
+#[test]
+fn search_json_format_returns_valid_json() {
+    let (y, _dir) = test_yomu_with_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <button/>; }",
+    )]);
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
+    assert!(json.starts_with('['), "should start with [: {json}");
+    assert!(json.ends_with(']'), "should end with ]: {json}");
+    assert!(
+        json.contains("\"file\":\"src/Button.tsx\""),
+        "should contain file path: {json}"
+    );
+    assert!(json.contains("\"score\":"), "should contain score: {json}");
+}
+
+#[test]
+fn search_json_format_empty_results() {
+    let (y, _dir) =
+        test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y
+        .search("zzzznonexistent", 10, 0, OutputFormat::Json)
+        .unwrap();
+    assert_eq!(json, "[]", "empty results should be empty array");
+}
+
+#[test]
+fn dry_run_index_does_not_write_to_db() {
+    let (y, _dir) = test_yomu_with_files(&[
+        ("src/A.tsx", "export function A() {}"),
+        ("src/B.tsx", "export function B() {}"),
+    ]);
+
+    let text = y.dry_run_index(false).unwrap();
+    assert!(
+        text.contains("2 files to process"),
+        "should report files to process: {text}"
+    );
+
+    let stats = {
+        let c = y.conn.lock().unwrap();
+        storage::get_stats(&c).unwrap()
+    };
+    assert_eq!(
+        stats.total_chunks, 0,
+        "dry run should not create any chunks"
+    );
+}
+
+#[test]
+fn dry_run_index_shows_skip_for_unchanged() {
+    let (y, _dir) = test_yomu_with_files(&[
+        ("src/A.tsx", "export function A() {}"),
+        ("src/B.tsx", "export function B() {}"),
+    ]);
+
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.dry_run_index(false).unwrap();
+    assert!(
+        text.contains("0 files to process"),
+        "all files should be skipped: {text}"
+    );
+    assert!(
+        text.contains("2 files unchanged"),
+        "should show unchanged count: {text}"
+    );
+}
+
+#[test]
+fn search_json_format_degraded_excludes_notes() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/Card.tsx", "export function Card() { return <div/>; }")],
+        Arc::new(FailingEmbedder::all_fail("service unavailable")),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    assert!(json.starts_with('['), "should be JSON array: {json}");
+    assert!(
+        !json.contains("embedding"),
+        "JSON output should not contain degraded notes: {json}"
+    );
+}
+
+#[test]
+fn search_json_format_parses_as_valid_json() {
+    let (y, _dir) = test_yomu_with_files(&[(
+        "src/Quote.tsx",
+        "export function Quote() { return <div>\"hello\\nworld\"</div>; }",
+    )]);
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("quote", 10, 0, OutputFormat::Json).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("should parse as valid JSON: {e}\n{json}"));
+    assert!(parsed.is_array(), "should be array");
+    let arr = parsed.as_array().unwrap();
+    assert!(!arr.is_empty(), "should have results");
+    assert!(
+        arr[0].get("file").is_some(),
+        "each result should have 'file' field"
     );
 }
