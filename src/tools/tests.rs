@@ -62,9 +62,11 @@ fn seed_index(conn: &storage::Db) {
             content: "seed",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         "seed",
         &embedding,
+        None,
     )
     .unwrap();
 }
@@ -180,6 +182,7 @@ fn search_shows_coverage_on_no_results() {
             content: "function A() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         }],
         "hash1",
         "",
@@ -211,6 +214,7 @@ fn search_degraded_empty_results_shows_note() {
             content: "function Button() { return <div/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }],
         "h1",
         "",
@@ -283,6 +287,7 @@ fn format_results_grouped_renders_file_header_and_context() {
             content: "function Button() { return <div/>; }".to_string(),
             start_line: 5,
             end_line: 7,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance: 0.15,
@@ -306,7 +311,7 @@ fn format_results_grouped_renders_file_header_and_context() {
         imports: imports_map,
         siblings: siblings_map,
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert!(
         text.contains("## src/Button.tsx"),
         "missing file header: {text}"
@@ -334,6 +339,7 @@ fn format_results_grouped_groups_same_file_chunks() {
                 content: "function Form() {}".to_string(),
                 start_line: 1,
                 end_line: 5,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: 0.1,
@@ -348,6 +354,7 @@ fn format_results_grouped_groups_same_file_chunks() {
                 content: "function useForm() {}".to_string(),
                 start_line: 7,
                 end_line: 10,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: 0.2,
@@ -359,7 +366,7 @@ fn format_results_grouped_groups_same_file_chunks() {
         imports: HashMap::new(),
         siblings: HashMap::new(),
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert_eq!(
         text.matches("## src/Form.tsx").count(),
         1,
@@ -379,6 +386,7 @@ fn format_results_grouped_deduplicates_siblings() {
             content: "function A() {}".to_string(),
             start_line: 5,
             end_line: 7,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -406,7 +414,7 @@ fn format_results_grouped_deduplicates_siblings() {
         imports: HashMap::new(),
         siblings: siblings_map,
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert!(
         text.contains("AProps [type_def]"),
         "sibling should be included: {text}"
@@ -428,6 +436,7 @@ fn format_results_grouped_omits_empty_imports() {
             content: "code".to_string(),
             start_line: 1,
             end_line: 3,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -439,7 +448,7 @@ fn format_results_grouped_omits_empty_imports() {
         imports: imports_map,
         siblings: HashMap::new(),
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert!(
         !text.contains("Imports:"),
         "empty imports should be omitted: {text}"
@@ -456,6 +465,7 @@ fn format_results_grouped_omits_empty_siblings() {
             content: "code".to_string(),
             start_line: 1,
             end_line: 3,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -467,7 +477,7 @@ fn format_results_grouped_omits_empty_siblings() {
         imports: HashMap::new(),
         siblings: siblings_map,
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert!(
         !text.contains("Siblings:"),
         "empty siblings should be omitted: {text}"
@@ -485,6 +495,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 content: "code B".to_string(),
                 start_line: 1,
                 end_line: 3,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: 0.5,
@@ -499,6 +510,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 content: "code A".to_string(),
                 start_line: 1,
                 end_line: 3,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: 0.1,
@@ -510,7 +522,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
         imports: HashMap::new(),
         siblings: HashMap::new(),
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     let a_pos = text.find("## src/A.tsx").unwrap();
     let b_pos = text.find("## src/B.tsx").unwrap();
     assert!(
@@ -530,6 +542,7 @@ fn format_results_grouped_shows_score_for_all() {
                 content: "function A() {}".to_string(),
                 start_line: 1,
                 end_line: 3,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: 0.5,
@@ -544,6 +557,7 @@ fn format_results_grouped_shows_score_for_all() {
                 content: "function useAuth() {}".to_string(),
                 start_line: 1,
                 end_line: 3,
+                parent_chunk_id: None,
             },
             chunk_id: None,
             distance: f32::INFINITY,
@@ -555,7 +569,7 @@ fn format_results_grouped_shows_score_for_all() {
         imports: HashMap::new(),
         siblings: HashMap::new(),
     };
-    let text = format_results_grouped(&results, &ctx);
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
     assert!(
         text.contains("(similarity: 0.72)"),
         "expected score for Semantic: {text}"
@@ -661,9 +675,11 @@ fn status_returns_counts_after_insert() {
             content: "code",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -686,6 +702,7 @@ fn status_shows_embedded_total() {
             content: "function A() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         }],
         "hash1",
         "",
@@ -987,6 +1004,7 @@ fn determine_index_state_variants() {
     let empty = storage::IndexStatus {
         total_files: 0,
         total_chunks: 0,
+        embeddable_chunks: 0,
         embedded_chunks: 0,
         last_indexed_at: None,
     };
@@ -995,6 +1013,7 @@ fn determine_index_state_variants() {
     let chunked = storage::IndexStatus {
         total_files: 5,
         total_chunks: 20,
+        embeddable_chunks: 20,
         embedded_chunks: 0,
         last_indexed_at: Some("2026-01-01".into()),
     };
@@ -1006,6 +1025,7 @@ fn determine_index_state_variants() {
     let partial = storage::IndexStatus {
         total_files: 5,
         total_chunks: 20,
+        embeddable_chunks: 20,
         embedded_chunks: 10,
         last_indexed_at: Some("2026-01-01".into()),
     };
@@ -1017,6 +1037,7 @@ fn determine_index_state_variants() {
     let full = storage::IndexStatus {
         total_files: 5,
         total_chunks: 20,
+        embeddable_chunks: 20,
         embedded_chunks: 20,
         last_indexed_at: Some("2026-01-01".into()),
     };
@@ -1285,4 +1306,292 @@ fn search_json_format_parses_as_valid_json() {
         arr[0].get("file").is_some(),
         "each result should have 'file' field"
     );
+}
+
+#[test]
+fn t011_innerfn_hit_shows_parent_context_in_text_output() {
+    let results = vec![storage::SearchResult {
+        chunk: storage::Chunk {
+            file_path: "src/UserForm.tsx".to_string(),
+            chunk_type: storage::ChunkType::InnerFn,
+            name: Some("handleSubmit".to_string()),
+            content: "const handleSubmit = (e) => {\n  e.preventDefault();\n  submit(name);\n};".to_string(),
+            start_line: 10,
+            end_line: 13,
+            parent_chunk_id: Some(42),
+        },
+        chunk_id: Some(43),
+        distance: 0.15,
+        match_source: storage::MatchSource::ContentMatch,
+        score: 0.85,
+    }];
+    let ctx = EnrichmentContext {
+        imports: HashMap::new(),
+        siblings: HashMap::new(),
+    };
+    let mut parent_chunks = HashMap::new();
+    parent_chunks.insert(
+        42,
+        storage::Chunk {
+            file_path: "src/UserForm.tsx".to_string(),
+            chunk_type: storage::ChunkType::Component,
+            name: Some("UserForm".to_string()),
+            content: "function UserForm() {\n  return <form/>;\n}".to_string(),
+            start_line: 1,
+            end_line: 20,
+            parent_chunk_id: None,
+        },
+    );
+    let text = format_results_grouped(&results, &ctx, &parent_chunks);
+    assert!(
+        text.contains("Parent context:"),
+        "[T-011] InnerFn hit should display parent context section: {text}"
+    );
+}
+
+#[test]
+fn t012_parent_hit_no_duplicate_parent_display() {
+    let results = vec![storage::SearchResult {
+        chunk: storage::Chunk {
+            file_path: "src/UserForm.tsx".to_string(),
+            chunk_type: storage::ChunkType::Component,
+            name: Some("UserForm".to_string()),
+            content: "function UserForm() {\n  return <form/>;\n}".to_string(),
+            start_line: 1,
+            end_line: 20,
+            parent_chunk_id: None,
+        },
+        chunk_id: Some(42),
+        distance: 0.1,
+        match_source: storage::MatchSource::Semantic,
+        score: 0.90,
+    }];
+    let ctx = EnrichmentContext {
+        imports: HashMap::new(),
+        siblings: HashMap::new(),
+    };
+    let text = format_results_grouped(&results, &ctx, &HashMap::new());
+
+    assert!(
+        !text.contains("Parent context:"),
+        "[T-012] parent chunk hit should NOT show 'Parent context:' section: {text}"
+    );
+    assert!(
+        text.contains("UserForm"),
+        "[T-012] parent chunk content should still appear normally: {text}"
+    );
+}
+
+#[test]
+fn t015_json_output_includes_parent_chunk_id() {
+    let results = vec![
+        storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/UserForm.tsx".to_string(),
+                chunk_type: storage::ChunkType::InnerFn,
+                name: Some("handleSubmit".to_string()),
+                content: "const handleSubmit = () => {}".to_string(),
+                start_line: 10,
+                end_line: 13,
+                parent_chunk_id: Some(42),
+            },
+            chunk_id: Some(43),
+            distance: 0.2,
+            match_source: storage::MatchSource::ContentMatch,
+            score: 0.80,
+        },
+        storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/App.tsx".to_string(),
+                chunk_type: storage::ChunkType::Component,
+                name: Some("App".to_string()),
+                content: "function App() {}".to_string(),
+                start_line: 1,
+                end_line: 5,
+                parent_chunk_id: None,
+            },
+            chunk_id: Some(1),
+            distance: 0.3,
+            match_source: storage::MatchSource::Semantic,
+            score: 0.75,
+        },
+    ];
+
+    let json = format_results_json(&results, false);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"));
+
+    let items = parsed["results"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "should have 2 results");
+
+    let innerfn_item = &items[0];
+    assert_eq!(
+        innerfn_item["parent_chunk_id"], 42,
+        "[T-015] InnerFn result should have parent_chunk_id: {json}"
+    );
+
+    let component_item = &items[1];
+    assert!(
+        component_item.get("parent_chunk_id").is_some(),
+        "[T-015] Component result should have parent_chunk_id field: {json}"
+    );
+    assert!(
+        component_item["parent_chunk_id"].is_null(),
+        "[T-015] Component result parent_chunk_id should be null: {json}"
+    );
+}
+
+#[test]
+fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
+    let mut lines = Vec::new();
+    lines.push("export function UserForm() {".to_string());
+    lines.push("  const [name, setName] = useState('');".to_string());
+    lines.push("  const handleSubmit = () => {".to_string());
+    lines.push("    submitFormData(name);".to_string());
+    lines.push("    resetForm();".to_string());
+    lines.push("  };".to_string());
+    lines.push("  const handleCancel = () => {".to_string());
+    lines.push("    resetForm();".to_string());
+    lines.push("  };".to_string());
+    for i in 0..48 {
+        lines.push(format!("  const pad{i} = {i};"));
+    }
+    lines.push("  return <form onSubmit={handleSubmit}><input/></form>;".to_string());
+    lines.push("}".to_string());
+    let fixture = lines.join("\n");
+
+    let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
+
+    y.index().unwrap();
+
+    let result = y.search("handleSubmit", 10, 0, OutputFormat::Text).unwrap();
+    assert!(
+        result.contains("handleSubmit"),
+        "[AC-5] search should find handleSubmit: {result}"
+    );
+    assert!(
+        result.contains("inner_fn"),
+        "[AC-5] handleSubmit should be typed as inner_fn: {result}"
+    );
+}
+
+#[test]
+fn t_ac5_below_threshold_no_subchunks_in_index() {
+    let fixture = r#"export function SmallCard() {
+  const [count, setCount] = useState(0);
+  const handleClick = () => { setCount(count + 1); };
+  return <div><button onClick={handleClick}>{count}</button></div>;
+}"#;
+    let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", &fixture)]);
+    y.index().unwrap();
+
+    let stats = y.status().unwrap();
+    assert!(
+        !stats.contains("inner_fn"),
+        "[AC-5] below-threshold component should not produce InnerFn: {stats}"
+    );
+}
+
+#[test]
+fn tc_003_parent_and_child_both_in_results_no_duplicate() {
+    let parent_id = 42i64;
+    let results = vec![
+        storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/UserForm.tsx".to_string(),
+                chunk_type: storage::ChunkType::Component,
+                name: Some("UserForm".to_string()),
+                content: "function UserForm() { return <form/>; }".to_string(),
+                start_line: 1,
+                end_line: 20,
+                parent_chunk_id: None,
+            },
+            chunk_id: Some(parent_id),
+            distance: 0.1,
+            match_source: storage::MatchSource::Semantic,
+            score: 0.90,
+        },
+        storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/UserForm.tsx".to_string(),
+                chunk_type: storage::ChunkType::InnerFn,
+                name: Some("handleSubmit".to_string()),
+                content: "const handleSubmit = () => {}".to_string(),
+                start_line: 10,
+                end_line: 13,
+                parent_chunk_id: Some(parent_id),
+            },
+            chunk_id: Some(43),
+            distance: 0.15,
+            match_source: storage::MatchSource::ContentMatch,
+            score: 0.85,
+        },
+    ];
+    let ctx = EnrichmentContext {
+        imports: HashMap::new(),
+        siblings: HashMap::new(),
+    };
+    let mut parent_chunks = HashMap::new();
+    parent_chunks.insert(
+        parent_id,
+        storage::Chunk {
+            file_path: "src/UserForm.tsx".to_string(),
+            chunk_type: storage::ChunkType::Component,
+            name: Some("UserForm".to_string()),
+            content: "function UserForm() { return <form/>; }".to_string(),
+            start_line: 1,
+            end_line: 20,
+            parent_chunk_id: None,
+        },
+    );
+    let text = format_results_grouped(&results, &ctx, &parent_chunks);
+
+    assert!(
+        !text.contains("Parent context:"),
+        "[TC-003] when parent is in results, 'Parent context:' should be suppressed: {text}"
+    );
+    assert!(text.contains("UserForm"), "parent should appear: {text}");
+    assert!(text.contains("handleSubmit"), "child should appear: {text}");
+}
+
+#[test]
+fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
+    let (conn, _dir) = test_db();
+
+    let parent = storage::NewChunk {
+        chunk_type: &storage::ChunkType::Component,
+        name: Some("App"),
+        content: "function App() {}",
+        start_line: 1,
+        end_line: 5,
+        parent_index: None,
+    };
+    let child = storage::NewChunk {
+        chunk_type: &storage::ChunkType::InnerFn,
+        name: Some("handleClick"),
+        content: "const handleClick = () => {}",
+        start_line: 2,
+        end_line: 4,
+        parent_index: Some(0),
+    };
+    storage::replace_file_chunks_only(&conn, "src/App.tsx", &[parent, child], "h1", "", &[])
+        .unwrap();
+
+    let child_row: (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT id, parent_chunk_id FROM chunks WHERE chunk_type = 'inner_fn' AND file_path = 'src/App.tsx'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    let chunk = storage::get_chunk_by_id(&conn, child_row.0)
+        .unwrap()
+        .expect("child chunk should exist");
+    assert_eq!(chunk.chunk_type, storage::ChunkType::InnerFn);
+    assert_eq!(chunk.name.as_deref(), Some("handleClick"));
+    assert_eq!(chunk.parent_chunk_id, child_row.1);
+
+    let missing = storage::get_chunk_by_id(&conn, 99999).unwrap();
+    assert!(missing.is_none(), "nonexistent ID should return None");
 }

@@ -92,7 +92,7 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
         IndexState::Empty
     } else if stats.embedded_chunks == 0 {
         IndexState::ChunkedOnly
-    } else if stats.embedded_chunks < stats.total_chunks {
+    } else if stats.embedded_chunks < stats.embeddable_chunks {
         IndexState::PartiallyEmbedded
     } else {
         IndexState::FullyEmbedded
@@ -286,7 +286,8 @@ impl Yomu {
         }
 
         let ctx = self.fetch_enrichment_context(&outcome.results)?;
-        let mut text = format_results_grouped(&outcome.results, &ctx);
+        let parent_chunks = self.fetch_parent_chunks(&outcome.results)?;
+        let mut text = format_results_grouped(&outcome.results, &ctx, &parent_chunks);
         for note in &notes {
             text.push_str(&format!("\n---\nNote: {note}\n"));
         }
@@ -497,7 +498,7 @@ impl Yomu {
         }
         let note = self.try_rechunk();
         let stats = self.with_db(storage::get_stats)?;
-        Ok((stats.embedded_chunks < stats.total_chunks, note))
+        Ok((stats.embedded_chunks < stats.embeddable_chunks, note))
     }
 
     fn check_index_fresh(&self) -> bool {
@@ -572,6 +573,20 @@ impl Yomu {
             let siblings = storage::get_file_siblings(conn, &path_refs)?;
             Ok(EnrichmentContext { imports, siblings })
         })
+    }
+
+    fn fetch_parent_chunks(
+        &self,
+        results: &[storage::SearchResult],
+    ) -> Result<std::collections::HashMap<i64, storage::Chunk>, YomuError> {
+        let parent_ids: Vec<i64> = results
+            .iter()
+            .filter_map(|r| r.chunk.parent_chunk_id)
+            .collect();
+        if parent_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids))
     }
 
     fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>

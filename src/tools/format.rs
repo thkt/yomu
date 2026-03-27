@@ -26,7 +26,7 @@ pub(super) fn format_no_results_message(stats: &storage::IndexStatus) -> String 
 }
 
 pub(super) fn format_coverage_note(stats: &storage::IndexStatus) -> Option<String> {
-    if stats.embedded_chunks < stats.total_chunks {
+    if stats.embedded_chunks < stats.embeddable_chunks {
         Some(format!(
             "\n\nEmbedding coverage: {}. Use search to incrementally embed more.",
             format_coverage(stats)
@@ -91,6 +91,7 @@ pub(super) fn format_impact_results(
 pub(super) fn format_results_grouped(
     results: &[storage::SearchResult],
     ctx: &EnrichmentContext,
+    parent_chunks: &HashMap<i64, storage::Chunk>,
 ) -> String {
     let mut groups: HashMap<&str, Vec<(usize, &storage::SearchResult)>> = HashMap::new();
     for (i, result) in results.iter().enumerate() {
@@ -112,8 +113,13 @@ pub(super) fn format_results_grouped(
     });
 
     let mut output = String::new();
+    let result_chunk_ids: HashSet<i64> = results
+        .iter()
+        .filter_map(|r| r.chunk_id)
+        .collect();
+
     for (file_path, chunks) in &sorted {
-        format_file_group(&mut output, file_path, chunks, ctx);
+        format_file_group(&mut output, file_path, chunks, ctx, parent_chunks, &result_chunk_ids);
     }
     output
 }
@@ -156,6 +162,7 @@ struct JsonChunk<'a> {
     end_line: u32,
     score: f32,
     content: &'a str,
+    parent_chunk_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +182,7 @@ pub(super) fn format_results_json(results: &[storage::SearchResult], degraded: b
             end_line: r.chunk.end_line,
             score: r.score,
             content: &r.chunk.content,
+            parent_chunk_id: r.chunk.parent_chunk_id,
         })
         .collect();
     let response = JsonResponse {
@@ -192,6 +200,8 @@ fn format_file_group(
     file_path: &str,
     chunks: &[(usize, &storage::SearchResult)],
     ctx: &EnrichmentContext,
+    parent_chunks: &HashMap<i64, storage::Chunk>,
+    result_chunk_ids: &HashSet<i64>,
 ) {
     output.push_str(&format!("## {}\n", file_path));
 
@@ -223,5 +233,23 @@ fn format_file_group(
         ));
         output.push_str(&chunk.content);
         output.push_str("\n\n");
+
+        // Show parent context for subchunk hits (only if parent is not already in results)
+        if let Some(parent_id) = chunk.parent_chunk_id {
+            if !result_chunk_ids.contains(&parent_id) {
+                if let Some(parent) = parent_chunks.get(&parent_id) {
+                    let parent_name = parent.name.as_deref().unwrap_or("(unnamed)");
+                    output.push_str(&format!(
+                        "  Parent context: {} [{}] — {}:{}\n",
+                        parent_name,
+                        parent.chunk_type.as_str(),
+                        parent.start_line,
+                        parent.end_line,
+                    ));
+                    output.push_str(&parent.content);
+                    output.push_str("\n\n");
+                }
+            }
+        }
     }
 }

@@ -993,3 +993,259 @@ fn chunk_empty_input_html() {
     let result = chunk_file("", "html");
     assert!(result.chunks.is_empty());
 }
+
+#[test]
+fn t_001_raw_chunk_parent_index_defaults_to_none() {
+    let chunk = RawChunk {
+        chunk_type: ChunkType::Component,
+        name: Some("App".to_string()),
+        content: "function App() {}".to_string(),
+        start_line: 1,
+        end_line: 5,
+        parent_index: None,
+        ast_start_line: 1,
+    };
+    assert_eq!(chunk.parent_index, None);
+}
+
+#[test]
+fn t_001_raw_chunk_parent_index_holds_value() {
+    let chunk = RawChunk {
+        chunk_type: ChunkType::InnerFn,
+        name: Some("handleClick".to_string()),
+        content: "const handleClick = () => {}".to_string(),
+        start_line: 10,
+        end_line: 15,
+        parent_index: Some(0),
+        ast_start_line: 10,
+    };
+    assert_eq!(chunk.parent_index, Some(0));
+    assert_eq!(chunk.chunk_type, ChunkType::InnerFn);
+}
+
+fn make_large_component(name: &str, inner_fns: &[&str]) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("export function {name}() {{"));
+    lines.push("  const [state, setState] = useState(0);".to_string());
+    for inner in inner_fns {
+        lines.push(format!("  {inner}"));
+    }
+    let current = lines.len() + 1;
+    for i in 0..(55usize.saturating_sub(current)) {
+        lines.push(format!("  const pad{i} = {i};"));
+    }
+    lines.push("  return <div>{state}</div>;".to_string());
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+#[test]
+fn t_001_large_component_extracts_inner_arrow_functions() {
+    let source = make_large_component(
+        "Dashboard",
+        &[
+            "const handleClick = () => { setState(1); };",
+            "const handleSubmit = () => { setState(2); };",
+        ],
+    );
+    let result = chunk_file(&source, "tsx");
+
+    let parent_chunks: Vec<_> = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::Component)
+        .collect();
+    assert_eq!(parent_chunks.len(), 1);
+    assert_eq!(parent_chunks[0].name.as_deref(), Some("Dashboard"));
+
+    let inner_chunks: Vec<_> = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::InnerFn)
+        .collect();
+    assert_eq!(inner_chunks.len(), 2);
+
+    for inner in &inner_chunks {
+        assert!(
+            inner.parent_index.is_some(),
+            "InnerFn chunk should have parent_index"
+        );
+    }
+
+    let related_count = parent_chunks.len() + inner_chunks.len();
+    assert_eq!(related_count, 3);
+}
+
+#[test]
+fn t_002_small_component_no_subchunks() {
+    let source = r#"export function SmallCard() {
+  const [count, setCount] = useState(0);
+  const handleClick = () => {
+    setCount(count + 1);
+  };
+  return (
+    <div>
+      <button onClick={handleClick}>
+        {count}
+      </button>
+    </div>
+  );
+}"#;
+    let result = chunk_file(source, "tsx");
+
+    assert_eq!(
+        result.chunks.len(),
+        1,
+        "below-threshold component should not produce subchunks"
+    );
+    assert_eq!(result.chunks[0].chunk_type, ChunkType::Component);
+    assert_eq!(result.chunks[0].name.as_deref(), Some("SmallCard"));
+
+    let inner_count = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::InnerFn)
+        .count();
+    assert_eq!(inner_count, 0);
+}
+
+#[test]
+fn t_003_hook_callbacks_extracted_as_inner_fn() {
+    let source = make_large_component(
+        "ProfilePage",
+        &[
+            "useEffect(() => { document.title = 'Profile'; }, []);",
+            "const cached = useMemo(() => { return state * 2; }, [state]);",
+            "const handler = useCallback(() => { setState(state + 1); }, [state]);",
+        ],
+    );
+    let result = chunk_file(&source, "tsx");
+
+    let inner_chunks: Vec<_> = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::InnerFn)
+        .collect();
+    assert_eq!(
+        inner_chunks.len(),
+        3,
+        "useEffect, useMemo, useCallback callbacks should each produce an InnerFn"
+    );
+
+    let parent_count = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::Component)
+        .count();
+    assert_eq!(parent_count, 1);
+}
+
+#[test]
+fn t_004_nested_functions_only_direct_children() {
+    let source = make_large_component(
+        "NestedPage",
+        &[
+            "const outer = () => { const inner = () => { return 1; }; return inner(); };",
+        ],
+    );
+    let result = chunk_file(&source, "tsx");
+
+    let inner_chunks: Vec<_> = result
+        .chunks
+        .iter()
+        .filter(|c| c.chunk_type == ChunkType::InnerFn)
+        .collect();
+    assert_eq!(
+        inner_chunks.len(),
+        1,
+        "only depth-1 children should be extracted, not nested grandchildren"
+    );
+}
+
+#[test]
+fn t_005_parent_emitted_before_children() {
+    let source = make_large_component(
+        "OrderedPage",
+        &[
+            "const handleA = () => { setState(1); };",
+            "const handleB = () => { setState(2); };",
+        ],
+    );
+    let result = chunk_file(&source, "tsx");
+
+    let parent_pos = result
+        .chunks
+        .iter()
+        .position(|c| c.chunk_type == ChunkType::Component && c.name.as_deref() == Some("OrderedPage"))
+        .expect("parent Component chunk should exist");
+
+    let child_positions: Vec<_> = result
+        .chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.chunk_type == ChunkType::InnerFn)
+        .map(|(i, _)| i)
+        .collect();
+
+    assert!(
+        !child_positions.is_empty(),
+        "should have InnerFn children"
+    );
+    for child_pos in &child_positions {
+        assert!(
+            parent_pos < *child_pos,
+            "parent index ({parent_pos}) must be less than child index ({child_pos})"
+        );
+    }
+
+    for child_pos in &child_positions {
+        assert_eq!(
+            result.chunks[*child_pos].parent_index,
+            Some(parent_pos),
+            "child at {child_pos} should reference parent at {parent_pos}"
+        );
+    }
+}
+
+#[test]
+fn t_006_non_component_no_subchunks() {
+    let mut hook_lines = Vec::new();
+    hook_lines.push("export function useAuth() {".to_string());
+    hook_lines.push("  const [user, setUser] = useState(null);".to_string());
+    hook_lines.push("  const login = () => { setUser({ name: 'Alice' }); };".to_string());
+    hook_lines.push("  const logout = () => { setUser(null); };".to_string());
+    for i in 0..50 {
+        hook_lines.push(format!("  const pad{i} = {i};"));
+    }
+    hook_lines.push("  return { user, login, logout };".to_string());
+    hook_lines.push("}".to_string());
+
+    let mut other_lines = Vec::new();
+    other_lines.push("function processData() {".to_string());
+    other_lines.push("  const result = [];".to_string());
+    other_lines.push("  const transform = () => { return 42; };".to_string());
+    for i in 0..50 {
+        other_lines.push(format!("  const pad{i} = {i};"));
+    }
+    other_lines.push("  return result;".to_string());
+    other_lines.push("}".to_string());
+
+    let cases = [
+        (hook_lines.join("\n"), ChunkType::Hook, "useAuth"),
+        (other_lines.join("\n"), ChunkType::Other, "processData"),
+    ];
+
+    for (source, expected_type, label) in &cases {
+        let result = chunk_file(source, "tsx");
+
+        let inner_count = result
+            .chunks
+            .iter()
+            .filter(|c| c.chunk_type == ChunkType::InnerFn)
+            .count();
+        assert_eq!(
+            inner_count, 0,
+            "{label} ({expected_type:?}) should not produce InnerFn subchunks"
+        );
+    }
+}

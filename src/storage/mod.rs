@@ -32,6 +32,7 @@ pub enum ChunkType {
     RustImpl,
     MdSection,
     Other,
+    InnerFn,
 }
 
 impl ChunkType {
@@ -50,6 +51,7 @@ impl ChunkType {
             Self::RustImpl => "rust_impl",
             Self::MdSection => "md_section",
             Self::Other => "other",
+            Self::InnerFn => "inner_fn",
         }
     }
 
@@ -68,6 +70,7 @@ impl ChunkType {
             "rust_impl" => Self::RustImpl,
             "md_section" => Self::MdSection,
             "other" => Self::Other,
+            "inner_fn" => Self::InnerFn,
             other => {
                 tracing::warn!(
                     chunk_type = other,
@@ -87,20 +90,22 @@ pub struct Chunk {
     pub content: String,
     pub start_line: u32,
     pub end_line: u32,
+    pub parent_chunk_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexStatus {
     pub total_files: u32,
     pub total_chunks: u32,
+    pub embeddable_chunks: u32,
     pub embedded_chunks: u32,
     pub last_indexed_at: Option<String>,
 }
 
 impl IndexStatus {
     pub fn embed_percentage(&self) -> u32 {
-        if self.total_chunks > 0 {
-            (self.embedded_chunks as f64 / self.total_chunks as f64 * 100.0) as u32
+        if self.embeddable_chunks > 0 {
+            (self.embedded_chunks as f64 / self.embeddable_chunks as f64 * 100.0) as u32
         } else {
             0
         }
@@ -142,6 +147,7 @@ pub struct NewChunk<'a> {
     pub content: &'a str,
     pub start_line: u32,
     pub end_line: u32,
+    pub parent_index: Option<usize>,
 }
 
 pub struct FileData<'a> {
@@ -167,12 +173,13 @@ fn insert_chunk_row(
     file_path: &str,
     chunk: &NewChunk,
     file_hash: &str,
+    parent_chunk_id: Option<i64>,
 ) -> Result<i64, StorageError> {
     debug_assert!(chunk.start_line <= chunk.end_line, "start_line > end_line");
     debug_assert!(!chunk.content.is_empty(), "empty chunk content");
     conn.execute(
-        "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash, parent_chunk_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             file_path,
             chunk.chunk_type.as_str(),
@@ -181,6 +188,7 @@ fn insert_chunk_row(
             chunk.start_line,
             chunk.end_line,
             file_hash,
+            parent_chunk_id,
         ],
     )?;
     let chunk_id = conn.last_insert_rowid();
@@ -199,9 +207,10 @@ pub fn insert_chunk(
     chunk: &NewChunk,
     file_hash: &str,
     embedding: &[f32],
+    parent_chunk_id: Option<i64>,
 ) -> Result<i64, StorageError> {
     check_embedding_dims(embedding)?;
-    let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash)?;
+    let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash, parent_chunk_id)?;
 
     let embedding_bytes = f32_as_bytes(embedding);
     conn.execute(
@@ -248,15 +257,21 @@ pub fn replace_file_chunks_with(
     data: &FileData,
     embeddings: &[Vec<f32>],
 ) -> Result<(), StorageError> {
-    if data.chunks.len() != embeddings.len() {
+    let embeddable_count = data
+        .chunks
+        .iter()
+        .filter(|c| *c.chunk_type != ChunkType::InnerFn)
+        .count();
+    if embeddable_count != embeddings.len() {
         return Err(StorageError::LengthMismatch {
-            chunks: data.chunks.len(),
+            chunks: embeddable_count,
             embeddings: embeddings.len(),
         });
     }
     replace_file_data(conn, data, Some(embeddings))
 }
 
+#[cfg(test)]
 pub fn replace_file_chunks(
     conn: &Connection,
     file_path: &str,
@@ -302,15 +317,28 @@ fn replace_file_data(
     let tx = conn.unchecked_transaction()?;
     delete_file_chunks_in(&tx, data.file_path)?;
 
+    let mut inserted_ids: Vec<i64> = Vec::with_capacity(data.chunks.len());
+
     match embeddings {
         Some(embs) => {
-            for (chunk, embedding) in data.chunks.iter().zip(embs.iter()) {
-                insert_chunk(&tx, data.file_path, chunk, data.file_hash, embedding)?;
+            let mut emb_idx = 0;
+            for (i, chunk) in data.chunks.iter().enumerate() {
+                let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
+                if *chunk.chunk_type == ChunkType::InnerFn {
+                    let id = insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?;
+                    inserted_ids.push(id);
+                } else {
+                    let id = insert_chunk(&tx, data.file_path, chunk, data.file_hash, &embs[emb_idx], parent_chunk_id)?;
+                    inserted_ids.push(id);
+                    emb_idx += 1;
+                }
             }
         }
         None => {
-            for chunk in data.chunks {
-                insert_chunk_row(&tx, data.file_path, chunk, data.file_hash)?;
+            for (i, chunk) in data.chunks.iter().enumerate() {
+                let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
+                let id = insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?;
+                inserted_ids.push(id);
             }
         }
     }
@@ -318,6 +346,17 @@ fn replace_file_data(
     write_file_metadata(&tx, data.file_path, data.imports_text, data.refs)?;
     tx.commit()?;
     Ok(())
+}
+
+fn resolve_parent(chunk: &NewChunk, inserted_ids: &[i64], current_index: usize) -> Option<i64> {
+    chunk.parent_index.and_then(|pi| {
+        if pi < current_index {
+            inserted_ids.get(pi).copied()
+        } else {
+            tracing::warn!(parent_index = pi, current_index, "invalid parent_index, skipping");
+            None
+        }
+    })
 }
 
 pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, StorageError> {
@@ -331,6 +370,12 @@ pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, 
 
 pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     let total_chunks: u32 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+
+    let embeddable_chunks: u32 = conn.query_row(
+        "SELECT COUNT(*) FROM chunks WHERE chunk_type != 'inner_fn'",
+        [],
+        |row| row.get(0),
+    )?;
 
     let total_files: u32 =
         conn.query_row("SELECT COUNT(DISTINCT file_path) FROM chunks", [], |row| {
@@ -353,6 +398,7 @@ pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     Ok(IndexStatus {
         total_files,
         total_chunks,
+        embeddable_chunks,
         embedded_chunks,
         last_indexed_at,
     })

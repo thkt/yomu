@@ -14,6 +14,7 @@ fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Ch
         content: row.get(offset + 3)?,
         start_line: row.get(offset + 4)?,
         end_line: row.get(offset + 5)?,
+        parent_chunk_id: row.get(offset + 6)?,
     })
 }
 
@@ -29,7 +30,7 @@ pub fn search_similar(
 
     let mut stmt = conn.prepare(
         "SELECT c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, v.distance, c.id
+                c.start_line, c.end_line, c.parent_chunk_id, v.distance, c.id
          FROM vec_chunks v
          INNER JOIN chunks c ON c.id = v.chunk_id
          WHERE v.embedding MATCH ?1 AND k = ?2
@@ -39,10 +40,10 @@ pub fn search_similar(
     )?;
 
     let rows = stmt.query_map(rusqlite::params![query_bytes, k, limit, offset], |row| {
-        let distance: f32 = row.get(6)?;
+        let distance: f32 = row.get(7)?;
         Ok(SearchResult {
             chunk: chunk_from_row(row, 0)?,
-            chunk_id: Some(row.get(7)?),
+            chunk_id: Some(row.get(8)?),
             distance,
             match_source: MatchSource::Semantic,
             score: 1.0 / (1.0 + distance),
@@ -67,7 +68,7 @@ pub fn search_by_name(
     let path_clause = vec!["file_path LIKE ? ESCAPE '\\'"; keywords.len()].join(" OR ");
 
     let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line \
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
          FROM chunks WHERE ((name IS NOT NULL AND ({name_clause})) OR ({path_clause}))",
     );
 
@@ -127,7 +128,7 @@ pub fn search_by_content(
 
     let mut sql = String::from(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line
+                c.start_line, c.end_line, c.parent_chunk_id
          FROM fts_chunks f
          INNER JOIN chunks c ON c.id = f.rowid
          WHERE fts_chunks MATCH ?1",
@@ -155,6 +156,42 @@ pub fn search_by_content(
     })?;
 
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
+         FROM chunks WHERE id = ?1",
+    )?;
+    match stmt.query_row([chunk_id], |row| chunk_from_row(row, 0)) {
+        Ok(chunk) => Ok(Some(chunk)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn get_chunks_by_ids(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Chunk>, StorageError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = super::sql_placeholders(ids.len());
+    let sql = format!(
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
+         FROM chunks WHERE id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        let id: i64 = row.get(0)?;
+        let chunk = chunk_from_row(row, 1)?;
+        Ok((id, chunk))
+    })?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn get_keyword_doc_frequencies(

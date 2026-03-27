@@ -41,6 +41,10 @@ pub struct RawChunk {
     pub content: String,
     pub start_line: u32,
     pub end_line: u32,
+    pub parent_index: Option<usize>,
+    /// AST node's original start line before comment attachment shifts start_line.
+    /// Used by pass-2 subchunk extraction to match chunks back to AST nodes.
+    pub ast_start_line: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -127,12 +131,15 @@ fn chunk_fallback(source: &str) -> Vec<RawChunk> {
 
         let content: String = lines[start_idx..end_idx].join("\n");
         if !content.trim().is_empty() {
+            let s = (start_idx + 1) as u32;
             chunks.push(RawChunk {
                 chunk_type: ChunkType::Other,
                 name: None,
                 content,
-                start_line: (start_idx + 1) as u32,
+                parent_index: None,
+                start_line: s,
                 end_line: end_idx as u32,
+                ast_start_line: s,
             });
         }
 
@@ -179,13 +186,166 @@ fn make_chunk(
     chunk_type: ChunkType,
     name: Option<String>,
 ) -> RawChunk {
+    let start = node.start_position().row as u32 + 1;
     RawChunk {
         chunk_type,
         name,
         content: source[node.byte_range()].to_string(),
-        start_line: node.start_position().row as u32 + 1,
+        start_line: start,
         end_line: node.end_position().row as u32 + 1,
+        parent_index: None,
+        ast_start_line: start,
     }
+}
+
+/// Minimum line count for a Component chunk to trigger subchunk extraction.
+const SUBCHUNK_THRESHOLD: u32 = 50;
+
+/// Hook names whose callback arguments should be extracted as subchunks.
+const HOOK_CALLBACK_NAMES: &[&str] = &["useEffect", "useMemo", "useCallback"];
+
+/// Extract direct inner functions from a Component chunk's AST node.
+/// Returns subchunks with `parent_index` pointing to the parent's position.
+pub(super) fn extract_inner_functions(
+    source: &str,
+    body_node: &tree_sitter::Node,
+    parent_index: usize,
+) -> Vec<RawChunk> {
+    let mut subchunks = Vec::new();
+    let mut cursor = body_node.walk();
+
+    for stmt in body_node.children(&mut cursor) {
+        match stmt.kind() {
+            // const handleClick = () => { ... };
+            // const cached = useMemo(() => { ... }, [dep]);
+            "lexical_declaration" => {
+                if let Some(sub) = extract_arrow_from_lexical(source, &stmt, parent_index) {
+                    subchunks.push(sub);
+                } else if let Some(sub) = extract_hook_from_lexical(source, &stmt, parent_index) {
+                    subchunks.push(sub);
+                }
+            }
+            // function handleSubmit() { ... }
+            "function_declaration" => {
+                let name = extract_name(&stmt, source);
+                let s = stmt.start_position().row as u32 + 1;
+                subchunks.push(RawChunk {
+                    chunk_type: ChunkType::InnerFn,
+                    name,
+                    content: source[stmt.byte_range()].to_string(),
+                    start_line: s,
+                    end_line: stmt.end_position().row as u32 + 1,
+                    parent_index: Some(parent_index),
+                    ast_start_line: s,
+                });
+            }
+            // useEffect(() => { ... }, []);
+            "expression_statement" => {
+                if let Some(sub) = extract_hook_callback(source, &stmt, parent_index) {
+                    subchunks.push(sub);
+                }
+            }
+            _ => {}
+        }
+    }
+    subchunks
+}
+
+fn extract_arrow_from_lexical(
+    source: &str,
+    node: &tree_sitter::Node,
+    parent_index: usize,
+) -> Option<RawChunk> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        let has_arrow = child
+            .children(&mut child.walk())
+            .any(|c| c.kind() == "arrow_function");
+        if has_arrow {
+            let name = extract_name(&child, source);
+            let s = node.start_position().row as u32 + 1;
+            return Some(RawChunk {
+                chunk_type: ChunkType::InnerFn,
+                name,
+                content: source[node.byte_range()].to_string(),
+                start_line: s,
+                end_line: node.end_position().row as u32 + 1,
+                parent_index: Some(parent_index),
+                ast_start_line: s,
+            });
+        }
+    }
+    None
+}
+
+fn extract_hook_from_lexical(
+    source: &str,
+    node: &tree_sitter::Node,
+    parent_index: usize,
+) -> Option<RawChunk> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        // Look for call_expression as the value: const x = useMemo(...)
+        let mut c2 = child.walk();
+        for grandchild in child.children(&mut c2) {
+            if grandchild.kind() == "call_expression" {
+                let callee = grandchild.children(&mut grandchild.walk()).next()?;
+                let callee_name = &source[callee.byte_range()];
+                if HOOK_CALLBACK_NAMES.contains(&callee_name) {
+                    let s = node.start_position().row as u32 + 1;
+                    return Some(RawChunk {
+                        chunk_type: ChunkType::InnerFn,
+                        name: Some(callee_name.to_string()),
+                        content: source[node.byte_range()].to_string(),
+                        start_line: s,
+                        end_line: node.end_position().row as u32 + 1,
+                        ast_start_line: s,
+                        parent_index: Some(parent_index),
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_hook_callback(
+    source: &str,
+    stmt: &tree_sitter::Node,
+    parent_index: usize,
+) -> Option<RawChunk> {
+    let mut cursor = stmt.walk();
+    for child in stmt.children(&mut cursor) {
+        if child.kind() != "call_expression" {
+            continue;
+        }
+        let callee = child.children(&mut child.walk()).next()?;
+        let callee_name = &source[callee.byte_range()];
+        if HOOK_CALLBACK_NAMES.contains(&callee_name) {
+            let s = stmt.start_position().row as u32 + 1;
+            return Some(RawChunk {
+                chunk_type: ChunkType::InnerFn,
+                name: Some(callee_name.to_string()),
+                content: source[stmt.byte_range()].to_string(),
+                start_line: s,
+                end_line: stmt.end_position().row as u32 + 1,
+                parent_index: Some(parent_index),
+                ast_start_line: s,
+            });
+        }
+    }
+    None
+}
+
+pub(super) fn should_extract_subchunks(chunk: &RawChunk) -> bool {
+    chunk.chunk_type == ChunkType::Component
+        && (chunk.end_line - chunk.start_line + 1) > SUBCHUNK_THRESHOLD
 }
 
 fn extract_name(node: &tree_sitter::Node, source: &str) -> Option<String> {

@@ -35,9 +35,11 @@ fn search_with_mock_embedder() {
             content: "function Button() { return <div/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "hash1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -215,9 +217,11 @@ fn search_fallback_merges_vector_and_name_results() {
             content: "function AuthForm() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -230,6 +234,7 @@ fn search_fallback_merges_vector_and_name_results() {
             content: "function useAuth() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }],
         "h2",
         "",
@@ -279,9 +284,11 @@ fn search_deduplicates_vector_and_name_results() {
             content: "function useAuth() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -316,6 +323,7 @@ fn make_result(
             content: format!("function {name}() {{}}"),
             start_line: 1,
             end_line: 3,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance,
@@ -624,9 +632,11 @@ fn search_returns_results_sorted_by_score() {
             content: "function AuthForm() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -639,6 +649,7 @@ fn search_returns_results_sorted_by_score() {
             content: "function useAuth() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }],
         "h2",
         "",
@@ -768,6 +779,7 @@ fn content_match_scores_from_content_body() {
                 .to_string(),
             start_line: 1,
             end_line: 3,
+            parent_chunk_id: None,
         },
         chunk_id: None,
         distance: f32::INFINITY,
@@ -840,6 +852,7 @@ fn search_degrades_on_embed_failure() {
             content: "function AuthForm() { return <form/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }],
         "h1",
         "",
@@ -912,9 +925,11 @@ fn search_returns_results() {
             content: "function Button() { return <div/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "hash1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -938,6 +953,7 @@ fn search_pipeline_text_only_returns_name_matches() {
             content: "function AuthForm() { return <form/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }],
         "h1",
         "",
@@ -970,9 +986,11 @@ fn search_pipeline_with_embedding_returns_semantic() {
             content: "function Button() { return <div/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -994,6 +1012,7 @@ fn search_pipeline_caps_per_file() {
             content: "function fn() {}",
             start_line: i,
             end_line: i + 2,
+            parent_index: None,
         })
         .collect();
     storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[]).unwrap();
@@ -1025,6 +1044,7 @@ fn text_only_search_with_offset_returns_results() {
                 content: &format!("function Widget{i}() {{ return <div/>; }}"),
                 start_line: 1,
                 end_line: 1,
+                parent_index: None,
             }],
             &format!("h{i}"),
             "",

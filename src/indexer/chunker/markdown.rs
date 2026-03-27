@@ -20,10 +20,12 @@ pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
         if !content.trim().is_empty() {
             chunks.push(RawChunk {
                 chunk_type: ChunkType::Other,
+                parent_index: None,
                 name: None,
                 content,
                 start_line: 1,
                 end_line: headings[0].0 as u32,
+                ast_start_line: 1,
             });
         }
     }
@@ -38,6 +40,7 @@ pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
         if !content.trim().is_empty() {
             chunks.push(RawChunk {
                 chunk_type: ChunkType::MdSection,
+                parent_index: None,
                 name: if title.is_empty() {
                     None
                 } else {
@@ -46,6 +49,7 @@ pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
                 content,
                 start_line: (*line_idx + 1) as u32,
                 end_line: end_idx as u32,
+                ast_start_line: (*line_idx + 1) as u32,
             });
         }
     }

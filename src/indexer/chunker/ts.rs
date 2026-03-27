@@ -2,8 +2,9 @@ use crate::storage::ChunkType;
 
 use super::{
     FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk, ReExport,
-    attach_pending_comments, chunk_fallback, classify_function, extract_name, find_child_by_kind,
-    make_chunk, make_parser, other_or_skip,
+    attach_pending_comments, chunk_fallback, classify_function, extract_inner_functions,
+    extract_name, find_child_by_kind, make_chunk, make_parser, other_or_skip,
+    should_extract_subchunks,
 };
 
 pub(super) fn chunk_tsx(source: &str) -> FileChunks {
@@ -50,10 +51,79 @@ fn chunk_js_like_with_imports(source: &str, parser: &mut tree_sitter::Parser) ->
     if chunks.is_empty() {
         chunks = chunk_fallback(source);
     }
+
+    // Pass 2: extract subchunks from large Component chunks
+    let mut subchunks: Vec<(usize, Vec<RawChunk>)> = Vec::new();
+    for (idx, chunk) in chunks.iter().enumerate() {
+        if !should_extract_subchunks(chunk) {
+            continue;
+        }
+        // Find the AST node that corresponds to this chunk by matching line range
+        let mut cursor2 = root.walk();
+        for node in root.children(&mut cursor2) {
+            let node_start = node.start_position().row as u32 + 1;
+            let node_end = node.end_position().row as u32 + 1;
+            if node_start == chunk.ast_start_line && node_end == chunk.end_line {
+                // Find the statement_block (function body)
+                let body = find_function_body(&node);
+                if let Some(body_node) = body {
+                    let extracted = extract_inner_functions(source, &body_node, idx);
+                    if !extracted.is_empty() {
+                        subchunks.push((idx, extracted));
+                    }
+                }
+                break;
+            }
+        }
+    }
+    // Append subchunks after their parents (preserving parent-before-child order)
+    for (_parent_idx, subs) in subchunks {
+        chunks.extend(subs);
+    }
+
     FileChunks {
         imports,
         parsed_imports,
         chunks,
+    }
+}
+
+fn find_function_body<'a>(node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+    // For export_statement, unwrap to the inner declaration first
+    let decl = if node.kind() == "export_statement" {
+        let mut c = node.walk();
+        node.children(&mut c)
+            .find(|n| {
+                n.kind() == "function_declaration" || n.kind() == "lexical_declaration"
+            })?
+    } else {
+        *node
+    };
+
+    match decl.kind() {
+        "function_declaration" => {
+            let mut c = decl.walk();
+            decl.children(&mut c).find(|n| n.kind() == "statement_block")
+        }
+        "lexical_declaration" => {
+            // const Foo = () => { ... }
+            let mut c = decl.walk();
+            for child in decl.children(&mut c) {
+                if child.kind() == "variable_declarator" {
+                    let mut c2 = child.walk();
+                    for grandchild in child.children(&mut c2) {
+                        if grandchild.kind() == "arrow_function" {
+                            let mut c3 = grandchild.walk();
+                            return grandchild
+                                .children(&mut c3)
+                                .find(|n| n.kind() == "statement_block");
+                        }
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 

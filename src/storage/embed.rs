@@ -51,7 +51,7 @@ pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>
         "SELECT c.file_path, COUNT(*) as chunk_count
          FROM chunks c
          LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE v.chunk_id IS NULL
+         WHERE v.chunk_id IS NULL AND c.chunk_type != 'inner_fn'
          GROUP BY c.file_path",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -67,7 +67,7 @@ pub fn get_unembedded_chunks_for_file(
     let mut stmt = conn.prepare(
         "SELECT c.id, c.content, c.chunk_type FROM chunks c
          LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE c.file_path = ?1 AND v.chunk_id IS NULL",
+         WHERE c.file_path = ?1 AND v.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
     )?;
     let rows = stmt.query_map([file_path], |row| {
         Ok((

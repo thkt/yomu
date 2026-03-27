@@ -1,12 +1,5 @@
-//! Project root detection by walking up to find `.yomu/` or `.git/` markers.
-
 use std::path::{Path, PathBuf};
 
-/// Walk up from `start` looking for project root markers.
-///
-/// Checks `.yomu/` first (project-specific), then `.git/`.
-/// Returns `start` unchanged if neither marker is found.
-/// Expects `start` to be a directory (e.g. from `std::env::current_dir()`).
 pub fn detect_root(start: &Path) -> PathBuf {
     for marker in &[".yomu", ".git"] {
         let mut current = Some(start);
