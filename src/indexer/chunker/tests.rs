@@ -949,3 +949,47 @@ fn chunk_markdown_section_with_whitespace_body_kept() {
         vec!["Has content", "Whitespace body", "Also has content"]
     );
 }
+
+#[test]
+fn chunk_empty_input_tsx() {
+    let result = chunk_file("", "tsx");
+    assert!(result.chunks.is_empty());
+    assert!(result.imports.is_empty());
+    assert!(result.parsed_imports.is_empty());
+}
+
+#[test]
+fn chunk_empty_input_ts() {
+    let result = chunk_file("", "ts");
+    assert!(result.chunks.is_empty());
+    assert!(result.imports.is_empty());
+    assert!(result.parsed_imports.is_empty());
+}
+
+#[test]
+fn chunk_empty_input_js() {
+    let result = chunk_file("", "js");
+    assert!(result.chunks.is_empty());
+    assert!(result.imports.is_empty());
+    assert!(result.parsed_imports.is_empty());
+}
+
+#[test]
+fn chunk_empty_input_rs() {
+    let result = chunk_file("", "rs");
+    assert!(result.chunks.is_empty());
+    assert!(result.imports.is_empty());
+    assert!(result.parsed_imports.is_empty());
+}
+
+#[test]
+fn chunk_empty_input_css() {
+    let result = chunk_file("", "css");
+    assert!(result.chunks.is_empty());
+}
+
+#[test]
+fn chunk_empty_input_html() {
+    let result = chunk_file("", "html");
+    assert!(result.chunks.is_empty());
+}

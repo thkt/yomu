@@ -119,21 +119,48 @@ pub fn probe_embedder(model_dir: &str) -> ExitCode {
     }
 }
 
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn run_embed_probe(model_dir: &Path) -> bool {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
-        Err(_) => return false,
+        Err(e) => {
+            tracing::warn!(error = %e, "current_exe() failed in embed probe");
+            return false;
+        }
     };
-    match std::process::Command::new(exe)
+    let mut child = match std::process::Command::new(exe)
         .arg("--probe-embed")
         .arg(model_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .spawn()
     {
-        Ok(status) => status.success(),
-        Err(_) => false,
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to spawn embed probe");
+            return false;
+        }
+    };
+
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if start.elapsed() >= PROBE_TIMEOUT {
+                    tracing::warn!("Embed probe timed out after {}s", PROBE_TIMEOUT.as_secs());
+                    let _ = child.kill();
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "try_wait failed in embed probe");
+                return false;
+            }
+        }
     }
 }
 
@@ -247,7 +274,7 @@ impl Yomu {
         }
 
         if format == OutputFormat::Json {
-            return Ok(format_results_json(&outcome.results));
+            return Ok(format_results_json(&outcome.results, outcome.degraded));
         }
 
         if outcome.results.is_empty() {

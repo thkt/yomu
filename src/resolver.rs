@@ -141,6 +141,14 @@ impl Resolve for Resolver {
     }
 }
 
+/// Strip canonical root prefix from an already-canonical path.
+pub fn strip_canonical_prefix(abs: &Path, canonical_root: Option<&Path>) -> Option<String> {
+    let root = canonical_root?;
+    abs.strip_prefix(root)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 /// Convert absolute path to project-relative path. Returns None if path escapes root.
 pub fn to_relative_path(abs: &Path, root: &Path, canonical_root: Option<&Path>) -> Option<String> {
     let abs = match abs.canonicalize() {
@@ -150,20 +158,10 @@ pub fn to_relative_path(abs: &Path, root: &Path, canonical_root: Option<&Path>) 
             return None;
         }
     };
-    let root = match canonical_root {
-        Some(p) => p,
-        None => {
-            tracing::warn!(path = %root.display(), "canonical root unavailable");
-            return None;
-        }
-    };
-    match abs.strip_prefix(root) {
-        Ok(p) => Some(p.to_string_lossy().to_string()),
-        Err(_) => {
-            tracing::warn!(path = %abs.display(), root = %root.display(), "Resolved path escapes project root");
-            None
-        }
-    }
+    strip_canonical_prefix(&abs, canonical_root).or_else(|| {
+        tracing::warn!(path = %abs.display(), root = %root.display(), "Resolved path escapes project root or canonical root unavailable");
+        None
+    })
 }
 
 pub fn load_aliases(root: &Path) -> Vec<PathAlias> {

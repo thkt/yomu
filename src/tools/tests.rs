@@ -1168,8 +1168,15 @@ fn search_json_format_returns_valid_json() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
-    assert!(json.starts_with('['), "should start with [: {json}");
-    assert!(json.ends_with(']'), "should end with ]: {json}");
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(
+        parsed["results"].is_array(),
+        "should have results array: {json}"
+    );
+    assert!(
+        parsed.get("degraded").is_some(),
+        "should have degraded field: {json}"
+    );
     assert!(
         json.contains("\"file\":\"src/Button.tsx\""),
         "should contain file path: {json}"
@@ -1186,7 +1193,15 @@ fn search_json_format_empty_results() {
     let json = y
         .search("zzzznonexistent", 10, 0, OutputFormat::Json)
         .unwrap();
-    assert_eq!(json, "[]", "empty results should be empty array");
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(
+        parsed["results"].as_array().unwrap().is_empty(),
+        "empty results: {json}"
+    );
+    assert!(
+        parsed.get("degraded").is_some(),
+        "should have degraded field: {json}"
+    );
 }
 
 #[test]
@@ -1233,7 +1248,7 @@ fn dry_run_index_shows_skip_for_unchanged() {
 }
 
 #[test]
-fn search_json_format_degraded_excludes_notes() {
+fn search_json_format_degraded_includes_flag() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
         Arc::new(FailingEmbedder::all_fail("service unavailable")),
@@ -1241,10 +1256,14 @@ fn search_json_format_degraded_excludes_notes() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
-    assert!(json.starts_with('['), "should be JSON array: {json}");
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        parsed["degraded"], true,
+        "should be degraded when embedder fails: {json}"
+    );
     assert!(
-        !json.contains("embedding"),
-        "JSON output should not contain degraded notes: {json}"
+        !parsed["results"].as_array().unwrap().is_empty(),
+        "should still have results: {json}"
     );
 }
 
@@ -1259,8 +1278,8 @@ fn search_json_format_parses_as_valid_json() {
     let json = y.search("quote", 10, 0, OutputFormat::Json).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json)
         .unwrap_or_else(|e| panic!("should parse as valid JSON: {e}\n{json}"));
-    assert!(parsed.is_array(), "should be array");
-    let arr = parsed.as_array().unwrap();
+    assert!(parsed.is_object(), "should be object");
+    let arr = parsed["results"].as_array().unwrap();
     assert!(!arr.is_empty(), "should have results");
     assert!(
         arr[0].get("file").is_some(),

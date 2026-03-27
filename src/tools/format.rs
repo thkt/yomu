@@ -158,7 +158,13 @@ struct JsonChunk<'a> {
     content: &'a str,
 }
 
-pub(super) fn format_results_json(results: &[storage::SearchResult]) -> String {
+#[derive(Serialize)]
+struct JsonResponse<'a> {
+    results: Vec<JsonChunk<'a>>,
+    degraded: bool,
+}
+
+pub(super) fn format_results_json(results: &[storage::SearchResult], degraded: bool) -> String {
     let items: Vec<JsonChunk> = results
         .iter()
         .map(|r| JsonChunk {
@@ -171,7 +177,14 @@ pub(super) fn format_results_json(results: &[storage::SearchResult]) -> String {
             content: &r.chunk.content,
         })
         .collect();
-    serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string())
+    let response = JsonResponse {
+        results: items,
+        degraded,
+    };
+    serde_json::to_string(&response).unwrap_or_else(|e| {
+        tracing::error!(error = %e, "JSON serialization failed");
+        r#"{"results":[],"degraded":true}"#.to_string()
+    })
 }
 
 fn format_file_group(

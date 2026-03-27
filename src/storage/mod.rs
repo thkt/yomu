@@ -144,6 +144,14 @@ pub struct NewChunk<'a> {
     pub end_line: u32,
 }
 
+pub struct FileData<'a> {
+    pub file_path: &'a str,
+    pub chunks: &'a [NewChunk<'a>],
+    pub file_hash: &'a str,
+    pub imports_text: &'a str,
+    pub refs: &'a [Reference],
+}
+
 fn check_embedding_dims(embedding: &[f32]) -> Result<(), StorageError> {
     if embedding.len() != EMBEDDING_DIMS as usize {
         return Err(StorageError::DimensionMismatch {
@@ -235,6 +243,20 @@ fn write_file_metadata(
     Ok(())
 }
 
+pub fn replace_file_chunks_with(
+    conn: &Connection,
+    data: &FileData,
+    embeddings: &[Vec<f32>],
+) -> Result<(), StorageError> {
+    if data.chunks.len() != embeddings.len() {
+        return Err(StorageError::LengthMismatch {
+            chunks: data.chunks.len(),
+            embeddings: embeddings.len(),
+        });
+    }
+    replace_file_data(conn, data, Some(embeddings))
+}
+
 pub fn replace_file_chunks(
     conn: &Connection,
     file_path: &str,
@@ -244,21 +266,14 @@ pub fn replace_file_chunks(
     imports_text: &str,
     refs: &[Reference],
 ) -> Result<(), StorageError> {
-    if chunks.len() != embeddings.len() {
-        return Err(StorageError::LengthMismatch {
-            chunks: chunks.len(),
-            embeddings: embeddings.len(),
-        });
-    }
-    replace_file_chunks_inner(
-        conn,
+    let data = FileData {
         file_path,
         chunks,
-        Some(embeddings),
         file_hash,
         imports_text,
         refs,
-    )
+    };
+    replace_file_chunks_with(conn, &data, embeddings)
 }
 
 pub fn replace_file_chunks_only(
@@ -269,35 +284,38 @@ pub fn replace_file_chunks_only(
     imports_text: &str,
     refs: &[Reference],
 ) -> Result<(), StorageError> {
-    replace_file_chunks_inner(conn, file_path, chunks, None, file_hash, imports_text, refs)
+    let data = FileData {
+        file_path,
+        chunks,
+        file_hash,
+        imports_text,
+        refs,
+    };
+    replace_file_data(conn, &data, None)
 }
 
-fn replace_file_chunks_inner(
+fn replace_file_data(
     conn: &Connection,
-    file_path: &str,
-    chunks: &[NewChunk],
+    data: &FileData,
     embeddings: Option<&[Vec<f32>]>,
-    file_hash: &str,
-    imports_text: &str,
-    refs: &[Reference],
 ) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
-    delete_file_chunks_in(&tx, file_path)?;
+    delete_file_chunks_in(&tx, data.file_path)?;
 
     match embeddings {
         Some(embs) => {
-            for (chunk, embedding) in chunks.iter().zip(embs.iter()) {
-                insert_chunk(&tx, file_path, chunk, file_hash, embedding)?;
+            for (chunk, embedding) in data.chunks.iter().zip(embs.iter()) {
+                insert_chunk(&tx, data.file_path, chunk, data.file_hash, embedding)?;
             }
         }
         None => {
-            for chunk in chunks {
-                insert_chunk_row(&tx, file_path, chunk, file_hash)?;
+            for chunk in data.chunks {
+                insert_chunk_row(&tx, data.file_path, chunk, data.file_hash)?;
             }
         }
     }
 
-    write_file_metadata(&tx, file_path, imports_text, refs)?;
+    write_file_metadata(&tx, data.file_path, data.imports_text, data.refs)?;
     tx.commit()?;
     Ok(())
 }
