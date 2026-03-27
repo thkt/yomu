@@ -1169,8 +1169,14 @@ fn search_json_format_returns_valid_json() {
 
     let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(parsed["results"].is_array(), "should have results array: {json}");
-    assert!(parsed.get("degraded").is_some(), "should have degraded field: {json}");
+    assert!(
+        parsed["results"].is_array(),
+        "should have results array: {json}"
+    );
+    assert!(
+        parsed.get("degraded").is_some(),
+        "should have degraded field: {json}"
+    );
     assert!(
         json.contains("\"file\":\"src/Button.tsx\""),
         "should contain file path: {json}"
@@ -1188,8 +1194,14 @@ fn search_json_format_empty_results() {
         .search("zzzznonexistent", 10, 0, OutputFormat::Json)
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(parsed["results"].as_array().unwrap().is_empty(), "empty results: {json}");
-    assert!(parsed.get("degraded").is_some(), "should have degraded field: {json}");
+    assert!(
+        parsed["results"].as_array().unwrap().is_empty(),
+        "empty results: {json}"
+    );
+    assert!(
+        parsed.get("degraded").is_some(),
+        "should have degraded field: {json}"
+    );
 }
 
 #[test]
@@ -1245,8 +1257,14 @@ fn search_json_format_degraded_includes_flag() {
 
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["degraded"], true, "should be degraded when embedder fails: {json}");
-    assert!(!parsed["results"].as_array().unwrap().is_empty(), "should still have results: {json}");
+    assert_eq!(
+        parsed["degraded"], true,
+        "should be degraded when embedder fails: {json}"
+    );
+    assert!(
+        !parsed["results"].as_array().unwrap().is_empty(),
+        "should still have results: {json}"
+    );
 }
 
 #[test]

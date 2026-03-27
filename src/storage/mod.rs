@@ -266,7 +266,13 @@ pub fn replace_file_chunks(
     imports_text: &str,
     refs: &[Reference],
 ) -> Result<(), StorageError> {
-    let data = FileData { file_path, chunks, file_hash, imports_text, refs };
+    let data = FileData {
+        file_path,
+        chunks,
+        file_hash,
+        imports_text,
+        refs,
+    };
     replace_file_chunks_with(conn, &data, embeddings)
 }
 
@@ -278,7 +284,13 @@ pub fn replace_file_chunks_only(
     imports_text: &str,
     refs: &[Reference],
 ) -> Result<(), StorageError> {
-    let data = FileData { file_path, chunks, file_hash, imports_text, refs };
+    let data = FileData {
+        file_path,
+        chunks,
+        file_hash,
+        imports_text,
+        refs,
+    };
     replace_file_data(conn, &data, None)
 }
 

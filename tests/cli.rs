@@ -202,12 +202,7 @@ fn search_stdin_query() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"button")
-        .unwrap();
+    child.stdin.take().unwrap().write_all(b"button").unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -237,12 +232,28 @@ fn search_format_json() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-    let results = parsed["results"].as_array().expect("should have results array");
+    let results = parsed["results"]
+        .as_array()
+        .expect("should have results array");
     assert!(!results.is_empty(), "should have results: {stdout}");
-    assert!(parsed.get("degraded").is_some(), "should have degraded field: {stdout}");
+    assert!(
+        parsed.get("degraded").is_some(),
+        "should have degraded field: {stdout}"
+    );
     let first = &results[0];
-    for field in ["file", "name", "type", "start_line", "end_line", "score", "content"] {
-        assert!(first.get(field).is_some(), "result missing '{field}' field: {stdout}");
+    for field in [
+        "file",
+        "name",
+        "type",
+        "start_line",
+        "end_line",
+        "score",
+        "content",
+    ] {
+        assert!(
+            first.get(field).is_some(),
+            "result missing '{field}' field: {stdout}"
+        );
     }
 }
 
@@ -298,7 +309,6 @@ fn rebuild_after_index() {
 }
 
 #[test]
-#[test]
 fn search_stdin_empty_query_fails() {
     let dir = setup_project();
     let mut child = yomu_cmd()
@@ -312,10 +322,7 @@ fn search_stdin_empty_query_fails() {
     // Close stdin immediately (empty input)
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
-    assert!(
-        !output.status.success(),
-        "empty stdin should fail"
-    );
+    assert!(!output.status.success(), "empty stdin should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("empty"),
@@ -340,5 +347,22 @@ fn rebuild_dry_run_reports_all_files() {
     assert!(
         stdout.contains("1 files to process"),
         "rebuild --dry-run should report files to process (force=true): {stdout}"
+    );
+}
+
+#[test]
+fn probe_embed_reaches_probe_path_without_subcommand() {
+    // --probe-embed with an invalid dir should exit 10 (PROBE_EXIT_UNAVAILABLE),
+    // NOT exit 2 ("requires a subcommand"). This proves the CLI routing fix works.
+    let output = yomu_cmd()
+        .args(["--probe-embed", "/nonexistent/model/dir"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "should exit 10 (probe unavailable), not 2 (missing subcommand): status={:?} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
     );
 }

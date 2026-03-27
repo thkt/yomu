@@ -253,7 +253,12 @@ fn collect_pending_files(
         }
     }
 
-    Ok(CollectResult { pending, files_skipped, files_errored, rel_paths })
+    Ok(CollectResult {
+        pending,
+        files_skipped,
+        files_errored,
+        rel_paths,
+    })
 }
 
 fn remove_orphans(
@@ -402,7 +407,14 @@ fn run_chunk_only_index_inner(
         for file_path in &files {
             let rel_path = to_rel_path(root, file_path);
             current_rel_paths.insert(rel_path.clone());
-            match process_file(&conn_guard, rel_path, file_path, force, &resolver, &rust_resolver)? {
+            match process_file(
+                &conn_guard,
+                rel_path,
+                file_path,
+                force,
+                &resolver,
+                &rust_resolver,
+            )? {
                 FileOutcome::Processed(n) => {
                     chunks_created += n;
                     files_processed += 1;
@@ -467,7 +479,13 @@ pub fn run_index(
 
     let resolver = Resolver::new(root);
     let rust_resolver = RustResolver::new(root);
-    let embed_result = embed_and_store(&conn, embedder, collected.pending, &resolver, &rust_resolver)?;
+    let embed_result = embed_and_store(
+        &conn,
+        embedder,
+        collected.pending,
+        &resolver,
+        &rust_resolver,
+    )?;
     let files_processed = embed_result.files_processed;
     let chunks_created = embed_result.chunks_created;
     files_errored += embed_result.files_errored;

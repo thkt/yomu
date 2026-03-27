@@ -164,10 +164,7 @@ struct JsonResponse<'a> {
     degraded: bool,
 }
 
-pub(super) fn format_results_json(
-    results: &[storage::SearchResult],
-    degraded: bool,
-) -> String {
+pub(super) fn format_results_json(results: &[storage::SearchResult], degraded: bool) -> String {
     let items: Vec<JsonChunk> = results
         .iter()
         .map(|r| JsonChunk {

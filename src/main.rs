@@ -11,7 +11,7 @@ use yomu::tools::{
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 
     /// Probe whether the embedding model can load safely (hidden, internal use)
     #[arg(long, hide = true)]
@@ -84,7 +84,15 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            eprintln!("error: requires a subcommand (search, index, rebuild, impact, status)");
+            return ExitCode::from(2);
+        }
+    };
+
+    let result = match command {
         Command::Search {
             query,
             limit,
@@ -135,7 +143,9 @@ fn main() -> ExitCode {
 }
 
 fn resolve_query(arg: Option<String>) -> Result<String, String> {
-    resolve_query_with(arg, &mut std::io::stdin(), std::io::stdin().is_terminal())
+    let stdin = std::io::stdin();
+    let is_terminal = stdin.is_terminal();
+    resolve_query_with(arg, &mut stdin.lock(), is_terminal)
 }
 
 fn resolve_query_with(
@@ -158,6 +168,16 @@ fn resolve_query_with(
                 return Err("empty query from stdin".into());
             }
             Ok(trimmed)
+        }
+    }
+}
+
+fn exit_code_for(e: &YomuError) -> ExitCode {
+    match e {
+        YomuError::InvalidInput(_) => ExitCode::from(2),
+        YomuError::Internal(_) => ExitCode::from(4),
+        YomuError::Storage(_) | YomuError::Io(_) | YomuError::Index(_) | YomuError::Query(_) => {
+            ExitCode::FAILURE
         }
     }
 }
@@ -200,15 +220,5 @@ mod tests {
         let mut stdin = Cursor::new(b"   ");
         let result = resolve_query_with(None, &mut stdin, false);
         assert!(result.unwrap_err().contains("empty query"));
-    }
-}
-
-fn exit_code_for(e: &YomuError) -> ExitCode {
-    match e {
-        YomuError::InvalidInput(_) => ExitCode::from(2),
-        YomuError::Internal(_) => ExitCode::from(4),
-        YomuError::Storage(_) | YomuError::Io(_) | YomuError::Index(_) | YomuError::Query(_) => {
-            ExitCode::FAILURE
-        }
     }
 }

@@ -148,7 +148,11 @@ pub(super) fn embed_and_store(
         }
     }
 
-    Ok(EmbedStoreResult { files_processed, chunks_created, files_errored })
+    Ok(EmbedStoreResult {
+        files_processed,
+        chunks_created,
+        files_errored,
+    })
 }
 
 pub(super) fn order_files_for_embedding(
@@ -189,7 +193,9 @@ fn fetch_unembedded_file(
     let ids: Vec<i64> = triples.iter().map(|(id, _, _)| *id).collect();
     let texts: Vec<String> = triples
         .into_iter()
-        .map(|(_, content, chunk_type)| enrich_for_embedding(file_path, &chunk_type, &imports, &content))
+        .map(|(_, content, chunk_type)| {
+            enrich_for_embedding(file_path, &chunk_type, &imports, &content)
+        })
         .collect();
     Ok((ids, texts))
 }
