@@ -65,6 +65,7 @@ impl PendingFile {
                 content: &c.content,
                 start_line: c.start_line,
                 end_line: c.end_line,
+                parent_index: c.parent_index,
             })
             .collect()
     }

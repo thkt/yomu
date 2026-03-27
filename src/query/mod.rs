@@ -368,8 +368,8 @@ fn search_pipeline(
     }
 
     let stats = storage::get_stats(conn)?;
-    let embed_coverage = if stats.total_chunks > 0 {
-        stats.embedded_chunks as f32 / stats.total_chunks as f32
+    let embed_coverage = if stats.embeddable_chunks > 0 {
+        stats.embedded_chunks as f32 / stats.embeddable_chunks as f32
     } else {
         0.0
     };

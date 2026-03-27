@@ -101,6 +101,7 @@ pub(super) fn embed_and_store(
         let texts: Vec<String> = pf
             .raw_chunks
             .iter()
+            .filter(|c| c.chunk_type != storage::ChunkType::InnerFn)
             .map(|c| {
                 enrich_for_embedding(
                     &pf.rel_path,

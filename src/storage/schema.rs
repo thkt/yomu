@@ -41,7 +41,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -52,7 +52,8 @@ const DDL: &str = "
         content TEXT NOT NULL,
         start_line INTEGER NOT NULL,
         end_line INTEGER NOT NULL,
-        file_hash TEXT NOT NULL
+        file_hash TEXT NOT NULL,
+        parent_chunk_id INTEGER REFERENCES chunks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);
     CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(file_hash);
@@ -142,6 +143,24 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)",
         )?;
+    }
+
+    // v4 → v5: add parent_chunk_id for subchunk extraction
+    if from < 5 {
+        let has_column = match conn.prepare("SELECT parent_chunk_id FROM chunks LIMIT 0") {
+            Ok(_) => true,
+            Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                if msg.contains("no such column") =>
+            {
+                false
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if !has_column {
+            conn.execute_batch(
+                "ALTER TABLE chunks ADD COLUMN parent_chunk_id INTEGER REFERENCES chunks(id)",
+            )?;
+        }
     }
 
     Ok(())

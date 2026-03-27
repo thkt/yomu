@@ -36,9 +36,11 @@ fn insert_and_read_chunk() {
             content: "function Button() { return <div/>; }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "abc123",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -71,9 +73,11 @@ fn should_reindex_returns_false_for_same_hash() {
             content: "function App() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         "hash_abc",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -94,9 +98,11 @@ fn should_reindex_returns_true_for_different_hash() {
             content: "function App() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         "hash_abc",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -123,9 +129,11 @@ fn get_stats_returns_counts() {
             content: "code",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -137,9 +145,11 @@ fn get_stats_returns_counts() {
             content: "code",
             start_line: 6,
             end_line: 10,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -151,9 +161,11 @@ fn get_stats_returns_counts() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h2",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -176,9 +188,11 @@ fn get_all_file_paths_returns_distinct_paths() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -190,9 +204,11 @@ fn get_all_file_paths_returns_distinct_paths() {
             content: "code",
             start_line: 4,
             end_line: 6,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -204,9 +220,11 @@ fn get_all_file_paths_returns_distinct_paths() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h2",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -230,9 +248,11 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -244,9 +264,11 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h2",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -275,9 +297,11 @@ fn replace_file_chunks_replaces_existing() {
             content: "old code",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -288,6 +312,7 @@ fn replace_file_chunks_replaces_existing() {
             content: "new code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -295,6 +320,7 @@ fn replace_file_chunks_replaces_existing() {
             content: "more code",
             start_line: 4,
             end_line: 8,
+            parent_index: None,
         },
     ];
     let embeddings = vec![embedding.clone(), embedding.clone()];
@@ -333,9 +359,11 @@ fn search_similar_returns_ordered_results() {
             content: "code a",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb_a,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -347,9 +375,11 @@ fn search_similar_returns_ordered_results() {
             content: "code b",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h2",
         &emb_b,
+        None,
     )
     .unwrap();
 
@@ -374,9 +404,9 @@ fn chunk_type_roundtrip() {
         ChunkType::RustTrait,
         ChunkType::RustImpl,
         ChunkType::MdSection,
+        ChunkType::InnerFn,
         ChunkType::Other,
     ];
-    // Exhaustive match ensures compile error when a new variant is added
     for variant in &variants {
         match variant {
             ChunkType::Component
@@ -391,6 +421,7 @@ fn chunk_type_roundtrip() {
             | ChunkType::RustTrait
             | ChunkType::RustImpl
             | ChunkType::MdSection
+            | ChunkType::InnerFn
             | ChunkType::Other => {}
         }
         let s = variant.as_str();
@@ -414,6 +445,7 @@ fn delete_file_chunks_also_removes_file_context() {
         content: "code",
         start_line: 1,
         end_line: 5,
+        parent_index: None,
     }];
     let embeddings = vec![embedding];
     replace_file_chunks(
@@ -453,6 +485,7 @@ fn replace_file_chunks_stores_file_context() {
         content: "code",
         start_line: 1,
         end_line: 5,
+        parent_index: None,
     }];
     let embeddings = vec![embedding];
     replace_file_chunks(
@@ -498,9 +531,11 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             content: "code",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -512,9 +547,11 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             content: "code",
             start_line: 6,
             end_line: 10,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -526,9 +563,11 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h2",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -635,6 +674,7 @@ fn delete_file_chunks_also_removes_references() {
         content: "code",
         start_line: 1,
         end_line: 5,
+        parent_index: None,
     }];
     let embeddings = vec![embedding];
     replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "", &[]).unwrap();
@@ -760,6 +800,7 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
             content: "function Button() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -767,6 +808,7 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
             content: "function useClick() {}",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
     ];
     let refs: Vec<Reference> = vec![];
@@ -819,9 +861,11 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
             content: "old code",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         "hash_old",
         &embedding,
+        None,
     )
     .unwrap();
     assert_eq!(vec_chunks_count(&conn), 1);
@@ -832,6 +876,7 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
         content: "new code",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[]).unwrap();
 
@@ -867,6 +912,7 @@ fn add_embeddings_inserts_into_vec_chunks() {
             content: "function Card() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -874,6 +920,7 @@ fn add_embeddings_inserts_into_vec_chunks() {
             content: "function useCard() {}",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[]).unwrap();
@@ -904,6 +951,7 @@ fn add_embeddings_skips_already_embedded() {
         content: "function Modal() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[]).unwrap();
 
@@ -935,9 +983,11 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -948,6 +998,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             content: "code b",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -955,6 +1006,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             content: "code b2",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
@@ -965,6 +1017,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
         content: "code c",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/C.tsx", &chunks_c, "h3", "", &[]).unwrap();
 
@@ -992,6 +1045,7 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
         content: "function Nav() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[]).unwrap();
 
@@ -1012,9 +1066,11 @@ fn needs_embedding_returns_false_for_fully_embedded() {
             content: "function Footer() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "hash_footer",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -1035,9 +1091,11 @@ fn needs_embedding_returns_true_when_hash_changed() {
             content: "function Header() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "hash_v1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -1058,9 +1116,11 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
     insert_chunk(
@@ -1072,9 +1132,11 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             content: "code",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -1084,6 +1146,7 @@ fn get_stats_reports_embedded_vs_total_chunks() {
         content: "code b",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
 
@@ -1109,6 +1172,7 @@ fn get_files_by_import_count_returns_most_imported_first() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
     }
@@ -1175,6 +1239,7 @@ fn search_by_name_matches_keyword() {
             content: "function useAuth() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -1182,6 +1247,7 @@ fn search_by_name_matches_keyword() {
             content: "function LoginForm() {}",
             start_line: 5,
             end_line: 10,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1205,6 +1271,7 @@ fn search_by_name_filters_by_type() {
             content: "function useBtn() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -1212,6 +1279,7 @@ fn search_by_name_filters_by_type() {
             content: "function BtnGroup() {}",
             start_line: 5,
             end_line: 10,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/btn.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1241,6 +1309,7 @@ fn search_by_name_excludes_ids() {
             content: "function useAuth() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1248,6 +1317,7 @@ fn search_by_name_excludes_ids() {
             content: "function useAuthProvider() {}",
             start_line: 5,
             end_line: 10,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1273,6 +1343,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         content: "function useAuth() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/useAuth.tsx", &hook_chunks, "h1", "", &[]).unwrap();
 
@@ -1283,6 +1354,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         content: "interface AuthConfig {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/types.tsx", &typedef_chunks, "h2", "", &[]).unwrap();
 
@@ -1293,6 +1365,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         content: "function LoginButton() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/LoginButton.tsx", &comp_chunks, "h3", "", &[]).unwrap();
 
@@ -1332,9 +1405,11 @@ fn search_similar_sets_semantic_match_source() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -1353,6 +1428,7 @@ fn search_by_name_empty_keywords_returns_empty() {
         content: "code",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -1375,9 +1451,11 @@ fn search_similar_sets_initial_score() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &emb,
+        None,
     )
     .unwrap();
 
@@ -1403,6 +1481,7 @@ fn search_by_name_sets_base_score() {
         content: "function useAuth() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -1431,6 +1510,7 @@ fn get_import_counts_returns_correct_counts() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
     }
@@ -1505,6 +1585,7 @@ fn search_by_name_respects_limit() {
             content: "code",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1512,6 +1593,7 @@ fn search_by_name_respects_limit() {
             content: "code",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1519,6 +1601,7 @@ fn search_by_name_respects_limit() {
             content: "code",
             start_line: 10,
             end_line: 13,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1538,6 +1621,7 @@ fn search_by_name_matches_file_path() {
         content: "export default {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[]).unwrap();
 
@@ -1557,6 +1641,7 @@ fn search_by_name_matches_name_or_path() {
         content: "code",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[]).unwrap();
 
@@ -1567,6 +1652,7 @@ fn search_by_name_matches_name_or_path() {
         content: "code",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[]).unwrap();
 
@@ -1589,6 +1675,7 @@ fn search_by_name_path_match_respects_type_filter() {
             content: "helper",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -1596,6 +1683,7 @@ fn search_by_name_path_match_respects_type_filter() {
             content: "component",
             start_line: 5,
             end_line: 10,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1636,6 +1724,7 @@ fn search_by_content_matches_code() {
             content: "function useFetch() { const [loading, setLoading] = useState(false); }",
             start_line: 1,
             end_line: 5,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -1643,6 +1732,7 @@ fn search_by_content_matches_code() {
             content: "function Button({ label }) { return <button>{label}</button>; }",
             start_line: 7,
             end_line: 10,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1664,6 +1754,7 @@ fn search_by_content_excludes_ids() {
             content: "function useA() { fetch('/api'); }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1671,6 +1762,7 @@ fn search_by_content_excludes_ids() {
             content: "function useB() { fetch('/data'); }",
             start_line: 5,
             end_line: 7,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1701,6 +1793,7 @@ fn fts_chunks_deleted_with_file() {
         content: "function useX() { return state; }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -1729,6 +1822,7 @@ fn fts5_migration_from_v2() {
         content: "function useX() { return loading; }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
 
@@ -1767,10 +1861,10 @@ fn fts5_handles_special_characters_in_content() {
         content: "function App() { return <div className={`container ${active}`}>{data?.name}</div>; }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
 
-    // Search for terms within JSX/template literal content
     let results = search_by_content(&conn, &["container"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
@@ -1787,6 +1881,7 @@ fn search_by_content_respects_type_filter() {
             content: "function useFetch() { fetch('/api'); }",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -1794,6 +1889,7 @@ fn search_by_content_respects_type_filter() {
             content: "function FetchBtn() { onClick(() => fetch('/btn')); }",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -1822,6 +1918,7 @@ fn get_unembedded_chunks_for_file_returns_triple() {
             content: "function Card() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1829,6 +1926,7 @@ fn get_unembedded_chunks_for_file_returns_triple() {
             content: "function useCard() {}",
             start_line: 5,
             end_line: 8,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[]).unwrap();
@@ -1860,9 +1958,11 @@ fn get_unembedded_chunks_for_file_excludes_embedded() {
             content: "function Nav() {}",
             start_line: 1,
             end_line: 3,
+            parent_index: None,
         },
         "h1",
         &embedding,
+        None,
     )
     .unwrap();
 
@@ -1880,6 +1980,7 @@ fn get_imports_for_file_returns_stored_imports() {
         content: "function App() {}",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     let imports = "import { useState } from 'react'\nimport { Button } from './Button'";
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", imports, &[]).unwrap();
@@ -1924,6 +2025,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
         content: "function migrationTest() { return true; }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/migrate.ts", &chunks, "h1", "", &[]).unwrap();
 
@@ -1946,7 +2048,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "4", "schema_version should be 4 after migration");
+    assert_eq!(version, "5", "schema_version should be 5 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -1983,6 +2085,7 @@ fn search_by_content_expands_short_prefix() {
         content: "function authenticate() { return authentication(); }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/auth.ts", &chunks, "h1", "", &[]).unwrap();
 
@@ -2008,6 +2111,7 @@ fn search_by_content_short_terms_and_semantics() {
         content: "function authLogger() { authentication(); log('request received'); }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/authLogger.ts", &chunks_both, "h1", "", &[]).unwrap();
 
@@ -2017,6 +2121,7 @@ fn search_by_content_short_terms_and_semantics() {
         content: "function authOnly() { authentication(); }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/authOnly.ts", &chunks_auth_only, "h2", "", &[]).unwrap();
 
@@ -2026,6 +2131,7 @@ fn search_by_content_short_terms_and_semantics() {
         content: "function logOnly() { logger.info('logged'); }",
         start_line: 1,
         end_line: 3,
+        parent_index: None,
     }];
     replace_file_chunks_only(&conn, "src/logOnly.ts", &chunks_log_only, "h3", "", &[]).unwrap();
 
@@ -2054,6 +2160,7 @@ fn replace_file_chunks_rejects_length_mismatch() {
             content: "fn a() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Other,
@@ -2061,6 +2168,7 @@ fn replace_file_chunks_rejects_length_mismatch() {
             content: "fn b() {}",
             start_line: 2,
             end_line: 2,
+            parent_index: None,
         },
     ];
     let embeddings = vec![vec![0.0_f32; EMBEDDING_DIMS as usize]]; // 1 embedding for 2 chunks
@@ -2088,9 +2196,11 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
             content: "fn a() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         "h1",
         &wrong_dims,
+        None,
     );
     assert!(result.is_err(), "should reject wrong embedding dimensions");
     match result.unwrap_err() {
@@ -2113,6 +2223,7 @@ fn search_by_name_escapes_like_wildcards() {
             content: "function use_Auth() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -2120,6 +2231,7 @@ fn search_by_name_escapes_like_wildcards() {
             content: "function useXAuth() {}",
             start_line: 2,
             end_line: 2,
+            parent_index: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
@@ -2153,6 +2265,7 @@ fn fts_automerge_guard_restores_on_drop() {
             content: "function A() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         }],
         "h1",
         "",
@@ -2175,6 +2288,7 @@ fn fts_automerge_guard_restores_on_drop() {
             content: "function B() {}",
             start_line: 1,
             end_line: 1,
+            parent_index: None,
         }],
         "h2",
         "",
@@ -2186,5 +2300,474 @@ fn fts_automerge_guard_restores_on_drop() {
         results.len() >= 2,
         "FTS should work after guard drop, got {} results",
         results.len()
+    );
+}
+
+#[test]
+fn t_007_new_chunk_with_parent_index_stores_parent_chunk_id() {
+    let (conn, _dir) = test_db();
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Dashboard"),
+        content: "function Dashboard() { return <div/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+    let child = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("handleClick"),
+        content: "const handleClick = () => {}",
+        start_line: 10,
+        end_line: 20,
+        parent_index: Some(0),
+    };
+
+    replace_file_chunks_only(
+        &conn,
+        "src/Dashboard.tsx",
+        &[parent, child],
+        "hash1",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    let rows: Vec<(i64, String, Option<i64>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, chunk_type, parent_chunk_id FROM chunks \
+                 WHERE file_path = 'src/Dashboard.tsx' ORDER BY id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+
+    assert_eq!(rows.len(), 2);
+    let parent_id = rows[0].0;
+    assert_eq!(rows[0].1, "component");
+    assert_eq!(rows[0].2, None);
+    assert_eq!(rows[1].1, "inner_fn");
+    assert_eq!(rows[1].2, Some(parent_id));
+}
+
+#[test]
+fn t_009_out_of_order_chunks_resolves_to_null() {
+    let (conn, _dir) = test_db();
+
+    let child = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("handleClick"),
+        content: "const handleClick = () => {}",
+        start_line: 10,
+        end_line: 20,
+        parent_index: Some(1),
+    };
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Dashboard"),
+        content: "function Dashboard() { return <div/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+
+    replace_file_chunks_only(
+        &conn,
+        "src/Dashboard.tsx",
+        &[child, parent],
+        "hash1",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    let child_parent: Option<i64> = conn
+        .query_row(
+            "SELECT parent_chunk_id FROM chunks WHERE chunk_type = 'inner_fn' AND file_path = 'src/Dashboard.tsx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        child_parent, None,
+        "out-of-order parent_index should resolve to NULL"
+    );
+}
+
+#[test]
+fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Form"),
+        content: "function Form() { return <form/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+    let child = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("handleSubmit"),
+        content: "const handleSubmit = () => {}",
+        start_line: 10,
+        end_line: 20,
+        parent_index: Some(0),
+    };
+
+    let data = FileData {
+        file_path: "src/Form.tsx",
+        chunks: &[parent, child],
+        file_hash: "hash_form",
+        imports_text: "",
+        refs: &[],
+    };
+    replace_file_chunks_with(&conn, &data, &[embedding]).unwrap();
+
+    let total: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path = 'src/Form.tsx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(vec_chunks_count(&conn), 1);
+
+    let fts_count: u32 = conn
+        .query_row("SELECT COUNT(*) FROM fts_chunks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(fts_count, 2);
+}
+
+#[test]
+fn t_016_get_stats_returns_embeddable_and_total_chunks() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("App"),
+            content: "function App() { return <div/>; }",
+            start_line: 1,
+            end_line: 60,
+            parent_index: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::InnerFn,
+            name: Some("handleClick"),
+            content: "const handleClick = () => {}",
+            start_line: 10,
+            end_line: 20,
+            parent_index: Some(0),
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 70,
+            end_line: 80,
+            parent_index: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    let stats = get_stats(&conn).unwrap();
+
+    assert_eq!(stats.total_chunks, 3);
+    assert_eq!(stats.embeddable_chunks, 2);
+}
+
+#[test]
+fn t_017_embed_percentage_uses_embeddable_chunks() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+
+    insert_chunk(
+        &conn,
+        "src/Card.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Card"),
+            content: "function Card() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &embedding,
+        None,
+    )
+    .unwrap();
+
+    let stats_before = get_stats(&conn).unwrap();
+    let pct_before = stats_before.embed_percentage();
+
+    insert_chunk_row(
+        &conn,
+        "src/Card.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::InnerFn,
+            name: Some("onClick"),
+            content: "const onClick = () => {}",
+            start_line: 5,
+            end_line: 10,
+            parent_index: Some(0),
+        },
+        "h1",
+        None,
+    )
+    .unwrap();
+
+    let stats_after = get_stats(&conn).unwrap();
+    let pct_after = stats_after.embed_percentage();
+
+    assert_eq!(stats_after.total_chunks, 2);
+    assert_eq!(stats_after.embeddable_chunks, 1);
+    assert_eq!(pct_before, pct_after);
+    assert_eq!(pct_after, 100);
+}
+
+#[test]
+fn t_018_embed_path_with_innerfn_no_length_mismatch() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("Panel"),
+        content: "function Panel() { return <div/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+    let inner1 = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("toggle"),
+        content: "const toggle = () => {}",
+        start_line: 10,
+        end_line: 15,
+        parent_index: Some(0),
+    };
+    let inner2 = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("reset"),
+        content: "const reset = () => {}",
+        start_line: 20,
+        end_line: 25,
+        parent_index: Some(0),
+    };
+
+    let data = FileData {
+        file_path: "src/Panel.tsx",
+        chunks: &[parent, inner1, inner2],
+        file_hash: "hash_panel",
+        imports_text: "",
+        refs: &[],
+    };
+
+    let result = replace_file_chunks_with(&conn, &data, &[embedding]);
+    assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+    let total: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path = 'src/Panel.tsx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(total, 3);
+    assert_eq!(vec_chunks_count(&conn), 1);
+}
+
+#[test]
+fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("List"),
+            content: "function List() { return <ul/>; }",
+            start_line: 1,
+            end_line: 60,
+            parent_index: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::InnerFn,
+            name: Some("renderItem"),
+            content: "const renderItem = (item) => <li>{item}</li>",
+            start_line: 10,
+            end_line: 20,
+            parent_index: Some(0),
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/List.tsx", &chunks, "h1", "", &[]).unwrap();
+
+    let stats = get_stats(&conn).unwrap();
+    assert_eq!(stats.total_chunks, 2);
+
+    let keywords = ["renderitem"];
+    let keyword_refs: Vec<&str> = keywords.iter().copied().collect();
+    let dfs = get_keyword_doc_frequencies(&conn, &keyword_refs, stats.total_chunks).unwrap();
+
+    let total = stats.total_chunks.max(1) as f32;
+    for &df in &dfs {
+        assert!(
+            df <= stats.total_chunks,
+            "df ({df}) > total_chunks ({})",
+            stats.total_chunks
+        );
+        let idf = (total / (df.max(1) as f32)).ln();
+        assert!(
+            idf >= 0.0,
+            "IDF should be non-negative, got {idf} for df={df}, total={total}"
+        );
+    }
+}
+
+#[test]
+fn t_011_chunk_from_row_reads_parent_chunk_id() {
+    let (conn, _dir) = test_db();
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("UserForm"),
+        content: "function UserForm() { return <form/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+    let child = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("handleSubmit"),
+        content: "const handleSubmit = (event) => { event.preventDefault(); submit(); }",
+        start_line: 10,
+        end_line: 15,
+        parent_index: Some(0),
+    };
+
+    replace_file_chunks_only(
+        &conn,
+        "src/UserForm.tsx",
+        &[parent, child],
+        "hash_uf",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    let parent_id: i64 = conn
+        .query_row(
+            "SELECT id FROM chunks WHERE file_path = 'src/UserForm.tsx' AND chunk_type = 'component'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let results = search_by_content(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
+
+    assert!(
+        !results.is_empty(),
+        "should find handleSubmit via content search"
+    );
+    let innerfn_result = results
+        .iter()
+        .find(|r| r.chunk.chunk_type == ChunkType::InnerFn)
+        .expect("should have an InnerFn result");
+
+    assert_eq!(
+        innerfn_result.chunk.parent_chunk_id,
+        Some(parent_id),
+        "[T-011] chunk_from_row should read parent_chunk_id from DB, not hardcode None"
+    );
+}
+
+#[test]
+fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
+    let (conn, _dir) = test_db();
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("UserForm"),
+        content: "function UserForm() { return <form/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+    let child = NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("handleSubmit"),
+        content: "const handleSubmit = (event) => { event.preventDefault(); }",
+        start_line: 10,
+        end_line: 15,
+        parent_index: Some(0),
+    };
+
+    replace_file_chunks_only(
+        &conn,
+        "src/UserForm.tsx",
+        &[parent, child],
+        "hash_uf2",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    let parent_id: i64 = conn
+        .query_row(
+            "SELECT id FROM chunks WHERE file_path = 'src/UserForm.tsx' AND chunk_type = 'component'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let results = search_by_name(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
+
+    assert!(
+        !results.is_empty(),
+        "should find handleSubmit via name search"
+    );
+    let innerfn_result = results
+        .iter()
+        .find(|r| r.chunk.chunk_type == ChunkType::InnerFn)
+        .expect("should have an InnerFn result");
+
+    assert_eq!(
+        innerfn_result.chunk.parent_chunk_id,
+        Some(parent_id),
+        "[T-011] chunk_from_row should read parent_chunk_id for name search results"
+    );
+}
+
+#[test]
+fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
+    let (conn, _dir) = test_db();
+
+    let parent = NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("UserForm"),
+        content: "function UserForm() { return <form/>; }",
+        start_line: 1,
+        end_line: 60,
+        parent_index: None,
+    };
+
+    replace_file_chunks_only(&conn, "src/UserForm.tsx", &[parent], "hash_uf3", "", &[]).unwrap();
+
+    let results = search_by_name(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
+
+    assert!(!results.is_empty(), "should find UserForm via name search");
+    let component_result = &results[0];
+
+    assert_eq!(
+        component_result.chunk.parent_chunk_id, None,
+        "[T-012] parent chunk should have parent_chunk_id = None in search results"
     );
 }
