@@ -428,6 +428,11 @@ fn shorthand_typo_not_treated_as_search() {
         !output.status.success(),
         "typo 'stauts' should fail, not become a search"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unrecognized subcommand"),
+        "should show clap's unrecognized subcommand error: {stderr}"
+    );
 }
 
 #[test]
@@ -439,10 +444,17 @@ fn shorthand_near_command_name_still_searches() {
         .current_dir(dir.path())
         .output()
         .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
         "'state' should be a search query, not a typo: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    // Search may return 0 results for "state", but the output proves
+    // it went through the search path (not clap error)
+    assert!(
+        stdout.contains("results") || stdout.contains("src/"),
+        "should show search output (not clap error): {stdout}"
     );
 }
 
