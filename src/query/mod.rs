@@ -96,8 +96,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
     let stems: Vec<String> = base
         .iter()
         .filter_map(|kw| {
-            let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str())
-            {
+            let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str()) {
                 Some(&kw[..kw.len() - 3])
             } else if kw.len() > 3
                 && kw.ends_with('s')
@@ -329,7 +328,8 @@ pub fn rerank(
                 .get(&result.chunk.file_path)
                 .map(|&mtime| {
                     let age_days = (ctx.now_epoch - mtime) as f64 / 86400.0;
-                    RECENCY_BONUS * rurico::storage::recency_decay(age_days, RECENCY_HALF_LIFE_DAYS) as f32
+                    RECENCY_BONUS
+                        * rurico::storage::recency_decay(age_days, RECENCY_HALF_LIFE_DAYS) as f32
                 })
                 .unwrap_or(0.0)
         } else {

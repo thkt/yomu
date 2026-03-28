@@ -1368,7 +1368,16 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/LoginButton.tsx", &comp_chunks, "h3", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/LoginButton.tsx",
+        &comp_chunks,
+        "h3",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let ordered = get_files_by_import_count(&conn).unwrap();
 
@@ -1624,7 +1633,16 @@ fn search_by_name_matches_file_path() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/utils/fetch-data.ts",
+        &chunks,
+        "h1",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
@@ -1655,7 +1673,16 @@ fn search_by_name_matches_name_or_path() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/fetch/client.ts",
+        &path_match,
+        "h2",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(
@@ -2141,7 +2168,16 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/authLogger.ts", &chunks_both, "h1", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/authLogger.ts",
+        &chunks_both,
+        "h1",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let chunks_auth_only = vec![NewChunk {
         chunk_type: &ChunkType::Other,
@@ -2151,7 +2187,16 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/authOnly.ts", &chunks_auth_only, "h2", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/authOnly.ts",
+        &chunks_auth_only,
+        "h2",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let chunks_log_only = vec![NewChunk {
         chunk_type: &ChunkType::Other,
@@ -2161,7 +2206,16 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/logOnly.ts", &chunks_log_only, "h3", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/logOnly.ts",
+        &chunks_log_only,
+        "h3",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     // "au log" — both short terms. After expansion + AND, only authLogger should match
     let results = search_by_content(&conn, &["au", "log"], None, &HashSet::new(), 10).unwrap();
@@ -2818,7 +2872,16 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
         parent_index: None,
     };
 
-    replace_file_chunks_only(&conn, "src/UserForm.tsx", &[parent], "hash_uf3", "", &[], None).unwrap();
+    replace_file_chunks_only(
+        &conn,
+        "src/UserForm.tsx",
+        &[parent],
+        "hash_uf3",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
 
     let results = search_by_name(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
 

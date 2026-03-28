@@ -368,7 +368,13 @@ fn replace_file_data(
         }
     }
 
-    write_file_metadata(&tx, data.file_path, data.imports_text, data.refs, data.mtime_epoch)?;
+    write_file_metadata(
+        &tx,
+        data.file_path,
+        data.imports_text,
+        data.refs,
+        data.mtime_epoch,
+    )?;
     tx.commit()?;
     Ok(())
 }

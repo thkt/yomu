@@ -335,7 +335,12 @@ fn rerank_semantic_base_score() {
         0.5,
         storage::MatchSource::Semantic,
     )];
-    rerank(&mut results, &RerankContext::default(), &HashMap::new(), &HashMap::new());
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     let expected = 1.0 / (1.0 + 0.5);
     assert!(
         (results[0].score - expected).abs() < 1e-6,
@@ -389,7 +394,12 @@ fn rerank_sorts_by_score_descending() {
             storage::MatchSource::Semantic,
         ),
     ];
-    rerank(&mut results, &RerankContext::default(), &HashMap::new(), &HashMap::new());
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     assert!(
         results[0].score >= results[1].score,
         "expected descending: {} >= {}",
@@ -455,7 +465,12 @@ fn rerank_import_rank_bonus() {
         ("src/popular.tsx".to_string(), 10u32),
         ("src/unpopular.tsx".to_string(), 1u32),
     ]);
-    rerank(&mut results, &RerankContext::default(), &import_counts, &HashMap::new());
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &import_counts,
+        &HashMap::new(),
+    );
 
     let popular = results
         .iter()
