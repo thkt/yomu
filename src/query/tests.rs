@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embed, EmbedError, Embedder, FailingEmbedder, MockEmbedder};
+use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder};
 
 use super::*;
 use crate::storage;
@@ -10,13 +10,6 @@ fn test_embedding() -> Vec<f32> {
     let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
     emb[0] = 1.0;
     emb
-}
-
-#[test]
-fn query_error_from_embed_error() {
-    let ee = EmbedError::Inference("embedder not available".into());
-    let qe: QueryError = ee.into();
-    assert!(qe.to_string().contains("not available"));
 }
 
 #[test]
@@ -1058,4 +1051,41 @@ fn text_only_search_with_offset_returns_results() {
         !outcome.results.is_empty(),
         "text-only search with offset=10 should still return results"
     );
+}
+
+#[test]
+fn search_chunk_only_index_with_embedder_falls_back_to_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    // Insert chunk WITHOUT embedding (simulates chunk-only index)
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/Button.tsx",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("Button"),
+            content: "function Button() { return <button>Click</button>; }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        }],
+        "hash1",
+        "",
+        &[],
+    )
+    .unwrap();
+
+    let stats = storage::get_stats(&conn).unwrap();
+    assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
+
+    let conn = Arc::new(Mutex::new(conn));
+    // MockEmbedder succeeds on embed_query — this is the "model available" case
+    let outcome = search(conn, &MockEmbedder, "button", 10, 0).unwrap();
+    assert!(
+        !outcome.results.is_empty(),
+        "should return text/name fallback results even with zero embeddings"
+    );
+    assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
 }

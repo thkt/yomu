@@ -18,6 +18,7 @@ fn skip_if_no_repo() -> bool {
 }
 
 #[test]
+#[ignore]
 fn benchmark_chunk_only_index() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
@@ -59,6 +60,7 @@ fn benchmark_chunk_only_index() {
 }
 
 #[test]
+#[ignore]
 fn benchmark_incremental_embed() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
@@ -112,6 +114,7 @@ fn benchmark_incremental_embed() {
 }
 
 #[test]
+#[ignore]
 fn benchmark_explorer_query() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");
@@ -199,6 +202,7 @@ fn benchmark_explorer_query() {
 }
 
 #[test]
+#[ignore]
 fn benchmark_impact_query() {
     if skip_if_no_repo() {
         eprintln!("SKIP: /tmp/vercel-ai not found");

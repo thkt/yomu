@@ -139,6 +139,12 @@ pub enum StorageError {
     LengthMismatch { chunks: usize, embeddings: usize },
     #[error("embedding dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
+    #[error("schema mismatch: missing columns {missing:?} in table '{table}' in {} — delete this file and re-run to recreate the index", path.display())]
+    SchemaMismatch {
+        table: &'static str,
+        missing: Vec<String>,
+        path: std::path::PathBuf,
+    },
 }
 
 pub struct NewChunk<'a> {
