@@ -89,8 +89,8 @@ fn search_default_limit_accepted() {
 }
 
 #[test]
-fn unknown_subcommand_fails() {
-    let output = yomu_cmd().arg("foobar").output().unwrap();
+fn unknown_flag_fails() {
+    let output = yomu_cmd().arg("--nonexistent").output().unwrap();
     assert!(!output.status.success());
 }
 
