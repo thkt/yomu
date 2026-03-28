@@ -424,6 +424,7 @@ fn run_incremental_embed_prioritizes_type_hints() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -441,6 +442,7 @@ fn run_incremental_embed_prioritizes_type_hints() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -496,6 +498,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
     storage::replace_file_chunks_only(
@@ -512,6 +515,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -546,6 +550,7 @@ fn run_incremental_embed_recovers_after_intermittent_failure() {
             &format!("r{i}"),
             "",
             &[],
+            None,
         )
         .unwrap();
     }
@@ -588,6 +593,7 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
             &format!("h{i}"),
             "",
             &[],
+            None,
         )
         .unwrap();
     }
@@ -664,6 +670,7 @@ fn order_files_for_embedding_most_imported_first() {
             symbol_name: Some("B".to_string()),
             ref_kind: storage::RefKind::Named,
         }],
+        None,
     )
     .unwrap();
     storage::replace_file_chunks_only(
@@ -680,6 +687,7 @@ fn order_files_for_embedding_most_imported_first() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -710,6 +718,7 @@ fn order_files_for_embedding_type_hints_prioritize() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
     storage::replace_file_chunks_only(
@@ -726,6 +735,7 @@ fn order_files_for_embedding_type_hints_prioritize() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -754,6 +764,7 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -821,6 +832,7 @@ fn run_incremental_embed_skips_count_mismatch() {
             &format!("h{i}"),
             "",
             &[],
+            None,
         )
         .unwrap();
     }
@@ -855,6 +867,7 @@ fn run_incremental_embed_skips_count_mismatch() {
             "h_multi",
             "",
             &[],
+            None,
         )
         .unwrap();
     }

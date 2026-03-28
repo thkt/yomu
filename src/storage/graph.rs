@@ -131,6 +131,29 @@ pub fn get_import_counts(
         .map_err(Into::into)
 }
 
+pub fn get_file_mtimes(
+    conn: &Connection,
+    file_paths: &[&str],
+) -> Result<std::collections::HashMap<String, i64>, StorageError> {
+    if file_paths.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = sql_placeholders(file_paths.len());
+    let sql = format!(
+        "SELECT file_path, mtime_epoch FROM file_context WHERE file_path IN ({placeholders}) AND mtime_epoch IS NOT NULL"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
+        .iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
 pub fn get_file_contexts(
     conn: &Connection,
     file_paths: &[&str],

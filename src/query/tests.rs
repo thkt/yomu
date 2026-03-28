@@ -232,6 +232,7 @@ fn search_fallback_merges_vector_and_name_results() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -334,7 +335,12 @@ fn rerank_semantic_base_score() {
         0.5,
         storage::MatchSource::Semantic,
     )];
-    rerank(&mut results, &RerankContext::default(), &HashMap::new());
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     let expected = 1.0 / (1.0 + 0.5);
     assert!(
         (results[0].score - expected).abs() < 1e-6,
@@ -360,6 +366,7 @@ fn rerank_name_match_base_score() {
             keywords: &kw,
             ..Default::default()
         },
+        &HashMap::new(),
         &HashMap::new(),
     );
     assert!(
@@ -387,7 +394,12 @@ fn rerank_sorts_by_score_descending() {
             storage::MatchSource::Semantic,
         ),
     ];
-    rerank(&mut results, &RerankContext::default(), &HashMap::new());
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     assert!(
         results[0].score >= results[1].score,
         "expected descending: {} >= {}",
@@ -415,10 +427,12 @@ fn rerank_type_hint_bonus() {
             ..Default::default()
         },
         &HashMap::new(),
+        &HashMap::new(),
     );
     rerank(
         &mut without_hint,
         &RerankContext::default(),
+        &HashMap::new(),
         &HashMap::new(),
     );
 
@@ -451,7 +465,12 @@ fn rerank_import_rank_bonus() {
         ("src/popular.tsx".to_string(), 10u32),
         ("src/unpopular.tsx".to_string(), 1u32),
     ]);
-    rerank(&mut results, &RerankContext::default(), &import_counts);
+    rerank(
+        &mut results,
+        &RerankContext::default(),
+        &import_counts,
+        &HashMap::new(),
+    );
 
     let popular = results
         .iter()
@@ -486,8 +505,8 @@ fn rerank_test_path_penalty() {
         storage::MatchSource::Semantic,
     )];
     let ctx = RerankContext::default();
-    rerank(&mut test_result, &ctx, &HashMap::new());
-    rerank(&mut normal_result, &ctx, &HashMap::new());
+    rerank(&mut test_result, &ctx, &HashMap::new(), &HashMap::new());
+    rerank(&mut normal_result, &ctx, &HashMap::new(), &HashMap::new());
 
     let diff = normal_result[0].score - test_result[0].score;
     assert!(
@@ -512,6 +531,7 @@ fn rerank_test_query_exempts_penalty() {
             type_hints: &[storage::ChunkType::TestCase],
             ..Default::default()
         },
+        &HashMap::new(),
         &HashMap::new(),
     );
     assert!(
@@ -541,6 +561,7 @@ fn rerank_name_match_all_bonuses() {
             ..Default::default()
         },
         &import_counts,
+        &HashMap::new(),
     );
     assert!(
         (results[0].score - 0.71).abs() < 1e-6,
@@ -566,6 +587,7 @@ fn rerank_combined_bonuses_semantic() {
             ..Default::default()
         },
         &import_counts,
+        &HashMap::new(),
     );
 
     let base = 1.0 / (1.0 + 0.1_f32);
@@ -594,6 +616,7 @@ fn rerank_combined_score_can_exceed_one() {
             ..Default::default()
         },
         &import_counts,
+        &HashMap::new(),
     );
 
     assert!(
@@ -647,6 +670,7 @@ fn search_returns_results_sorted_by_score() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -707,6 +731,7 @@ fn rerank_low_coverage_dampens_semantic() {
             ..Default::default()
         },
         &HashMap::new(),
+        &HashMap::new(),
     );
     let confidence = semantic_confidence(0.02);
     let expected = 1.0 / (1.0 + 0.5) * confidence;
@@ -745,6 +770,7 @@ fn rerank_low_coverage_name_match_beats_semantic() {
             embed_coverage: 0.02,
             ..Default::default()
         },
+        &HashMap::new(),
         &HashMap::new(),
     );
     assert_eq!(
@@ -813,8 +839,8 @@ fn rerank_semantic_keyword_overlap_bonus() {
         keywords: &kw,
         ..Default::default()
     };
-    rerank(&mut with_overlap, &ctx, &HashMap::new());
-    rerank(&mut without_overlap, &ctx, &HashMap::new());
+    rerank(&mut with_overlap, &ctx, &HashMap::new(), &HashMap::new());
+    rerank(&mut without_overlap, &ctx, &HashMap::new(), &HashMap::new());
 
     assert!(
         with_overlap[0].score > without_overlap[0].score,
@@ -827,6 +853,89 @@ fn rerank_semantic_keyword_overlap_bonus() {
         (without_overlap[0].score - base).abs() < 1e-6,
         "no overlap → no bonus: expected {base}, got {}",
         without_overlap[0].score,
+    );
+}
+
+#[test]
+fn rerank_recency_boost_favors_recent_file() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let one_day_ago = now - 86400;
+    let thirty_days_ago = now - 86400 * 30;
+
+    let mut results = vec![
+        make_result(
+            "src/Old.tsx",
+            "Old",
+            storage::ChunkType::Component,
+            0.3,
+            storage::MatchSource::Semantic,
+        ),
+        make_result(
+            "src/Recent.tsx",
+            "Recent",
+            storage::ChunkType::Component,
+            0.3,
+            storage::MatchSource::Semantic,
+        ),
+    ];
+    let mtimes = HashMap::from([
+        ("src/Old.tsx".to_string(), thirty_days_ago),
+        ("src/Recent.tsx".to_string(), one_day_ago),
+    ]);
+    let ctx = RerankContext {
+        now_epoch: now,
+        ..Default::default()
+    };
+    rerank(&mut results, &ctx, &HashMap::new(), &mtimes);
+
+    let recent = results
+        .iter()
+        .find(|r| r.chunk.name.as_deref() == Some("Recent"))
+        .unwrap();
+    let old = results
+        .iter()
+        .find(|r| r.chunk.name.as_deref() == Some("Old"))
+        .unwrap();
+    assert!(
+        recent.score > old.score,
+        "recent file should rank higher: {} > {}",
+        recent.score,
+        old.score
+    );
+}
+
+#[test]
+fn rerank_missing_mtime_gets_zero_bonus() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let mut with_mtime = vec![make_result(
+        "src/A.tsx",
+        "A",
+        storage::ChunkType::Component,
+        0.3,
+        storage::MatchSource::Semantic,
+    )];
+    let mut without_mtime = with_mtime.clone();
+
+    let mtimes = HashMap::from([("src/A.tsx".to_string(), now - 86400)]);
+    let ctx = RerankContext {
+        now_epoch: now,
+        ..Default::default()
+    };
+    rerank(&mut with_mtime, &ctx, &HashMap::new(), &mtimes);
+    rerank(&mut without_mtime, &ctx, &HashMap::new(), &HashMap::new());
+
+    assert!(
+        with_mtime[0].score > without_mtime[0].score,
+        "file with mtime should score higher than file without: {} > {}",
+        with_mtime[0].score,
+        without_mtime[0].score
     );
 }
 
@@ -850,6 +959,7 @@ fn search_degrades_on_embed_failure() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -943,6 +1053,7 @@ fn search_pipeline_text_only_returns_name_matches() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -1000,7 +1111,7 @@ fn search_pipeline_caps_per_file() {
             parent_index: None,
         })
         .collect();
-    storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[]).unwrap();
+    storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_pipeline(&conn, "fn", None, 10, 0).unwrap();
     let file_count = results
@@ -1034,6 +1145,7 @@ fn text_only_search_with_offset_returns_results() {
             &format!("h{i}"),
             "",
             &[],
+            None,
         )
         .unwrap();
     }
@@ -1074,6 +1186,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
         "hash1",
         "",
         &[],
+        None,
     )
     .unwrap();
 

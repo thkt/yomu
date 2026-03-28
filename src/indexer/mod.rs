@@ -53,6 +53,7 @@ struct PendingFile {
     imports_text: String,
     parsed_imports: Vec<chunker::ParsedImport>,
     hash: String,
+    mtime_epoch: Option<i64>,
 }
 
 impl PendingFile {
@@ -160,6 +161,12 @@ fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile>
         return None;
     }
 
+    let mtime_epoch = std::fs::metadata(file_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+
     let imports_text = file_chunks.imports.join("\n");
     Some(PendingFile {
         rel_path: checked.rel_path,
@@ -167,6 +174,7 @@ fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile>
         imports_text,
         parsed_imports: file_chunks.parsed_imports,
         hash: checked.hash,
+        mtime_epoch,
     })
 }
 
@@ -207,6 +215,7 @@ fn process_file(
         &pf.hash,
         &pf.imports_text,
         &refs,
+        pf.mtime_epoch,
     )?;
     Ok(FileOutcome::Processed(n))
 }
