@@ -168,10 +168,10 @@ struct NoOpEmbedder;
 
 impl Embed for NoOpEmbedder {
     fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-        Err(EmbedError::ModelNotAvailable)
+        Err(EmbedError::Inference("embedder not available".into()))
     }
     fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-        Err(EmbedError::ModelNotAvailable)
+        Err(EmbedError::Inference("embedder not available".into()))
     }
 }
 

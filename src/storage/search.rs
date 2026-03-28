@@ -104,7 +104,6 @@ pub fn search_by_name(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Keywords are double-quote escaped to prevent FTS5 syntax injection.
 pub fn search_by_content(
     conn: &Connection,
     keywords: &[&str],
@@ -118,8 +117,14 @@ pub fn search_by_content(
 
     let parts: Vec<String> = keywords
         .iter()
-        .map(|k| rurico::storage::fts_expand_short_terms(conn, k))
-        .filter(|s| !s.is_empty())
+        .filter_map(|k| {
+            match rurico::storage::prepare_match_query(conn, k) {
+                Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
+                // prepare_match_query rejects bare FTS5 operators; fts_quote wraps them safely.
+                Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
+                _ => None,
+            }
+        })
         .collect();
     if parts.is_empty() {
         return Ok(Vec::new());
