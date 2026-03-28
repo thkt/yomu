@@ -116,15 +116,20 @@ pub fn search_by_content(
         return Ok(Vec::new());
     }
 
-    let parts: Vec<String> = keywords
+    let parts: Vec<rurico::storage::MatchFtsQuery> = keywords
         .iter()
-        .map(|k| rurico::storage::fts_expand_short_terms(conn, k))
-        .filter(|s| !s.is_empty())
+        .filter_map(|k| rurico::storage::sanitize_fts_query(k).ok())
+        .map(|sanitized| rurico::storage::fts_expand_short_terms(conn, &sanitized))
+        .filter(|m| !m.is_empty())
         .collect();
     if parts.is_empty() {
         return Ok(Vec::new());
     }
-    let fts_query = parts.join(" AND ");
+    let fts_query = parts
+        .iter()
+        .map(|m| m.as_str())
+        .collect::<Vec<_>>()
+        .join(" AND ");
 
     let mut sql = String::from(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,

@@ -14,7 +14,7 @@ fn test_embedding() -> Vec<f32> {
 
 #[test]
 fn query_error_from_embed_error() {
-    let ee = EmbedError::ModelNotAvailable;
+    let ee = EmbedError::Inference("embedder not available".into());
     let qe: QueryError = ee.into();
     assert!(qe.to_string().contains("not available"));
 }
@@ -886,10 +886,10 @@ fn search_degrades_on_model_not_available() {
     struct NoModelEmbedder;
     impl Embed for NoModelEmbedder {
         fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-            Err(EmbedError::ModelNotAvailable)
+            Err(EmbedError::Inference("embedder not available".into()))
         }
         fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-            Err(EmbedError::ModelNotAvailable)
+            Err(EmbedError::Inference("embedder not available".into()))
         }
     }
 
