@@ -104,7 +104,6 @@ pub fn search_by_name(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-/// Keywords are double-quote escaped to prevent FTS5 syntax injection.
 pub fn search_by_content(
     conn: &Connection,
     keywords: &[&str],
@@ -120,9 +119,8 @@ pub fn search_by_content(
         .iter()
         .filter_map(|k| {
             match rurico::storage::prepare_match_query(conn, k) {
-                Ok(m) if !m.as_str().is_empty() => Some(m.as_str().to_string()),
-                // Keyword rejected by sanitizer (e.g. "not" as dangling operator).
-                // Fall back to fts_quote since extract_keywords already split terms.
+                Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
+                // prepare_match_query rejects bare FTS5 operators; fts_quote wraps them safely.
                 Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
                 _ => None,
             }

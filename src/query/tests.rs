@@ -883,22 +883,14 @@ fn search_degrades_on_embed_failure() {
 
 #[test]
 fn search_degrades_on_model_not_available() {
-    struct NoModelEmbedder;
-    impl Embed for NoModelEmbedder {
-        fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-            Err(EmbedError::Inference("embedder not available".into()))
-        }
-        fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-            Err(EmbedError::Inference("embedder not available".into()))
-        }
-    }
+    let embedder = FailingEmbedder::all_fail("embedder not available");
 
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &NoModelEmbedder, "test", 10, 0).unwrap();
+    let outcome = search(conn, &embedder, "test", 10, 0).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
