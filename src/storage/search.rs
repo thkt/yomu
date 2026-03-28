@@ -118,18 +118,7 @@ pub fn search_by_content(
 
     let parts: Vec<rurico::storage::MatchFtsQuery> = keywords
         .iter()
-        .filter_map(|k| {
-            // Keywords are pre-split by extract_keywords, so operator-like words
-            // ("not", "and", "or") are content, not boolean operators.
-            // Quote only those to prevent sanitize from stripping them.
-            let upper = k.to_ascii_uppercase();
-            let input = if matches!(upper.as_str(), "AND" | "OR" | "NOT") {
-                format!("\"{}\"", k.replace('"', ""))
-            } else {
-                (*k).to_string()
-            };
-            rurico::storage::sanitize_fts_query(&input).ok()
-        })
+        .filter_map(|k| rurico::storage::sanitize_fts_query(k).ok())
         .map(|sanitized| rurico::storage::fts_expand_short_terms(conn, &sanitized))
         .filter(|m| !m.is_empty())
         .collect();
