@@ -2151,6 +2151,29 @@ fn search_by_content_short_terms_and_semantics() {
 }
 
 #[test]
+fn search_by_content_preserves_operator_like_keywords() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("handleError"),
+        content: "function handleError() { if (not_found) throw new Error('not found'); }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/error.ts", &chunks, "h1", "", &[]).unwrap();
+
+    // "not" resembles FTS5 NOT operator but is a content word here.
+    // It must survive sanitization and match via fts_quote fallback.
+    let results = search_by_content(&conn, &["not"], None, &HashSet::new(), 10).unwrap();
+    assert!(
+        !results.is_empty(),
+        "operator-like keyword 'not' should match content, not be silently dropped"
+    );
+}
+
+#[test]
 fn replace_file_chunks_rejects_length_mismatch() {
     let (conn, _dir) = test_db();
     let chunks = vec![
