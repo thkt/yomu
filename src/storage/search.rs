@@ -116,19 +116,22 @@ pub fn search_by_content(
         return Ok(Vec::new());
     }
 
-    let parts: Vec<rurico::storage::MatchFtsQuery> = keywords
+    let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| rurico::storage::prepare_match_query(conn, k).ok())
-        .filter(|m| !m.as_str().is_empty())
+        .filter_map(|k| {
+            match rurico::storage::prepare_match_query(conn, k) {
+                Ok(m) if !m.as_str().is_empty() => Some(m.as_str().to_string()),
+                // Keyword rejected by sanitizer (e.g. "not" as dangling operator).
+                // Fall back to fts_quote since extract_keywords already split terms.
+                Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
+                _ => None,
+            }
+        })
         .collect();
     if parts.is_empty() {
         return Ok(Vec::new());
     }
-    let fts_query = parts
-        .iter()
-        .map(|m| m.as_str())
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let fts_query = parts.join(" AND ");
 
     let mut sql = String::from(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,
