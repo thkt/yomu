@@ -118,9 +118,8 @@ pub fn search_by_content(
 
     let parts: Vec<rurico::storage::MatchFtsQuery> = keywords
         .iter()
-        .filter_map(|k| rurico::storage::sanitize_fts_query(k).ok())
-        .map(|sanitized| rurico::storage::fts_expand_short_terms(conn, &sanitized))
-        .filter(|m| !m.is_empty())
+        .filter_map(|k| rurico::storage::prepare_match_query(conn, k).ok())
+        .filter(|m| !m.as_str().is_empty())
         .collect();
     if parts.is_empty() {
         return Ok(Vec::new());
