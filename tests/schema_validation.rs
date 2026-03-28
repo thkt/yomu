@@ -31,9 +31,18 @@ fn open_db_detects_missing_column_in_stale_schema() {
         matches!(err, StorageError::SchemaMismatch { .. }),
         "expected SchemaMismatch, got: {msg}"
     );
-    assert!(msg.contains("parent_chunk_id"), "should name the missing column: {msg}");
-    assert!(msg.contains("index.db"), "should include the DB path: {msg}");
-    assert!(msg.contains("delete this file"), "should suggest deleting the file: {msg}");
+    assert!(
+        msg.contains("parent_chunk_id"),
+        "should name the missing column: {msg}"
+    );
+    assert!(
+        msg.contains("index.db"),
+        "should include the DB path: {msg}"
+    );
+    assert!(
+        msg.contains("delete this file"),
+        "should suggest deleting the file: {msg}"
+    );
 }
 
 #[test]
@@ -42,5 +51,9 @@ fn open_db_succeeds_with_current_schema() {
     let db_path = dir.path().join("index.db");
 
     let conn = open_db(&db_path);
-    assert!(conn.is_ok(), "fresh open_db should succeed: {:?}", conn.err());
+    assert!(
+        conn.is_ok(),
+        "fresh open_db should succeed: {:?}",
+        conn.err()
+    );
 }
