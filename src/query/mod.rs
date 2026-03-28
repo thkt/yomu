@@ -332,10 +332,12 @@ fn search_pipeline(
     let type_hints = extract_type_hints(query);
     let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
 
+    let stats = storage::get_stats(conn)?;
     let fetch_limit = limit.saturating_add(offset);
+    let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
-        Some(emb) => storage::search_similar(conn, emb, fetch_limit, 0)?,
-        None => Vec::new(),
+        Some(emb) if use_semantic => storage::search_similar(conn, emb, fetch_limit, 0)?,
+        _ => Vec::new(),
     };
 
     let fallback_limit = fetch_limit * 3;
@@ -366,8 +368,6 @@ fn search_pipeline(
         )?;
         results.extend(content_results);
     }
-
-    let stats = storage::get_stats(conn)?;
     let embed_coverage = if stats.embeddable_chunks > 0 {
         stats.embedded_chunks as f32 / stats.embeddable_chunks as f32
     } else {

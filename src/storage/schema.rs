@@ -38,6 +38,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     )?;
 
     init_schema(&conn)?;
+    verify_required_columns(&conn, path)?;
     Ok(conn)
 }
 
@@ -116,6 +117,41 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('schema_version', ?1)",
             [SCHEMA_VERSION.to_string()],
         )?;
+    }
+
+    Ok(())
+}
+
+fn verify_required_columns(conn: &Connection, path: &Path) -> Result<(), StorageError> {
+    const REQUIRED: &[&str] = &[
+        "id",
+        "file_path",
+        "chunk_type",
+        "name",
+        "content",
+        "start_line",
+        "end_line",
+        "file_hash",
+        "parent_chunk_id",
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(chunks)")?;
+    let existing: std::collections::HashSet<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<std::collections::HashSet<String>, _>>()?;
+
+    let missing: Vec<String> = REQUIRED
+        .iter()
+        .filter(|col| !existing.contains(**col))
+        .map(|col| (*col).to_string())
+        .collect();
+
+    if !missing.is_empty() {
+        return Err(StorageError::SchemaMismatch {
+            table: "chunks",
+            missing,
+            path: path.to_path_buf(),
+        });
     }
 
     Ok(())

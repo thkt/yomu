@@ -34,6 +34,7 @@ pub fn search_similar(
          FROM vec_chunks v
          INNER JOIN chunks c ON c.id = v.chunk_id
          WHERE v.embedding MATCH ?1 AND k = ?2
+               AND v.distance >= 0.0 -- filters NULL rows; vec0 disallows IS NOT NULL in KNN queries
          ORDER BY v.distance
          LIMIT ?3
          OFFSET ?4",
