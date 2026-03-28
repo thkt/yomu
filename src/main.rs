@@ -174,6 +174,7 @@ fn is_near_subcommand(input: &str, known: &[&str]) -> bool {
     known.iter().any(|cmd| osa_distance(input, cmd) <= 1)
 }
 
+#[allow(clippy::needless_range_loop)]
 fn osa_distance(a: &str, b: &str) -> usize {
     let a = a.as_bytes();
     let b = b.as_bytes();
