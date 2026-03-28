@@ -162,6 +162,7 @@ pub struct FileData<'a> {
     pub file_hash: &'a str,
     pub imports_text: &'a str,
     pub refs: &'a [Reference],
+    pub mtime_epoch: Option<i64>,
 }
 
 fn check_embedding_dims(embedding: &[f32]) -> Result<(), StorageError> {
@@ -232,10 +233,11 @@ fn write_file_metadata(
     file_path: &str,
     imports_text: &str,
     refs: &[Reference],
+    mtime_epoch: Option<i64>,
 ) -> Result<(), StorageError> {
     tx.execute(
-        "INSERT OR REPLACE INTO file_context (file_path, imports_text) VALUES (?1, ?2)",
-        rusqlite::params![file_path, imports_text],
+        "INSERT OR REPLACE INTO file_context (file_path, imports_text, mtime_epoch) VALUES (?1, ?2, ?3)",
+        rusqlite::params![file_path, imports_text, mtime_epoch],
     )?;
 
     for r in refs {
@@ -293,6 +295,7 @@ pub fn replace_file_chunks(
         file_hash,
         imports_text,
         refs,
+        mtime_epoch: None,
     };
     replace_file_chunks_with(conn, &data, embeddings)
 }
@@ -304,6 +307,7 @@ pub fn replace_file_chunks_only(
     file_hash: &str,
     imports_text: &str,
     refs: &[Reference],
+    mtime_epoch: Option<i64>,
 ) -> Result<(), StorageError> {
     let data = FileData {
         file_path,
@@ -311,6 +315,7 @@ pub fn replace_file_chunks_only(
         file_hash,
         imports_text,
         refs,
+        mtime_epoch,
     };
     replace_file_data(conn, &data, None)
 }
@@ -363,7 +368,7 @@ fn replace_file_data(
         }
     }
 
-    write_file_metadata(&tx, data.file_path, data.imports_text, data.refs)?;
+    write_file_metadata(&tx, data.file_path, data.imports_text, data.refs, data.mtime_epoch)?;
     tx.commit()?;
     Ok(())
 }
@@ -503,9 +508,17 @@ pub struct Reference {
 }
 
 pub fn sql_placeholders(count: usize) -> String {
-    std::iter::repeat_n("?", count)
-        .collect::<Vec<_>>()
-        .join(",")
+    if count == 0 {
+        return String::new();
+    }
+    let mut s = String::with_capacity(count * 2 - 1);
+    for i in 0..count {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push('?');
+    }
+    s
 }
 
 #[cfg(test)]

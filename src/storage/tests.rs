@@ -820,6 +820,7 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
         "hash_a",
         "import React from 'react'",
         &refs,
+        None,
     )
     .unwrap();
 
@@ -878,7 +879,7 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[], None).unwrap();
 
     assert_eq!(vec_chunks_count(&conn), 0);
 
@@ -923,7 +924,7 @@ fn add_embeddings_inserts_into_vec_chunks() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[], None).unwrap();
     assert_eq!(vec_chunks_count(&conn), 0);
 
     let ids = get_chunk_ids(&conn, "src/Card.tsx");
@@ -953,7 +954,7 @@ fn add_embeddings_skips_already_embedded() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[], None).unwrap();
 
     let ids = get_chunk_ids(&conn, "src/Modal.tsx");
     let emb = vec![0.5_f32; EMBEDDING_DIMS as usize];
@@ -1009,7 +1010,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[], None).unwrap();
 
     let chunks_c = vec![NewChunk {
         chunk_type: &ChunkType::Component,
@@ -1019,7 +1020,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/C.tsx", &chunks_c, "h3", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/C.tsx", &chunks_c, "h3", "", &[], None).unwrap();
 
     let unembedded = get_unembedded_file_paths(&conn).unwrap();
 
@@ -1047,7 +1048,7 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[], None).unwrap();
 
     assert!(needs_embedding(&conn, "src/Nav.tsx", "hash_nav").unwrap());
 }
@@ -1148,7 +1149,7 @@ fn get_stats_reports_embedded_vs_total_chunks() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[], None).unwrap();
 
     let stats = get_stats(&conn).unwrap();
     assert_eq!(stats.total_chunks, 3);
@@ -1174,7 +1175,7 @@ fn get_files_by_import_count_returns_most_imported_first() {
             end_line: 3,
             parent_index: None,
         }];
-        replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
+        replace_file_chunks_only(&conn, path, &chunks, hash, "", &[], None).unwrap();
     }
 
     replace_file_references(
@@ -1250,7 +1251,7 @@ fn search_by_name_matches_keyword() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
 
@@ -1282,7 +1283,7 @@ fn search_by_name_filters_by_type() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/btn.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/btn.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(
         &conn,
@@ -1320,7 +1321,7 @@ fn search_by_name_excludes_ids() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let ids = get_chunk_ids(&conn, "src/auth.tsx");
     let mut exclude = HashSet::new();
@@ -1345,7 +1346,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/useAuth.tsx", &hook_chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/useAuth.tsx", &hook_chunks, "h1", "", &[], None).unwrap();
 
     // TypeDef file: 0 import refs
     let typedef_chunks = vec![NewChunk {
@@ -1356,7 +1357,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/types.tsx", &typedef_chunks, "h2", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/types.tsx", &typedef_chunks, "h2", "", &[], None).unwrap();
 
     // Component file: 0 import refs
     let comp_chunks = vec![NewChunk {
@@ -1367,7 +1368,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/LoginButton.tsx", &comp_chunks, "h3", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/LoginButton.tsx", &comp_chunks, "h3", "", &[], None).unwrap();
 
     let ordered = get_files_by_import_count(&conn).unwrap();
 
@@ -1430,7 +1431,7 @@ fn search_by_name_empty_keywords_returns_empty() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &[], None, &HashSet::new(), 10).unwrap();
     assert!(results.is_empty());
@@ -1483,7 +1484,7 @@ fn search_by_name_sets_base_score() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
@@ -1512,7 +1513,7 @@ fn get_import_counts_returns_correct_counts() {
             end_line: 3,
             parent_index: None,
         }];
-        replace_file_chunks_only(&conn, path, &chunks, hash, "", &[]).unwrap();
+        replace_file_chunks_only(&conn, path, &chunks, hash, "", &[], None).unwrap();
     }
 
     // utils is imported 3 times, Button 1 time, App 0 times
@@ -1604,7 +1605,7 @@ fn search_by_name_respects_limit() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 2).unwrap();
     assert_eq!(results.len(), 2);
@@ -1623,7 +1624,7 @@ fn search_by_name_matches_file_path() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/utils/fetch-data.ts", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
@@ -1643,7 +1644,7 @@ fn search_by_name_matches_name_or_path() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[], None).unwrap();
 
     // Unnamed chunk in path containing keyword
     let path_match = vec![NewChunk {
@@ -1654,7 +1655,7 @@ fn search_by_name_matches_name_or_path() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/fetch/client.ts", &path_match, "h2", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(
@@ -1686,7 +1687,7 @@ fn search_by_name_path_match_respects_type_filter() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Filter to components only — path match on "chart" should return only the component
     let results = search_by_name(
@@ -1735,7 +1736,7 @@ fn search_by_content_matches_code() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
@@ -1765,7 +1766,7 @@ fn search_by_content_excludes_ids() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let ids = get_chunk_ids(&conn, "src/hooks.tsx");
     let mut exclude = HashSet::new();
@@ -1795,7 +1796,7 @@ fn fts_chunks_deleted_with_file() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Should find it before delete
     let results = search_by_content(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
@@ -1824,7 +1825,7 @@ fn fts5_migration_from_v2() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Simulate a v2 DB by clearing fts_chunks and rolling back schema_version
     conn.execute_batch("DELETE FROM fts_chunks").unwrap();
@@ -1863,7 +1864,7 @@ fn fts5_handles_special_characters_in_content() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_content(&conn, &["container"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
@@ -1892,7 +1893,7 @@ fn search_by_content_respects_type_filter() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Filter to hooks only
     let results = search_by_content(
@@ -1929,7 +1930,7 @@ fn get_unembedded_chunks_for_file_returns_triple() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[], None).unwrap();
 
     let triples = get_unembedded_chunks_for_file(&conn, "src/Card.tsx").unwrap();
     assert_eq!(triples.len(), 2);
@@ -1983,7 +1984,7 @@ fn get_imports_for_file_returns_stored_imports() {
         parent_index: None,
     }];
     let imports = "import { useState } from 'react'\nimport { Button } from './Button'";
-    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", imports, &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", imports, &[], None).unwrap();
 
     let result = get_imports_for_file(&conn, "src/App.tsx").unwrap();
     assert_eq!(result, imports);
@@ -2027,7 +2028,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/migrate.ts", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/migrate.ts", &chunks, "h1", "", &[], None).unwrap();
 
     // Simulate a v3 DB by rolling back schema_version and dropping vocab table
     conn.execute(
@@ -2048,7 +2049,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "5", "schema_version should be 5 after migration");
+    assert_eq!(version, "6", "schema_version should be 6 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -2076,6 +2077,33 @@ fn migration_v3_to_v4_creates_vocab_table() {
 }
 
 #[test]
+fn get_file_mtimes_returns_stored_mtime() {
+    let (conn, _dir) = test_db();
+    let now = 1711600000i64;
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("A"),
+        content: "function A() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/A.tsx", &chunks, "h1", "", &[], Some(now)).unwrap();
+    replace_file_chunks_only(&conn, "src/B.tsx", &chunks, "h2", "", &[], None).unwrap();
+
+    let mtimes = get_file_mtimes(&conn, &["src/A.tsx", "src/B.tsx", "src/C.tsx"]).unwrap();
+    assert_eq!(mtimes.len(), 1, "only A should have mtime");
+    assert_eq!(mtimes["src/A.tsx"], now);
+}
+
+#[test]
+fn get_file_mtimes_empty_input_returns_empty() {
+    let (conn, _dir) = test_db();
+    let mtimes = get_file_mtimes(&conn, &[]).unwrap();
+    assert!(mtimes.is_empty());
+}
+
+#[test]
 fn search_by_content_expands_short_prefix() {
     let (conn, _dir) = test_db();
 
@@ -2087,7 +2115,7 @@ fn search_by_content_expands_short_prefix() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/auth.ts", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/auth.ts", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_content(&conn, &["au"], None, &HashSet::new(), 10).unwrap();
     assert!(
@@ -2113,7 +2141,7 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/authLogger.ts", &chunks_both, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/authLogger.ts", &chunks_both, "h1", "", &[], None).unwrap();
 
     let chunks_auth_only = vec![NewChunk {
         chunk_type: &ChunkType::Other,
@@ -2123,7 +2151,7 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/authOnly.ts", &chunks_auth_only, "h2", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/authOnly.ts", &chunks_auth_only, "h2", "", &[], None).unwrap();
 
     let chunks_log_only = vec![NewChunk {
         chunk_type: &ChunkType::Other,
@@ -2133,7 +2161,7 @@ fn search_by_content_short_terms_and_semantics() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/logOnly.ts", &chunks_log_only, "h3", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/logOnly.ts", &chunks_log_only, "h3", "", &[], None).unwrap();
 
     // "au log" — both short terms. After expansion + AND, only authLogger should match
     let results = search_by_content(&conn, &["au", "log"], None, &HashSet::new(), 10).unwrap();
@@ -2162,7 +2190,7 @@ fn search_by_content_preserves_operator_like_keywords() {
         end_line: 3,
         parent_index: None,
     }];
-    replace_file_chunks_only(&conn, "src/error.ts", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/error.ts", &chunks, "h1", "", &[], None).unwrap();
 
     // "not" resembles FTS5 NOT operator but is a content word here.
     // It must survive sanitization and match via fts_quote fallback.
@@ -2257,7 +2285,7 @@ fn search_by_name_escapes_like_wildcards() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Searching for "use_auth" should NOT match "useXAuth" via _ wildcard
     let results = search_by_name(&conn, &["use_auth"], None, &HashSet::new(), 10).unwrap();
@@ -2293,6 +2321,7 @@ fn fts_automerge_guard_restores_on_drop() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -2316,6 +2345,7 @@ fn fts_automerge_guard_restores_on_drop() {
         "h2",
         "",
         &[],
+        None,
     )
     .unwrap();
     let results = search_by_content(&conn, &["function"], None, &HashSet::new(), 10).unwrap();
@@ -2354,6 +2384,7 @@ fn t_007_new_chunk_with_parent_index_stores_parent_chunk_id() {
         "hash1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -2406,6 +2437,7 @@ fn t_009_out_of_order_chunks_resolves_to_null() {
         "hash1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -2450,6 +2482,7 @@ fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
         file_hash: "hash_form",
         imports_text: "",
         refs: &[],
+        mtime_epoch: None,
     };
     replace_file_chunks_with(&conn, &data, &[embedding]).unwrap();
 
@@ -2499,7 +2532,7 @@ fn t_016_get_stats_returns_embeddable_and_total_chunks() {
             parent_index: None,
         },
     ];
-    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let stats = get_stats(&conn).unwrap();
 
@@ -2593,6 +2626,7 @@ fn t_018_embed_path_with_innerfn_no_length_mismatch() {
         file_hash: "hash_panel",
         imports_text: "",
         refs: &[],
+        mtime_epoch: None,
     };
 
     let result = replace_file_chunks_with(&conn, &data, &[embedding]);
@@ -2631,7 +2665,7 @@ fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
             parent_index: Some(0),
         },
     ];
-    replace_file_chunks_only(&conn, "src/List.tsx", &chunks, "h1", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/List.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     let stats = get_stats(&conn).unwrap();
     assert_eq!(stats.total_chunks, 2);
@@ -2683,6 +2717,7 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
         "hash_uf",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -2740,6 +2775,7 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
         "hash_uf2",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -2782,7 +2818,7 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
         parent_index: None,
     };
 
-    replace_file_chunks_only(&conn, "src/UserForm.tsx", &[parent], "hash_uf3", "", &[]).unwrap();
+    replace_file_chunks_only(&conn, "src/UserForm.tsx", &[parent], "hash_uf3", "", &[], None).unwrap();
 
     let results = search_by_name(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
 

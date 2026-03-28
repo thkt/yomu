@@ -42,7 +42,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -66,7 +66,8 @@ const DDL: &str = "
 
     CREATE TABLE IF NOT EXISTS file_context (
         file_path TEXT PRIMARY KEY,
-        imports_text TEXT NOT NULL
+        imports_text TEXT NOT NULL,
+        mtime_epoch INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS file_references (
@@ -157,6 +158,17 @@ fn verify_required_columns(conn: &Connection, path: &Path) -> Result<(), Storage
     Ok(())
 }
 
+/// Returns `true` if the column probe query succeeds, `false` if SQLite reports "no such column".
+fn column_exists(conn: &Connection, probe_sql: &str) -> Result<bool, StorageError> {
+    match conn.prepare(probe_sql) {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::SqliteFailure(_, Some(ref msg))) if msg.contains("no such column") => {
+            Ok(false)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
     let to = SCHEMA_VERSION;
     if from >= to {
@@ -182,21 +194,15 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
     }
 
     // v4 → v5: add parent_chunk_id for subchunk extraction
-    if from < 5 {
-        let has_column = match conn.prepare("SELECT parent_chunk_id FROM chunks LIMIT 0") {
-            Ok(_) => true,
-            Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
-                if msg.contains("no such column") =>
-            {
-                false
-            }
-            Err(e) => return Err(e.into()),
-        };
-        if !has_column {
-            conn.execute_batch(
-                "ALTER TABLE chunks ADD COLUMN parent_chunk_id INTEGER REFERENCES chunks(id)",
-            )?;
-        }
+    if from < 5 && !column_exists(conn, "SELECT parent_chunk_id FROM chunks LIMIT 0")? {
+        conn.execute_batch(
+            "ALTER TABLE chunks ADD COLUMN parent_chunk_id INTEGER REFERENCES chunks(id)",
+        )?;
+    }
+
+    // v5 → v6: add mtime_epoch to file_context for recency boost
+    if from < 6 && !column_exists(conn, "SELECT mtime_epoch FROM file_context LIMIT 0")? {
+        conn.execute_batch("ALTER TABLE file_context ADD COLUMN mtime_epoch INTEGER")?;
     }
 
     Ok(())

@@ -53,11 +53,12 @@ fn split_identifier(s: &str) -> Vec<String> {
 
 pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for token in query.split_whitespace() {
         let lower = token.to_lowercase();
         if lower.chars().count() >= 2
             && !STOP_WORDS.contains(&lower.as_str())
-            && !base.contains(&lower)
+            && seen.insert(lower.clone())
         {
             base.push(lower);
         }
@@ -65,7 +66,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
             let part_lower = part.to_lowercase();
             if part_lower.chars().count() >= 2
                 && !STOP_WORDS.contains(&part_lower.as_str())
-                && !base.contains(&part_lower)
+                && seen.insert(part_lower.clone())
             {
                 base.push(part_lower);
             }
@@ -92,22 +93,29 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         "access", "express", "progress",
     ];
 
-    let mut all = base.clone();
-    for kw in &base {
-        let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str()) {
-            Some(&kw[..kw.len() - 3])
-        } else if kw.len() > 3
-            && kw.ends_with('s')
-            && !kw.ends_with("ss")
-            && !S_DENY.contains(&kw.as_str())
-        {
-            Some(&kw[..kw.len() - 1])
-        } else {
-            None
-        };
-        if let Some(s) = stem.filter(|s| s.len() >= 2 && !all.iter().any(|x| x == s)) {
-            all.push(s.to_string());
-        }
+    let stems: Vec<String> = base
+        .iter()
+        .filter_map(|kw| {
+            let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str())
+            {
+                Some(&kw[..kw.len() - 3])
+            } else if kw.len() > 3
+                && kw.ends_with('s')
+                && !kw.ends_with("ss")
+                && !S_DENY.contains(&kw.as_str())
+            {
+                Some(&kw[..kw.len() - 1])
+            } else {
+                None
+            };
+            stem.filter(|s| s.len() >= 2 && !seen.contains(*s))
+                .map(|s| s.to_string())
+        })
+        .collect();
+    let mut all = base;
+    for s in stems {
+        seen.insert(s.clone());
+        all.push(s);
     }
     all
 }
@@ -198,6 +206,8 @@ const TYPE_HINT_BONUS: f32 = 0.03;
 const IMPORT_RANK_BONUS: f32 = 0.03;
 const TEST_PATH_PENALTY: f32 = 0.05;
 const SEMANTIC_KEYWORD_OVERLAP_BONUS: f32 = 0.05;
+const RECENCY_BONUS: f32 = 0.03;
+const RECENCY_HALF_LIFE_DAYS: f64 = 30.0;
 
 fn is_test_path(path: &str) -> bool {
     path.contains("__tests__")
@@ -227,6 +237,7 @@ pub struct RerankContext<'a> {
     pub keywords: &'a [String],
     pub keyword_idfs: &'a [f32],
     pub embed_coverage: f32,
+    pub now_epoch: i64,
 }
 
 impl Default for RerankContext<'_> {
@@ -236,6 +247,7 @@ impl Default for RerankContext<'_> {
             keywords: &[],
             keyword_idfs: &[],
             embed_coverage: 1.0,
+            now_epoch: 0,
         }
     }
 }
@@ -244,6 +256,7 @@ pub fn rerank(
     results: &mut [storage::SearchResult],
     ctx: &RerankContext<'_>,
     import_counts: &std::collections::HashMap<String, u32>,
+    file_mtimes: &std::collections::HashMap<String, i64>,
 ) {
     if results.is_empty() {
         return;
@@ -311,7 +324,21 @@ pub fn rerank(
             0.0
         };
 
-        result.score = base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
+        let recency_bonus = if ctx.now_epoch > 0 {
+            file_mtimes
+                .get(&result.chunk.file_path)
+                .map(|&mtime| {
+                    let age_days = (ctx.now_epoch - mtime) as f64 / 86400.0;
+                    RECENCY_BONUS * rurico::storage::recency_decay(age_days, RECENCY_HALF_LIFE_DAYS) as f32
+                })
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        result.score =
+            base + name_bonus + overlap_bonus + type_bonus + import_bonus + recency_bonus
+                - test_penalty;
     }
 
     results.sort_by(|a, b| {
@@ -383,13 +410,19 @@ fn search_pipeline(
 
     let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
     let import_counts = storage::get_import_counts(conn, &file_paths)?;
+    let file_mtimes = storage::get_file_mtimes(conn, &file_paths)?;
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let ctx = RerankContext {
         type_hints: &type_hints,
         keywords: &keywords,
         keyword_idfs: &keyword_idfs,
         embed_coverage,
+        now_epoch,
     };
-    rerank(&mut results, &ctx, &import_counts);
+    rerank(&mut results, &ctx, &import_counts, &file_mtimes);
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     if offset > 0 {
         let skip = std::cmp::min(offset as usize, results.len());

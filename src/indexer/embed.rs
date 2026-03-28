@@ -80,6 +80,7 @@ fn store_file_data(
         file_hash: &pf.hash,
         imports_text: &pf.imports_text,
         refs: &refs,
+        mtime_epoch: pf.mtime_epoch,
     };
     storage::replace_file_chunks_with(conn, &data, &embeddings)
 }

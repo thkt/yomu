@@ -187,6 +187,7 @@ fn search_shows_coverage_on_no_results() {
         "hash1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -219,6 +220,7 @@ fn search_degraded_empty_results_shows_note() {
         "h1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -707,6 +709,7 @@ fn status_shows_embedded_total() {
         "hash1",
         "",
         &[],
+        None,
     )
     .unwrap();
 
@@ -1575,7 +1578,7 @@ fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
         end_line: 4,
         parent_index: Some(0),
     };
-    storage::replace_file_chunks_only(&conn, "src/App.tsx", &[parent, child], "h1", "", &[])
+    storage::replace_file_chunks_only(&conn, "src/App.tsx", &[parent, child], "h1", "", &[], None)
         .unwrap();
 
     let child_row: (i64, Option<i64>) = conn

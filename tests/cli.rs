@@ -351,6 +351,102 @@ fn rebuild_dry_run_reports_all_files() {
 }
 
 #[test]
+fn shorthand_query_runs_as_search() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .arg("button")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "shorthand search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Button"),
+        "expected Button in results: {stdout}"
+    );
+}
+
+#[test]
+fn shorthand_explicit_search_still_works() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["search", "button"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "explicit search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Button"),
+        "expected Button in results: {stdout}"
+    );
+}
+
+#[test]
+fn shorthand_help_not_treated_as_search() {
+    let output = yomu_cmd().arg("help").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("search"),
+        "help should list search command: {stdout}"
+    );
+}
+
+#[test]
+fn shorthand_status_not_treated_as_search() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .arg("status")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Files:"),
+        "should show status output: {stdout}"
+    );
+}
+
+#[test]
+fn shorthand_typo_not_treated_as_search() {
+    let output = yomu_cmd().arg("stauts").output().unwrap();
+    assert!(
+        !output.status.success(),
+        "typo 'stauts' should fail, not become a search"
+    );
+}
+
+#[test]
+fn shorthand_near_command_name_still_searches() {
+    // "state" is OSA distance 2 from "status" — should be treated as search, not typo
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .arg("state")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "'state' should be a search query, not a typo: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn probe_embed_reaches_probe_path_without_subcommand() {
     // --probe-embed with an invalid dir should exit 10 (PROBE_EXIT_UNAVAILABLE),
     // NOT exit 2 ("requires a subcommand"). This proves the CLI routing fix works.
