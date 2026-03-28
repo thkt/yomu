@@ -28,7 +28,6 @@ tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
 rurico = { git = "https://github.com/thkt/rurico", rev = "87f017f", features = ["test-support"] }
-serial_test = "3"
 tempfile = "3"
 
 [profile.release]
