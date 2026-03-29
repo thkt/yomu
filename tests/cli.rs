@@ -239,6 +239,10 @@ fn search_format_json() {
         parsed.get("degraded").is_some(),
         "should have degraded field: {stdout}"
     );
+    assert!(
+        parsed["notes"].is_array(),
+        "should have notes array: {stdout}"
+    );
     let first = &results[0];
     for field in [
         "file",

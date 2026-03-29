@@ -2725,7 +2725,7 @@ fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
     assert_eq!(stats.total_chunks, 2);
 
     let keywords = ["renderitem"];
-    let keyword_refs: Vec<&str> = keywords.iter().copied().collect();
+    let keyword_refs: Vec<&str> = keywords.to_vec();
     let dfs = get_keyword_doc_frequencies(&conn, &keyword_refs, stats.total_chunks).unwrap();
 
     let total = stats.total_chunks.max(1) as f32;

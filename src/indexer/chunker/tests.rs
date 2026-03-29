@@ -1206,21 +1206,23 @@ fn t_005_parent_emitted_before_children() {
 
 #[test]
 fn t_006_non_component_no_subchunks() {
-    let mut hook_lines = Vec::new();
-    hook_lines.push("export function useAuth() {".to_string());
-    hook_lines.push("  const [user, setUser] = useState(null);".to_string());
-    hook_lines.push("  const login = () => { setUser({ name: 'Alice' }); };".to_string());
-    hook_lines.push("  const logout = () => { setUser(null); };".to_string());
+    let mut hook_lines = vec![
+        "export function useAuth() {".to_string(),
+        "  const [user, setUser] = useState(null);".to_string(),
+        "  const login = () => { setUser({ name: 'Alice' }); };".to_string(),
+        "  const logout = () => { setUser(null); };".to_string(),
+    ];
     for i in 0..50 {
         hook_lines.push(format!("  const pad{i} = {i};"));
     }
     hook_lines.push("  return { user, login, logout };".to_string());
     hook_lines.push("}".to_string());
 
-    let mut other_lines = Vec::new();
-    other_lines.push("function processData() {".to_string());
-    other_lines.push("  const result = [];".to_string());
-    other_lines.push("  const transform = () => { return 42; };".to_string());
+    let mut other_lines = vec![
+        "function processData() {".to_string(),
+        "  const result = [];".to_string(),
+        "  const transform = () => { return 42; };".to_string(),
+    ];
     for i in 0..50 {
         other_lines.push(format!("  const pad{i} = {i};"));
     }

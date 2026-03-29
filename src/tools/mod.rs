@@ -289,7 +289,11 @@ impl Yomu {
         }
 
         if format == OutputFormat::Json {
-            return Ok(format_results_json(&outcome.results, outcome.degraded));
+            return Ok(format_results_json(
+                &outcome.results,
+                outcome.degraded,
+                notes,
+            ));
         }
 
         if outcome.results.is_empty() {
