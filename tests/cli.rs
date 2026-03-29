@@ -78,10 +78,9 @@ fn impact_depth_too_large() {
 
 #[test]
 fn search_default_limit_accepted() {
-    // Default limit=10 should be valid (command may fail for other reasons like no project root)
+    // May fail for other reasons (e.g. no project root), but not argument validation
     let output = yomu_cmd().args(["search", "test"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // Should NOT fail due to argument validation
     assert!(
         !stderr.contains("invalid value"),
         "default limit should be accepted: {stderr}"
@@ -459,18 +458,19 @@ fn shorthand_near_command_name_still_searches() {
 }
 
 #[test]
-fn probe_embed_reaches_probe_path_without_subcommand() {
-    // --probe-embed with an invalid dir should exit 10 (PROBE_EXIT_UNAVAILABLE),
-    // NOT exit 2 ("requires a subcommand"). This proves the CLI routing fix works.
+fn t010_probe_embed_flag_rejected() {
     let output = yomu_cmd()
         .args(["--probe-embed", "/nonexistent/model/dir"])
         .output()
         .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(10),
-        "should exit 10 (probe unavailable), not 2 (missing subcommand): status={:?} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
+    assert!(
+        !output.status.success(),
+        "[T-010] --probe-embed should fail: {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("unrecognized"),
+        "[T-010] should show unrecognized flag error, got: {stderr}"
     );
 }
