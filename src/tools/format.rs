@@ -238,11 +238,17 @@ fn format_mutation_json(
     serde_json::to_string(&resp).unwrap()
 }
 
-pub(super) fn format_index_json(result: &indexer::IndexResult, stats: &storage::IndexStatus) -> String {
+pub(super) fn format_index_json(
+    result: &indexer::IndexResult,
+    stats: &storage::IndexStatus,
+) -> String {
     format_mutation_json(result, stats, true)
 }
 
-pub(super) fn format_rebuild_json(result: &indexer::IndexResult, stats: &storage::IndexStatus) -> String {
+pub(super) fn format_rebuild_json(
+    result: &indexer::IndexResult,
+    stats: &storage::IndexStatus,
+) -> String {
     format_mutation_json(result, stats, false)
 }
 

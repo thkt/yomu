@@ -755,8 +755,14 @@ fn json_flag_with_impact() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
     assert_eq!(parsed["target"], "src/Button.tsx");
-    assert!(parsed.get("in_index").is_some(), "should have in_index: {stdout}");
-    assert!(parsed["dependents"].is_array(), "should have dependents: {stdout}");
+    assert!(
+        parsed.get("in_index").is_some(),
+        "should have in_index: {stdout}"
+    );
+    assert!(
+        parsed["dependents"].is_array(),
+        "should have dependents: {stdout}"
+    );
     assert!(parsed.get("total").is_some(), "should have total: {stdout}");
 }
 

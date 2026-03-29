@@ -93,9 +93,7 @@ fn search_rejects_empty_query() {
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y
-        .search(&long_query, 10, 0, false)
-        .unwrap_err();
+    let err = y.search(&long_query, 10, 0, false).unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -120,9 +118,7 @@ fn search_auto_indexes_empty_db() {
         Arc::new(rurico::embed::MockEmbedder),
     );
 
-    let text = y
-        .search("button component", 10, 0, false)
-        .unwrap();
+    let text = y.search("button component", 10, 0, false).unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -159,9 +155,7 @@ fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y
-        .search("form component", 10, 0, false)
-        .unwrap();
+    let text = y.search("form component", 10, 0, false).unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -238,9 +232,7 @@ fn search_degraded_empty_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y
-        .search("zzzznonexistent", 10, 0, false)
-        .unwrap();
+    let text = y.search("zzzznonexistent", 10, 0, false).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -278,9 +270,7 @@ fn search_degraded_with_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing
-        .search("Button", 10, 0, false)
-        .unwrap();
+    let result = y_failing.search("Button", 10, 0, false).unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -800,7 +790,9 @@ fn impact_filters_by_symbol() {
         .unwrap();
     }
 
-    let text = y.impact("src/hooks/useAuth.ts:useAuth", None, 3, false).unwrap();
+    let text = y
+        .impact("src/hooks/useAuth.ts:useAuth", None, 3, false)
+        .unwrap();
     assert!(
         text.contains("Direct symbol references"),
         "expected symbol section: {text}"
@@ -904,7 +896,12 @@ fn impact_symbol_flag_overrides_colon_syntax() {
     }
 
     let text = y
-        .impact("src/hooks/useAuth.ts:useAuth", Some("AuthProvider"), 3, false)
+        .impact(
+            "src/hooks/useAuth.ts:useAuth",
+            Some("AuthProvider"),
+            3,
+            false,
+        )
         .unwrap();
     assert!(
         text.contains("src/B.tsx"),
@@ -1078,9 +1075,7 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y
-        .search("App component", 10, 0, false)
-        .unwrap();
+    let result = y.search("App component", 10, 0, false).unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1228,9 +1223,7 @@ fn search_json_format_empty_results() {
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y
-        .search("zzzznonexistent", 10, 0, true)
-        .unwrap();
+    let json = y.search("zzzznonexistent", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].as_array().unwrap().is_empty(),
@@ -1626,9 +1619,7 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
         Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y
-        .search("button component", 10, 0, false)
-        .unwrap();
+    let text = y.search("button component", 10, 0, false).unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-002] should have no 'not installed' note: {text}"
@@ -1963,14 +1954,17 @@ fn impact_json_with_dependents() {
         .unwrap();
     }
 
-    let json = y
-        .impact("src/hooks/useAuth.ts", None, 3, true)
-        .unwrap();
+    let json = y.impact("src/hooks/useAuth.ts", None, 3, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["target"], "src/hooks/useAuth.ts");
-    assert_eq!(parsed["in_index"], false, "useAuth.ts has no chunks in index");
+    assert_eq!(
+        parsed["in_index"], false,
+        "useAuth.ts has no chunks in index"
+    );
     assert_eq!(parsed["total"], 1);
-    let deps = parsed["dependents"].as_array().expect("should have dependents");
+    let deps = parsed["dependents"]
+        .as_array()
+        .expect("should have dependents");
     assert_eq!(deps[0]["file_path"], "src/A.tsx");
     assert_eq!(deps[0]["depth"], 1);
 }
@@ -1983,13 +1977,13 @@ fn impact_json_not_in_index() {
         seed_index(&conn);
     }
 
-    let json = y
-        .impact("src/nonexistent.tsx", None, 3, true)
-        .unwrap();
+    let json = y.impact("src/nonexistent.tsx", None, 3, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["in_index"], false);
     assert_eq!(parsed["total"], 0);
-    let deps = parsed["dependents"].as_array().expect("should have dependents");
+    let deps = parsed["dependents"]
+        .as_array()
+        .expect("should have dependents");
     assert!(deps.is_empty());
 }
 
@@ -2027,7 +2021,9 @@ fn impact_json_with_symbol_refs() {
         .impact("src/hooks/useAuth.ts:useAuth", None, 3, true)
         .unwrap();
     let parsed = parse_json(&json);
-    let refs = parsed["symbol_refs"].as_array().expect("should have symbol_refs");
+    let refs = parsed["symbol_refs"]
+        .as_array()
+        .expect("should have symbol_refs");
     assert!(
         refs.iter().any(|r| r == "src/A.tsx"),
         "should reference A.tsx: {json}"
