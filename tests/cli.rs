@@ -260,6 +260,60 @@ fn search_format_json() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn search_format_json_includes_index_and_degraded_notes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = setup_project();
+    let src = dir.path().join("src");
+    let bad_path = src.join("Unreadable.tsx");
+    let hf_home = dir.path().join("empty-hf-home");
+    std::fs::create_dir_all(&hf_home).unwrap();
+    std::fs::write(&bad_path, "export function Unreadable() { return <div />; }\n").unwrap();
+    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.execute(
+        "UPDATE index_meta SET value = datetime('now', '-2 minutes') WHERE key = 'last_indexed_at'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let output = yomu_cmd()
+        .args(["search", "button", "--format", "json"])
+        .current_dir(dir.path())
+        .env_remove("GEMINI_API_KEY")
+        .env("HF_HOME", &hf_home)
+        .output()
+        .unwrap();
+
+    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "json search failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    let notes = parsed["notes"].as_array().expect("should have notes array");
+    assert!(
+        notes.iter().any(|n| n == "1 files had errors during re-indexing"),
+        "should include re-index note: {stdout}"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "embedding model not installed; results from text search only"),
+        "should include degraded note: {stdout}"
+    );
+}
+
 #[test]
 fn index_dry_run() {
     let dir = tempfile::tempdir().unwrap();
