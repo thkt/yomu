@@ -110,6 +110,19 @@ cargo build --release
 
 ## コマンド
 
+### グローバルフラグ
+
+| フラグ   | 説明                              |
+| -------- | --------------------------------- |
+| `--json` | JSON 形式で出力（全コマンド共通） |
+
+`--json` はサブコマンドの前後どちらにも配置できます:
+
+```sh
+$ yomu --json status
+{"files":42,"chunks":187,"embedded_chunks":187,"embeddable_chunks":187,"embed_percentage":100,"references":156,"last_indexed":"2025-03-29 01:23:45"}
+```
+
 ### `yomu search <query>` — 概念で検索
 
 ランク付けされた結果をフルコンテキスト付きで返します。各結果には以下が含まれます。
@@ -150,7 +163,7 @@ Total: 55 dependent file(s)
 
 vercel/aiでの実際の出力です。1回の呼び出しで手動のインポート追跡を置き換えられます。
 
-オプション: `--symbol`（特定のエクスポートでフィルター）、`--depth`（デフォルト: 3、最大: 10）
+オプション: `--symbol`（任意、特定のエクスポートでフィルター）、`--depth`（デフォルト: 3、最大: 10）
 
 ### `yomu index` / `yomu rebuild` / `yomu status`
 

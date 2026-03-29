@@ -81,7 +81,7 @@ fn seed_index(conn: &storage::Db) {
 #[test]
 fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
-    let err = y.search("", 10, 0, OutputFormat::Text).unwrap_err();
+    let err = y.search("", 10, 0, false).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {}",
@@ -93,9 +93,7 @@ fn search_rejects_empty_query() {
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y
-        .search(&long_query, 10, 0, OutputFormat::Text)
-        .unwrap_err();
+    let err = y.search(&long_query, 10, 0, false).unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -106,7 +104,7 @@ fn search_rejects_long_query() {
 #[test]
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
-    let text = y.search("test query", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("test query", 10, 0, false).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -120,9 +118,7 @@ fn search_auto_indexes_empty_db() {
         Arc::new(rurico::embed::MockEmbedder),
     );
 
-    let text = y
-        .search("button component", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let text = y.search("button component", 10, 0, false).unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -159,9 +155,7 @@ fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y
-        .search("form component", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let text = y.search("form component", 10, 0, false).unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -238,9 +232,7 @@ fn search_degraded_empty_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y
-        .search("zzzznonexistent", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let text = y.search("zzzznonexistent", 10, 0, false).unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -278,9 +270,7 @@ fn search_degraded_with_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing
-        .search("Button", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let result = y_failing.search("Button", 10, 0, false).unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -598,7 +588,7 @@ fn format_results_grouped_shows_score_for_all() {
 #[test]
 fn index_works_without_api_key() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
-    let text = y.index().unwrap();
+    let text = y.index(false).unwrap();
     assert!(text.contains("complete"), "expected success: {text}");
 }
 
@@ -615,7 +605,7 @@ fn index_chunks_without_embedding() {
         ),
     ]);
 
-    let text = y.index().unwrap();
+    let text = y.index(false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
     assert!(
         text.contains("Embedding coverage:"),
@@ -633,7 +623,7 @@ fn index_chunks_without_embedding() {
 #[test]
 fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    y.index().unwrap();
+    y.index(false).unwrap();
 
     let chunks_before = {
         let c = y.conn.lock().unwrap();
@@ -647,7 +637,7 @@ fn rebuild_re_parses_all_files() {
     )
     .unwrap();
 
-    let text = y.rebuild().unwrap();
+    let text = y.rebuild(false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
 
     let chunks_after = {
@@ -663,7 +653,7 @@ fn rebuild_re_parses_all_files() {
 #[test]
 fn status_returns_empty_stats() {
     let (y, _dir) = test_yomu();
-    let text = y.status().unwrap();
+    let text = y.status(false).unwrap();
     assert!(text.contains("Files: 0"), "expected 0 files, got: {text}");
     assert!(text.contains("Chunks: 0"), "expected 0 chunks, got: {text}");
     assert!(
@@ -695,7 +685,7 @@ fn status_returns_counts_after_insert() {
     .unwrap();
 
     let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
-    let text = y.status().unwrap();
+    let text = y.status(false).unwrap();
     assert!(text.contains("Files: 1"), "expected 1 file, got: {text}");
     assert!(text.contains("Chunks: 1"), "expected 1 chunk, got: {text}");
 }
@@ -723,7 +713,7 @@ fn status_shows_embedded_total() {
     .unwrap();
 
     let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
-    let text = y.status().unwrap();
+    let text = y.status(false).unwrap();
     assert!(text.contains("0/1"), "expected 0/1 in status: {text}");
 }
 
@@ -757,7 +747,7 @@ fn impact_lists_dependents() {
         .unwrap();
     }
 
-    let text = y.impact("src/hooks/useAuth.ts", None, 3).unwrap();
+    let text = y.impact("src/hooks/useAuth.ts", None, 3, false).unwrap();
     assert!(text.contains("src/A.tsx"), "expected A.tsx: {text}");
     assert!(text.contains("src/C.tsx"), "expected C.tsx: {text}");
     assert!(
@@ -800,7 +790,9 @@ fn impact_filters_by_symbol() {
         .unwrap();
     }
 
-    let text = y.impact("src/hooks/useAuth.ts:useAuth", None, 3).unwrap();
+    let text = y
+        .impact("src/hooks/useAuth.ts:useAuth", None, 3, false)
+        .unwrap();
     assert!(
         text.contains("Direct symbol references"),
         "expected symbol section: {text}"
@@ -814,7 +806,7 @@ fn impact_filters_by_symbol() {
 #[test]
 fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("", None, 3).unwrap_err();
+    let err = y.impact("", None, 3, false).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {err}"
@@ -824,7 +816,7 @@ fn impact_rejects_empty_target() {
 #[test]
 fn impact_errors_on_empty_index() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("src/A.tsx", None, 3).unwrap_err();
+    let err = y.impact("src/A.tsx", None, 3, false).unwrap_err();
     assert!(
         err.to_string().contains("index is empty"),
         "expected empty index error, got: {err}"
@@ -838,7 +830,7 @@ fn impact_distinguishes_missing_file() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let text = y.impact("src/nonexistent.tsx", None, 3).unwrap();
+    let text = y.impact("src/nonexistent.tsx", None, 3, false).unwrap();
     assert!(
         text.contains("not found in index"),
         "expected file-not-found message: {text}"
@@ -852,7 +844,7 @@ fn impact_rejects_path_traversal() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("../etc/passwd", None, 3).unwrap_err();
+    let err = y.impact("../etc/passwd", None, 3, false).unwrap_err();
     assert!(
         err.to_string().contains(".."),
         "expected path traversal error, got: {err}"
@@ -866,7 +858,7 @@ fn impact_rejects_absolute_path() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("/etc/passwd", None, 3).unwrap_err();
+    let err = y.impact("/etc/passwd", None, 3, false).unwrap_err();
     assert!(
         err.to_string().contains("relative"),
         "expected rejection of absolute path, got: {err}"
@@ -904,7 +896,12 @@ fn impact_symbol_flag_overrides_colon_syntax() {
     }
 
     let text = y
-        .impact("src/hooks/useAuth.ts:useAuth", Some("AuthProvider"), 3)
+        .impact(
+            "src/hooks/useAuth.ts:useAuth",
+            Some("AuthProvider"),
+            3,
+            false,
+        )
         .unwrap();
     assert!(
         text.contains("src/B.tsx"),
@@ -934,7 +931,7 @@ fn integration_index_then_impact() {
     )
     .unwrap();
 
-    let text = y.impact("src/C.tsx", None, 3).unwrap();
+    let text = y.impact("src/C.tsx", None, 3, false).unwrap();
     assert!(
         text.contains("src/B.tsx"),
         "expected B.tsx as direct dependent: {text}"
@@ -1078,9 +1075,7 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y
-        .search("App component", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let result = y.search("App component", 10, 0, false).unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1123,7 +1118,7 @@ fn ensure_indexed_fully_embedded_skips_embed() {
         "should be fully embedded"
     );
 
-    let result = y.search("Button", 10, 0, OutputFormat::Text).unwrap();
+    let result = y.search("Button", 10, 0, false).unwrap();
     assert!(result.contains("Button"), "should find Button: {result}");
 }
 
@@ -1151,7 +1146,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing.search("Card", 10, 0, OutputFormat::Text).unwrap();
+    let result = y_failing.search("Card", 10, 0, false).unwrap();
     assert!(
         result.contains("Card"),
         "should find Card with existing embeddings: {result}"
@@ -1186,7 +1181,7 @@ fn search_without_embedder_skips_embed_attempt() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
     }
 
-    let text = y.search("card", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("card", 10, 0, false).unwrap();
     assert!(
         !text.contains("embedding failed"),
         "should not attempt embed when embedder unavailable: {text}"
@@ -1201,7 +1196,7 @@ fn search_json_format_returns_valid_json() {
     )]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("button", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].is_array(),
@@ -1228,9 +1223,7 @@ fn search_json_format_empty_results() {
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y
-        .search("zzzznonexistent", 10, 0, OutputFormat::Json)
-        .unwrap();
+    let json = y.search("zzzznonexistent", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].as_array().unwrap().is_empty(),
@@ -1253,7 +1246,7 @@ fn dry_run_index_does_not_write_to_db() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    let text = y.dry_run_index(false).unwrap();
+    let text = y.dry_run_index(false, false).unwrap();
     assert!(
         text.contains("2 files to process"),
         "should report files to process: {text}"
@@ -1278,7 +1271,7 @@ fn dry_run_index_shows_skip_for_unchanged() {
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.dry_run_index(false).unwrap();
+    let text = y.dry_run_index(false, false).unwrap();
     assert!(
         text.contains("0 files to process"),
         "all files should be skipped: {text}"
@@ -1297,7 +1290,7 @@ fn search_json_format_degraded_includes_flag() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("card", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(
         parsed["degraded"], true,
@@ -1306,25 +1299,6 @@ fn search_json_format_degraded_includes_flag() {
     assert!(
         !parsed["results"].as_array().unwrap().is_empty(),
         "should still have results: {json}"
-    );
-}
-
-#[test]
-fn search_json_format_parses_as_valid_json() {
-    let (y, _dir) = test_yomu_with_files(&[(
-        "src/Quote.tsx",
-        "export function Quote() { return <div>\"hello\\nworld\"</div>; }",
-    )]);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
-
-    let json = y.search("quote", 10, 0, OutputFormat::Json).unwrap();
-    let parsed = parse_json(&json);
-    assert!(parsed.is_object(), "should be object");
-    let arr = parsed["results"].as_array().unwrap();
-    assert!(!arr.is_empty(), "should have results");
-    assert!(
-        arr[0].get("file").is_some(),
-        "each result should have 'file' field"
     );
 }
 
@@ -1483,9 +1457,9 @@ fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
 
     let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
 
-    y.index().unwrap();
+    y.index(false).unwrap();
 
-    let result = y.search("handleSubmit", 10, 0, OutputFormat::Text).unwrap();
+    let result = y.search("handleSubmit", 10, 0, false).unwrap();
     assert!(
         result.contains("handleSubmit"),
         "[AC-5] search should find handleSubmit: {result}"
@@ -1504,9 +1478,9 @@ fn t_ac5_below_threshold_no_subchunks_in_index() {
   return <div><button onClick={handleClick}>{count}</button></div>;
 }"#;
     let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", fixture)]);
-    y.index().unwrap();
+    y.index(false).unwrap();
 
-    let stats = y.status().unwrap();
+    let stats = y.status(false).unwrap();
     assert!(
         !stats.contains("inner_fn"),
         "[AC-5] below-threshold component should not produce InnerFn: {stats}"
@@ -1626,7 +1600,7 @@ fn t001_search_with_not_installed_shows_note() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("button", 10, 0, false).unwrap();
     assert!(
         text.contains("not installed"),
         "[T-001] expected NotInstalled note in results: {text}"
@@ -1645,9 +1619,7 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
         Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y
-        .search("button component", 10, 0, OutputFormat::Text)
-        .unwrap();
+    let text = y.search("button component", 10, 0, false).unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-002] should have no 'not installed' note: {text}"
@@ -1671,7 +1643,7 @@ fn t003_search_with_backend_unavailable_shows_note() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("button", 10, 0, false).unwrap();
     assert!(
         text.contains("unavailable"),
         "[T-003] expected BackendUnavailable note in results: {text}"
@@ -1691,7 +1663,7 @@ fn t004_search_with_probe_failed_shows_note() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("button", 10, 0, false).unwrap();
     assert!(
         text.contains("unavailable"),
         "[T-004] expected ProbeFailed note in results: {text}"
@@ -1723,7 +1695,7 @@ fn t009_disabled_no_user_note_in_search() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    let text = y.search("button", 10, 0, false).unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-009] should not show 'not installed' when disabled: {text}"
@@ -1770,7 +1742,7 @@ fn json_notes_present_when_degraded() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("card", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1796,7 +1768,7 @@ fn json_notes_empty_via_search_with_ok_embedder() {
         Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let json = y.search("nav", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("nav", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], false, "should not be degraded: {json}");
     let notes = parsed["notes"]
@@ -1816,7 +1788,7 @@ fn json_notes_outcome_degraded_fallback() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("card", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1845,7 +1817,7 @@ fn json_notes_backend_unavailable() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
+    let json = y.search("button", 10, 0, true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1854,5 +1826,206 @@ fn json_notes_backend_unavailable() {
     assert_eq!(
         notes[0], "embedding model unavailable; results from text search only",
         "note should match BackendUnavailable variant: {json}"
+    );
+}
+
+// --- JSON output tests for non-search commands ---
+
+#[test]
+fn index_json_returns_valid_json() {
+    let (y, _dir) = test_yomu_with_files(&[
+        ("src/A.tsx", "export function A() {}"),
+        ("src/B.tsx", "export function B() {}"),
+    ]);
+    let json = y.index(true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files_processed"], 2);
+    assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
+    assert_eq!(parsed["files_skipped"], 0);
+    assert_eq!(parsed["files_errored"], 0);
+    assert!(
+        parsed.get("coverage").is_some(),
+        "should include coverage when not fully embedded: {json}"
+    );
+}
+
+#[test]
+fn rebuild_json_returns_valid_json() {
+    let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
+    y.index(false).unwrap();
+
+    let json = y.rebuild(true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files_processed"], 1);
+    assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
+    assert_eq!(parsed["files_errored"], 0);
+    assert!(
+        parsed.get("files_skipped").is_none(),
+        "rebuild JSON should not include files_skipped: {json}"
+    );
+}
+
+#[test]
+fn dry_run_index_json_returns_valid_json() {
+    let (y, _dir) = test_yomu_with_files(&[
+        ("src/A.tsx", "export function A() {}"),
+        ("src/B.tsx", "export function B() {}"),
+    ]);
+
+    let json = y.dry_run_index(false, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files_to_process"], 2);
+    assert_eq!(parsed["files_to_skip"], 0);
+    assert_eq!(parsed["total_files"], 2);
+    assert_eq!(parsed["files_errored"], 0);
+    assert_eq!(parsed["orphans_to_remove"], 0);
+}
+
+#[test]
+fn dry_run_index_json_shows_skip_for_unchanged() {
+    let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.dry_run_index(false, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files_to_process"], 0);
+    assert_eq!(parsed["files_to_skip"], 1);
+}
+
+#[test]
+fn status_json_empty_db() {
+    let (y, _dir) = test_yomu();
+    let json = y.status(true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["chunks"], 0);
+    assert_eq!(parsed["embedded_chunks"], 0);
+    assert_eq!(parsed["embed_percentage"], 0);
+    assert_eq!(parsed["references"], 0);
+    assert!(parsed["last_indexed"].is_null(), "should be null: {json}");
+}
+
+#[test]
+fn status_json_with_data() {
+    let (conn, _dir) = test_db();
+    let embedding = test_embedding();
+    storage::insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("A"),
+            content: "function A() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &embedding,
+        None,
+    )
+    .unwrap();
+
+    let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
+    let json = y.status(true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["files"], 1);
+    assert_eq!(parsed["chunks"], 1);
+    assert_eq!(parsed["embedded_chunks"], 1);
+    assert_eq!(parsed["embed_percentage"], 100);
+}
+
+#[test]
+fn impact_json_with_dependents() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+        storage::replace_file_references(
+            &conn,
+            "src/A.tsx",
+            &[storage::Reference {
+                source_file: "src/A.tsx".into(),
+                target_file: "src/hooks/useAuth.ts".into(),
+                symbol_name: Some("useAuth".into()),
+                ref_kind: storage::RefKind::Named,
+            }],
+        )
+        .unwrap();
+    }
+
+    let json = y.impact("src/hooks/useAuth.ts", None, 3, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["target"], "src/hooks/useAuth.ts");
+    assert_eq!(
+        parsed["in_index"], false,
+        "useAuth.ts has no chunks in index"
+    );
+    assert_eq!(parsed["total"], 1);
+    let deps = parsed["dependents"]
+        .as_array()
+        .expect("should have dependents");
+    assert_eq!(deps[0]["file_path"], "src/A.tsx");
+    assert_eq!(deps[0]["depth"], 1);
+}
+
+#[test]
+fn impact_json_not_in_index() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+    }
+
+    let json = y.impact("src/nonexistent.tsx", None, 3, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["in_index"], false);
+    assert_eq!(parsed["total"], 0);
+    let deps = parsed["dependents"]
+        .as_array()
+        .expect("should have dependents");
+    assert!(deps.is_empty());
+}
+
+#[test]
+fn impact_json_with_symbol_refs() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+        storage::replace_file_references(
+            &conn,
+            "src/A.tsx",
+            &[storage::Reference {
+                source_file: "src/A.tsx".into(),
+                target_file: "src/hooks/useAuth.ts".into(),
+                symbol_name: Some("useAuth".into()),
+                ref_kind: storage::RefKind::Named,
+            }],
+        )
+        .unwrap();
+        storage::replace_file_references(
+            &conn,
+            "src/C.tsx",
+            &[storage::Reference {
+                source_file: "src/C.tsx".into(),
+                target_file: "src/hooks/useAuth.ts".into(),
+                symbol_name: Some("useAuth".into()),
+                ref_kind: storage::RefKind::Named,
+            }],
+        )
+        .unwrap();
+    }
+
+    let json = y
+        .impact("src/hooks/useAuth.ts:useAuth", None, 3, true)
+        .unwrap();
+    let parsed = parse_json(&json);
+    let refs = parsed["symbol_refs"]
+        .as_array()
+        .expect("should have symbol_refs");
+    assert!(
+        refs.iter().any(|r| r == "src/A.tsx"),
+        "should reference A.tsx: {json}"
     );
 }

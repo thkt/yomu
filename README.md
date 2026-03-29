@@ -109,6 +109,19 @@ No manual indexing. `search` auto-indexes on first call.
 
 ## Commands
 
+### Global flags
+
+| Flag     | Description                   |
+| -------- | ----------------------------- |
+| `--json` | Output as JSON (all commands) |
+
+`--json` can appear before or after the subcommand:
+
+```sh
+$ yomu --json status
+{"files":42,"chunks":187,"embedded_chunks":187,"embeddable_chunks":187,"embed_percentage":100,"references":156,"last_indexed":"2025-03-29 01:23:45"}
+```
+
 ### `yomu search <query>` — Search by concept
 
 Returns ranked results with full context. Each result includes:
@@ -149,7 +162,7 @@ Total: 55 dependent file(s)
 
 Real output from vercel/ai. One call replaces manually tracing imports.
 
-Options: `--symbol` (filter to specific export), `--depth` (default: 3, max: 10)
+Options: `--symbol` (optional, filter to specific export), `--depth` (default: 3, max: 10)
 
 ### `yomu index` / `yomu rebuild` / `yomu status`
 

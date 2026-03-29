@@ -2,9 +2,7 @@ mod embedder;
 mod format;
 
 use std::collections::HashSet;
-use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rurico::embed::Embed;
@@ -18,8 +16,10 @@ use crate::storage;
 use embedder::DEFAULT_EMBED_BUDGET;
 use embedder::{DegradedReason, parse_embed_budget};
 use format::{
-    EnrichmentContext, format_coverage, format_coverage_note, format_impact_all,
-    format_impact_results, format_no_results_message, format_results_grouped, format_results_json,
+    EnrichmentContext, format_coverage, format_coverage_note, format_dry_run_json,
+    format_impact_all, format_impact_json, format_impact_results, format_index_json,
+    format_no_results_message, format_rebuild_json, format_results_grouped, format_results_json,
+    format_status_json,
 };
 
 const INDEX_FRESHNESS_SECS: u32 = 60;
@@ -28,32 +28,6 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OutputFormat {
-    Text,
-    Json,
-}
-
-impl FromStr for OutputFormat {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "text" => Ok(Self::Text),
-            "json" => Ok(Self::Json),
-            _ => Err(format!("unknown format '{s}', expected 'text' or 'json'")),
-        }
-    }
-}
-
-impl fmt::Display for OutputFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Text => write!(f, "text"),
-            Self::Json => write!(f, "json"),
-        }
-    }
-}
 
 #[derive(Debug, PartialEq)]
 enum IndexState {
@@ -143,7 +117,7 @@ impl Yomu {
         query: &str,
         limit: u32,
         offset: u32,
-        format: OutputFormat,
+        json: bool,
     ) -> Result<String, YomuError> {
         if query.is_empty() {
             return Err(YomuError::InvalidInput("query must not be empty".into()));
@@ -185,7 +159,7 @@ impl Yomu {
             notes.push("embedding model not loaded; results from text search only".into());
         }
 
-        if format == OutputFormat::Json {
+        if json {
             return Ok(format_results_json(
                 &outcome.results,
                 outcome.degraded,
@@ -210,10 +184,14 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn index(&self) -> Result<String, YomuError> {
+    pub fn index(&self, json: bool) -> Result<String, YomuError> {
         let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
-
         let stats = self.with_db(storage::get_stats)?;
+
+        if json {
+            return Ok(format_index_json(&chunk_result, &stats));
+        }
+
         let mut text = format!(
             "Indexing complete: {} files chunked, {} chunks created, {} files skipped (unchanged), {} errors",
             chunk_result.files_processed,
@@ -227,8 +205,13 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn dry_run_index(&self, force: bool) -> Result<String, YomuError> {
+    pub fn dry_run_index(&self, force: bool, json: bool) -> Result<String, YomuError> {
         let preview = indexer::dry_run_index(Arc::clone(&self.conn), &self.root, force)?;
+
+        if json {
+            return Ok(format_dry_run_json(&preview));
+        }
+
         let mut text = format!(
             "Dry run: {} files to process, {} files unchanged (skip), {} total files",
             preview.files_to_process, preview.files_to_skip, preview.total_files,
@@ -245,10 +228,14 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn rebuild(&self) -> Result<String, YomuError> {
+    pub fn rebuild(&self, json: bool) -> Result<String, YomuError> {
         let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
-
         let stats = self.with_db(storage::get_stats)?;
+
+        if json {
+            return Ok(format_rebuild_json(&chunk_result, &stats));
+        }
+
         let mut text = format!(
             "Rebuild complete: {} files chunked, {} chunks created, {} errors",
             chunk_result.files_processed, chunk_result.chunks_created, chunk_result.files_errored,
@@ -264,6 +251,7 @@ impl Yomu {
         target: &str,
         symbol: Option<&str>,
         depth: u32,
+        json: bool,
     ) -> Result<String, YomuError> {
         if target.is_empty() {
             return Err(YomuError::InvalidInput("target must not be empty".into()));
@@ -300,6 +288,15 @@ impl Yomu {
             Ok((exists, dependents, refs))
         })?;
 
+        if json {
+            return Ok(format_impact_json(
+                target,
+                file_in_index,
+                &dependents,
+                &symbol_refs,
+            ));
+        }
+
         if dependents.is_empty() {
             return Ok(if file_in_index {
                 format!("No dependents found for `{}`.", target)
@@ -320,12 +317,16 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn status(&self) -> Result<String, YomuError> {
+    pub fn status(&self, json: bool) -> Result<String, YomuError> {
         let (stats, ref_count) = self.with_db(|conn| {
             let stats = storage::get_stats(conn)?;
             let ref_count = storage::get_reference_count(conn)?;
             Ok((stats, ref_count))
         })?;
+
+        if json {
+            return Ok(format_status_json(&stats, ref_count));
+        }
 
         Ok(format!(
             "Index status:\n  Files: {}\n  Chunks: {}\n  Embedded: {}\n  References: {}\n  Last indexed: {}",

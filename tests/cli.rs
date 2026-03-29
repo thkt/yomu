@@ -219,7 +219,7 @@ fn search_stdin_query() {
 fn search_format_json() {
     let dir = setup_project();
     let output = yomu_cmd()
-        .args(["search", "button", "--format", "json"])
+        .args(["search", "button", "--json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -287,7 +287,7 @@ fn search_format_json_includes_index_and_degraded_notes() {
     drop(conn);
 
     let output = yomu_cmd()
-        .args(["search", "button", "--format", "json"])
+        .args(["search", "button", "--json"])
         .current_dir(dir.path())
         .env_remove("GEMINI_API_KEY")
         .env("HF_HOME", &hf_home)
@@ -519,6 +519,251 @@ fn shorthand_near_command_name_still_searches() {
         stdout.contains("results") || stdout.contains("src/"),
         "should show search output (not clap error): {stdout}"
     );
+}
+
+// --- Global --json flag tests ---
+
+#[test]
+fn json_flag_with_status() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "status"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    for field in ["files", "chunks", "embedded_chunks", "references"] {
+        assert!(
+            parsed.get(field).is_some(),
+            "status missing '{field}' field: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn json_flag_with_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("App.tsx"),
+        "export function App() { return <div/>; }\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    let output = yomu_cmd()
+        .args(["--json", "index"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json index failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["files_processed"], 1, "should process 1 file");
+    assert!(
+        parsed["chunks_created"].as_u64().unwrap() > 0,
+        "should create chunks"
+    );
+}
+
+#[test]
+fn json_flag_with_rebuild() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "rebuild"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json rebuild failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["files_processed"], 1);
+    assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn json_flag_with_search_shorthand() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "button"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json shorthand failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert!(
+        parsed["results"].is_array(),
+        "shorthand --json should produce search JSON: {stdout}"
+    );
+}
+
+#[test]
+fn json_flag_after_subcommand() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["status", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "status --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert!(
+        parsed.get("files").is_some(),
+        "should produce JSON: {stdout}"
+    );
+}
+
+#[test]
+fn deprecated_format_json_still_works() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["search", "button", "--format", "json"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "deprecated --format json failed: {stderr}"
+    );
+    let _: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert!(
+        stderr.contains("--format is deprecated"),
+        "should warn about deprecation: {stderr}"
+    );
+}
+
+#[test]
+fn json_flag_with_index_dry_run() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "index", "--dry-run"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json index --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    for field in [
+        "files_to_process",
+        "files_to_skip",
+        "total_files",
+        "files_errored",
+        "orphans_to_remove",
+    ] {
+        assert!(
+            parsed.get(field).is_some(),
+            "dry-run JSON missing '{field}': {stdout}"
+        );
+    }
+}
+
+#[test]
+fn json_flag_with_rebuild_dry_run() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "rebuild", "--dry-run"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json rebuild --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert!(
+        parsed["total_files"].as_u64().unwrap() > 0,
+        "should have files: {stdout}"
+    );
+}
+
+#[test]
+fn json_flag_with_impact() {
+    let dir = setup_project();
+    // Add a file that imports Button so impact has dependents
+    let src = dir.path().join("src");
+    std::fs::write(
+        src.join("App.tsx"),
+        "import { Button } from './Button';\nexport function App() { return <Button/>; }\n",
+    )
+    .unwrap();
+    // Re-index to pick up the new file + references
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "re-index failed");
+
+    let output = yomu_cmd()
+        .args(["--json", "impact", "src/Button.tsx"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json impact failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert_eq!(parsed["target"], "src/Button.tsx");
+    assert!(
+        parsed.get("in_index").is_some(),
+        "should have in_index: {stdout}"
+    );
+    assert!(
+        parsed["dependents"].is_array(),
+        "should have dependents: {stdout}"
+    );
+    assert!(parsed.get("total").is_some(), "should have total: {stdout}");
 }
 
 #[test]

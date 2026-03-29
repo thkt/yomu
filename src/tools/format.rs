@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::storage;
+use crate::{indexer, storage};
 
 pub(super) struct EnrichmentContext {
     pub imports: HashMap<String, String>,
@@ -25,15 +25,18 @@ pub(super) fn format_no_results_message(stats: &storage::IndexStatus) -> String 
     )
 }
 
-pub(super) fn format_coverage_note(stats: &storage::IndexStatus) -> Option<String> {
+fn coverage_if_partial(stats: &storage::IndexStatus) -> Option<String> {
     if stats.embedded_chunks < stats.embeddable_chunks {
-        Some(format!(
-            "\n\nEmbedding coverage: {}. Use search to incrementally embed more.",
-            format_coverage(stats)
-        ))
+        Some(format_coverage(stats))
     } else {
         None
     }
+}
+
+pub(super) fn format_coverage_note(stats: &storage::IndexStatus) -> Option<String> {
+    coverage_if_partial(stats).map(|cov| {
+        format!("\n\nEmbedding coverage: {cov}. Use search to incrementally embed more.")
+    })
 }
 
 pub(super) fn format_dependents_by_depth(
@@ -203,6 +206,132 @@ pub(super) fn format_results_json(
         tracing::error!(error = %e, "JSON serialization failed");
         r#"{"results":[],"degraded":true,"notes":[]}"#.to_string()
     })
+}
+
+#[derive(Serialize)]
+struct JsonMutationResult {
+    files_processed: u32,
+    chunks_created: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files_skipped: Option<u32>,
+    files_errored: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage: Option<String>,
+}
+
+fn format_mutation_json(
+    result: &indexer::IndexResult,
+    stats: &storage::IndexStatus,
+    include_skipped: bool,
+) -> String {
+    let resp = JsonMutationResult {
+        files_processed: result.files_processed,
+        chunks_created: result.chunks_created,
+        files_skipped: if include_skipped {
+            Some(result.files_skipped)
+        } else {
+            None
+        },
+        files_errored: result.files_errored,
+        coverage: coverage_if_partial(stats),
+    };
+    serde_json::to_string(&resp).unwrap()
+}
+
+pub(super) fn format_index_json(
+    result: &indexer::IndexResult,
+    stats: &storage::IndexStatus,
+) -> String {
+    format_mutation_json(result, stats, true)
+}
+
+pub(super) fn format_rebuild_json(
+    result: &indexer::IndexResult,
+    stats: &storage::IndexStatus,
+) -> String {
+    format_mutation_json(result, stats, false)
+}
+
+#[derive(Serialize)]
+struct JsonDryRunResult {
+    files_to_process: u32,
+    files_to_skip: u32,
+    total_files: u32,
+    files_errored: u32,
+    orphans_to_remove: u32,
+}
+
+pub(super) fn format_dry_run_json(result: &indexer::DryRunResult) -> String {
+    let resp = JsonDryRunResult {
+        files_to_process: result.files_to_process,
+        files_to_skip: result.files_to_skip,
+        total_files: result.total_files,
+        files_errored: result.files_errored,
+        orphans_to_remove: result.orphans_to_remove,
+    };
+    serde_json::to_string(&resp).unwrap()
+}
+
+#[derive(Serialize)]
+struct JsonStatus {
+    files: u32,
+    chunks: u32,
+    embedded_chunks: u32,
+    embeddable_chunks: u32,
+    embed_percentage: u32,
+    references: u32,
+    last_indexed: Option<String>,
+}
+
+pub(super) fn format_status_json(stats: &storage::IndexStatus, ref_count: u32) -> String {
+    let resp = JsonStatus {
+        files: stats.total_files,
+        chunks: stats.total_chunks,
+        embedded_chunks: stats.embedded_chunks,
+        embeddable_chunks: stats.embeddable_chunks,
+        embed_percentage: stats.embed_percentage(),
+        references: ref_count,
+        last_indexed: stats.last_indexed_at.clone(),
+    };
+    serde_json::to_string(&resp).unwrap()
+}
+
+#[derive(Serialize)]
+struct JsonDependent<'a> {
+    file_path: &'a str,
+    depth: u32,
+}
+
+#[derive(Serialize)]
+struct JsonImpactResult<'a> {
+    target: &'a str,
+    in_index: bool,
+    dependents: Vec<JsonDependent<'a>>,
+    symbol_refs: &'a [String],
+    total: usize,
+}
+
+pub(super) fn format_impact_json(
+    target: &str,
+    file_in_index: bool,
+    dependents: &[storage::Dependent],
+    symbol_refs: &[String],
+) -> String {
+    let deps: Vec<JsonDependent> = dependents
+        .iter()
+        .map(|d| JsonDependent {
+            file_path: &d.file_path,
+            depth: d.depth,
+        })
+        .collect();
+    let resp = JsonImpactResult {
+        target,
+        in_index: file_in_index,
+        dependents: deps,
+        symbol_refs,
+        total: dependents.len(),
+    };
+    serde_json::to_string(&resp).unwrap()
 }
 
 fn format_file_group(
