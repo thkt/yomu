@@ -1770,8 +1770,13 @@ fn json_notes_present_when_degraded() {
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
-    let notes = parsed["notes"].as_array().expect("notes should be an array");
-    assert!(!notes.is_empty(), "notes should contain degradation reason: {json}");
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        !notes.is_empty(),
+        "notes should contain degradation reason: {json}"
+    );
     assert_eq!(
         notes[0], "embedding model not installed; results from text search only",
         "note should match NotInstalled variant: {json}"
@@ -1780,10 +1785,8 @@ fn json_notes_present_when_degraded() {
 
 #[test]
 fn json_notes_empty_via_search_with_ok_embedder() {
-    let (conn, dir) = setup_test_files(&[(
-        "src/Nav.tsx",
-        "export function Nav() { return <nav/>; }",
-    )]);
+    let (conn, dir) =
+        setup_test_files(&[("src/Nav.tsx", "export function Nav() { return <nav/>; }")]);
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
@@ -1793,8 +1796,13 @@ fn json_notes_empty_via_search_with_ok_embedder() {
     let json = y.search("nav", 10, 0, OutputFormat::Json).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], false, "should not be degraded: {json}");
-    let notes = parsed["notes"].as_array().expect("notes should be an array");
-    assert!(notes.is_empty(), "notes should be empty with working embedder: {json}");
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        notes.is_empty(),
+        "notes should be empty with working embedder: {json}"
+    );
 }
 
 #[test]
@@ -1808,8 +1816,13 @@ fn json_notes_outcome_degraded_fallback() {
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
-    let notes = parsed["notes"].as_array().expect("notes should be an array");
-    assert!(!notes.is_empty(), "notes should contain fallback reason: {json}");
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        !notes.is_empty(),
+        "notes should contain fallback reason: {json}"
+    );
     assert_eq!(
         notes[0], "embedding model not loaded; results from text search only",
         "note should match outcome.degraded fallback: {json}"
@@ -1832,7 +1845,9 @@ fn json_notes_backend_unavailable() {
     let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
-    let notes = parsed["notes"].as_array().expect("notes should be an array");
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
     assert_eq!(
         notes[0], "embedding model unavailable; results from text search only",
         "note should match BackendUnavailable variant: {json}"

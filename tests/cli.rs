@@ -270,7 +270,11 @@ fn search_format_json_includes_index_and_degraded_notes() {
     let bad_path = src.join("Unreadable.tsx");
     let hf_home = dir.path().join("empty-hf-home");
     std::fs::create_dir_all(&hf_home).unwrap();
-    std::fs::write(&bad_path, "export function Unreadable() { return <div />; }\n").unwrap();
+    std::fs::write(
+        &bad_path,
+        "export function Unreadable() { return <div />; }\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
@@ -303,7 +307,9 @@ fn search_format_json_includes_index_and_degraded_notes() {
         .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
     let notes = parsed["notes"].as_array().expect("should have notes array");
     assert!(
-        notes.iter().any(|n| n == "1 files had errors during re-indexing"),
+        notes
+            .iter()
+            .any(|n| n == "1 files had errors during re-indexing"),
         "should include re-index note: {stdout}"
     );
     assert!(
