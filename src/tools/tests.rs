@@ -227,7 +227,8 @@ fn search_degraded_empty_results_shows_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
+            as Arc<dyn rurico::embed::Embed>),
     );
 
     let text = y
@@ -266,7 +267,8 @@ fn search_degraded_with_results_shows_note() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
+            as Arc<dyn rurico::embed::Embed>),
     );
 
     let result = y_failing
@@ -1138,7 +1140,8 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
+            as Arc<dyn rurico::embed::Embed>),
     );
 
     let result = y_failing.search("Card", 10, 0, OutputFormat::Text).unwrap();
@@ -1719,16 +1722,14 @@ fn t009_disabled_no_user_note_in_search() {
 
 #[test]
 fn t011_embed_json_degraded_flag_when_not_installed() {
-    let (conn, dir) = setup_test_files(&[(
-        "src/Card.tsx",
-        "export function Card() { return <div/>; }",
-    )]);
+    let (conn, dir) =
+        setup_test_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json)
-        .unwrap_or_else(|e| panic!("[T-011] invalid JSON: {e}\n{json}"));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json).unwrap_or_else(|e| panic!("[T-011] invalid JSON: {e}\n{json}"));
     assert_eq!(
         parsed["degraded"], true,
         "[T-011] should be degraded when embedder is NotInstalled: {json}"

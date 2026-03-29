@@ -510,7 +510,7 @@ impl Yomu {
 
     fn get_embedder(&self) -> &dyn Embed {
         fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
-            use rurico::embed::{model_paths_if_cached, ProbeStatus};
+            use rurico::embed::{ProbeStatus, model_paths_if_cached};
 
             fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
                 record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
@@ -555,7 +555,7 @@ impl Yomu {
     }
 
     fn embedding_available(&self) -> bool {
-        self.embedder.get().map_or(false, |r| r.is_ok())
+        self.embedder.get().is_some_and(|r| r.is_ok())
     }
 
     fn fetch_enrichment_context(
