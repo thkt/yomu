@@ -197,7 +197,14 @@ impl Yomu {
             Some(e) => Ok(e),
             None => Err(DegradedReason::NotInstalled),
         };
-        Self::for_test_raw(conn, root, state)
+        let embedder_lock = OnceLock::new();
+        let _ = embedder_lock.set(state);
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            embedder: embedder_lock,
+            root,
+            embed_budget: DEFAULT_EMBED_BUDGET,
+        }
     }
 
     #[cfg(test)]
