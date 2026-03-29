@@ -1600,46 +1600,8 @@ fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
     assert!(missing.is_none(), "nonexistent ID should return None");
 }
 
-// --- T-005: DegradedReason::NotInstalled → "not installed" note ---
-#[test]
-fn t005_not_installed_note() {
-    assert_eq!(
-        DegradedReason::NotInstalled.user_note(),
-        Some("embedding model not installed; results from text search only"),
-    );
-}
-
-// --- T-006: DegradedReason::BackendUnavailable → "unavailable" note ---
-#[test]
-fn t006_backend_unavailable_note() {
-    assert_eq!(
-        DegradedReason::BackendUnavailable.user_note(),
-        Some("embedding model unavailable; results from text search only"),
-    );
-}
-
-// --- T-007: DegradedReason::Disabled → no note ---
-#[test]
-fn t007_disabled_no_note() {
-    assert_eq!(DegradedReason::Disabled.user_note(), None);
-}
-
-// --- T-008: DegradedReason::ProbeFailed → "unavailable" note ---
-#[test]
-fn t008_probe_failed_note() {
-    assert_eq!(
-        DegradedReason::ProbeFailed.user_note(),
-        Some("embedding model unavailable; results from text search only"),
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Integration tests: DegradedReason propagation via for_test_raw
-// ---------------------------------------------------------------------------
-
 #[test]
 fn t001_search_with_not_installed_shows_note() {
-    // [T-001] FR-001: NotInstalled -> results contain NotInstalled note
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1656,7 +1618,6 @@ fn t001_search_with_not_installed_shows_note() {
 
 #[test]
 fn t002_search_with_ok_embedder_no_degraded_note() {
-    // [T-002] FR-002: Some(embedder) -> no degraded note
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1682,7 +1643,6 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
 
 #[test]
 fn t003_search_with_backend_unavailable_shows_note() {
-    // [T-003] FR-002: BackendUnavailable -> results contain note
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1703,7 +1663,6 @@ fn t003_search_with_backend_unavailable_shows_note() {
 
 #[test]
 fn t004_search_with_probe_failed_shows_note() {
-    // [T-004] FR-007: ProbeFailed -> note in results
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1722,7 +1681,6 @@ fn t004_search_with_probe_failed_shows_note() {
     );
 }
 
-// [T-004 supplement] FR-007: record_embedder_warning records reason + detail
 #[test]
 fn t004_record_embedder_warning_observation_seam() {
     RECORDED_WARNINGS.with(|w| w.borrow_mut().clear());
@@ -1737,7 +1695,6 @@ fn t004_record_embedder_warning_observation_seam() {
 
 #[test]
 fn t009_disabled_no_user_note_in_search() {
-    // [T-009] FR-008: YOMU_EMBED=0 -> Disabled suppresses user note (BR-004)
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1762,7 +1719,6 @@ fn t009_disabled_no_user_note_in_search() {
 
 #[test]
 fn t011_embed_json_degraded_flag_when_not_installed() {
-    // [T-011] FR-009: JSON output contains "degraded": true when embedder absent
     let (conn, dir) = setup_test_files(&[(
         "src/Card.tsx",
         "export function Card() { return <div/>; }",

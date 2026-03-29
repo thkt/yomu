@@ -139,9 +139,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Parse CLI args, treating unknown first arguments as implicit `search` queries.
-/// e.g. `yomu "auth hook"` becomes `yomu search "auth hook"`.
-/// Near-matches of known subcommands (edit distance ≤ 2) are not rewritten,
+/// Near-matches of known subcommands (edit distance ≤ 1) are not rewritten,
 /// so clap can show "did you mean?" suggestions for typos.
 fn parse_cli() -> Cli {
     let args: Vec<String> = std::env::args().collect();
@@ -161,8 +159,6 @@ fn parse_cli() -> Cli {
     }
 }
 
-/// Returns true if `input` is within Damerau-Levenshtein distance 1 of any known subcommand.
-/// Uses OSA (Optimal String Alignment) distance which counts adjacent transpositions as 1 edit.
 fn is_near_subcommand(input: &str, known: &[&str]) -> bool {
     known.iter().any(|cmd| osa_distance(input, cmd) <= 1)
 }

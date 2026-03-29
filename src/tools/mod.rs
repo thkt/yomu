@@ -505,6 +505,11 @@ impl Yomu {
         fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
             use rurico::embed::{model_paths_if_cached, ProbeStatus};
 
+            fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
+                record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
+                DegradedReason::ProbeFailed
+            }
+
             if std::env::var("YOMU_EMBED").as_deref() == Ok("0") {
                 tracing::info!("Embedding disabled via YOMU_EMBED=0");
                 return Err(DegradedReason::Disabled);
@@ -512,10 +517,7 @@ impl Yomu {
             let paths = match model_paths_if_cached() {
                 Ok(Some(p)) => p,
                 Ok(None) => return Err(DegradedReason::NotInstalled),
-                Err(e) => {
-                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
-                    return Err(DegradedReason::ProbeFailed);
-                }
+                Err(e) => return Err(probe_failed(&e)),
             };
             match Embedder::probe(&paths) {
                 Ok(ProbeStatus::Available) => {}
@@ -526,29 +528,18 @@ impl Yomu {
                     );
                     return Err(DegradedReason::BackendUnavailable);
                 }
-                Err(e) => {
-                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
-                    return Err(DegradedReason::ProbeFailed);
-                }
+                Err(e) => return Err(probe_failed(&e)),
             }
-            let embedder = match Embedder::new(&paths) {
-                Ok(e) => e,
-                Err(e) => {
-                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
-                    return Err(DegradedReason::ProbeFailed);
-                }
-            };
+            let embedder = Embedder::new(&paths).map_err(|e| probe_failed(&e))?;
             tracing::info!("Embedding model loaded successfully");
             Ok(Arc::new(embedder) as Arc<dyn Embed>)
         }
 
         static NOOP: NoOpEmbedder = NoOpEmbedder;
-        if self.embedder.get().is_none() {
-            let _ = self.embedder.set(try_load_embedder());
-        }
         self.embedder
-            .get()
-            .and_then(|r| r.as_deref().ok())
+            .get_or_init(try_load_embedder)
+            .as_deref()
+            .ok()
             .unwrap_or(&NOOP)
     }
 

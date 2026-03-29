@@ -78,10 +78,9 @@ fn impact_depth_too_large() {
 
 #[test]
 fn search_default_limit_accepted() {
-    // Default limit=10 should be valid (command may fail for other reasons like no project root)
+    // May fail for other reasons (e.g. no project root), but not argument validation
     let output = yomu_cmd().args(["search", "test"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // Should NOT fail due to argument validation
     assert!(
         !stderr.contains("invalid value"),
         "default limit should be accepted: {stderr}"
@@ -458,12 +457,8 @@ fn shorthand_near_command_name_still_searches() {
     );
 }
 
-// [T-010] FR-004: --probe-embed flag no longer exists after migration.
-// The old probe_embed_reaches_probe_path_without_subcommand test is replaced
-// by this test that verifies the flag is rejected as unrecognized.
 #[test]
 fn t010_probe_embed_flag_rejected() {
-    // [T-010] FR-004: --probe-embed must not be recognized after migration
     let output = yomu_cmd()
         .args(["--probe-embed", "/nonexistent/model/dir"])
         .output()
