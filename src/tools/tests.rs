@@ -1,4 +1,7 @@
 use super::*;
+use super::embedder::{
+    get_recorded_warnings, parse_budget_value, record_embedder_warning, RECORDED_WARNINGS,
+};
 use std::collections::HashMap;
 
 use rurico::embed::FailingEmbedder;
