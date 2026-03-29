@@ -3,6 +3,10 @@ use std::collections::HashMap;
 
 use rurico::embed::FailingEmbedder;
 
+fn parse_json(json: &str) -> serde_json::Value {
+    serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
+}
+
 fn test_embedding() -> Vec<f32> {
     let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
     emb[0] = 1.0;
@@ -1195,7 +1199,7 @@ fn search_json_format_returns_valid_json() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let parsed = parse_json(&json);
     assert!(
         parsed["results"].is_array(),
         "should have results array: {json}"
@@ -1203,6 +1207,10 @@ fn search_json_format_returns_valid_json() {
     assert!(
         parsed.get("degraded").is_some(),
         "should have degraded field: {json}"
+    );
+    assert!(
+        parsed.get("notes").is_some(),
+        "should have notes field: {json}"
     );
     assert!(
         json.contains("\"file\":\"src/Button.tsx\""),
@@ -1220,7 +1228,7 @@ fn search_json_format_empty_results() {
     let json = y
         .search("zzzznonexistent", 10, 0, OutputFormat::Json)
         .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let parsed = parse_json(&json);
     assert!(
         parsed["results"].as_array().unwrap().is_empty(),
         "empty results: {json}"
@@ -1228,6 +1236,10 @@ fn search_json_format_empty_results() {
     assert!(
         parsed.get("degraded").is_some(),
         "should have degraded field: {json}"
+    );
+    assert!(
+        parsed.get("notes").is_some(),
+        "should have notes field: {json}"
     );
 }
 
@@ -1283,7 +1295,7 @@ fn search_json_format_degraded_includes_flag() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let parsed = parse_json(&json);
     assert_eq!(
         parsed["degraded"], true,
         "should be degraded when embedder fails: {json}"
@@ -1303,8 +1315,7 @@ fn search_json_format_parses_as_valid_json() {
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
     let json = y.search("quote", 10, 0, OutputFormat::Json).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json)
-        .unwrap_or_else(|e| panic!("should parse as valid JSON: {e}\n{json}"));
+    let parsed = parse_json(&json);
     assert!(parsed.is_object(), "should be object");
     let arr = parsed["results"].as_array().unwrap();
     assert!(!arr.is_empty(), "should have results");
@@ -1424,9 +1435,8 @@ fn t015_json_output_includes_parent_chunk_id() {
         },
     ];
 
-    let json = format_results_json(&results, false);
-    let parsed: serde_json::Value =
-        serde_json::from_str(&json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"));
+    let json = format_results_json(&results, false, vec![]);
+    let parsed = parse_json(&json);
 
     let items = parsed["results"].as_array().unwrap();
     assert_eq!(items.len(), 2, "should have 2 results");
@@ -1450,16 +1460,17 @@ fn t015_json_output_includes_parent_chunk_id() {
 
 #[test]
 fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
-    let mut lines = Vec::new();
-    lines.push("export function UserForm() {".to_string());
-    lines.push("  const [name, setName] = useState('');".to_string());
-    lines.push("  const handleSubmit = () => {".to_string());
-    lines.push("    submitFormData(name);".to_string());
-    lines.push("    resetForm();".to_string());
-    lines.push("  };".to_string());
-    lines.push("  const handleCancel = () => {".to_string());
-    lines.push("    resetForm();".to_string());
-    lines.push("  };".to_string());
+    let mut lines = vec![
+        "export function UserForm() {".to_string(),
+        "  const [name, setName] = useState('');".to_string(),
+        "  const handleSubmit = () => {".to_string(),
+        "    submitFormData(name);".to_string(),
+        "    resetForm();".to_string(),
+        "  };".to_string(),
+        "  const handleCancel = () => {".to_string(),
+        "    resetForm();".to_string(),
+        "  };".to_string(),
+    ];
     for i in 0..48 {
         lines.push(format!("  const pad{i} = {i};"));
     }
@@ -1489,7 +1500,7 @@ fn t_ac5_below_threshold_no_subchunks_in_index() {
   const handleClick = () => { setCount(count + 1); };
   return <div><button onClick={handleClick}>{count}</button></div>;
 }"#;
-    let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", &fixture)]);
+    let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", fixture)]);
     y.index().unwrap();
 
     let stats = y.status().unwrap();
@@ -1721,22 +1732,6 @@ fn t009_disabled_no_user_note_in_search() {
 }
 
 #[test]
-fn t011_embed_json_degraded_flag_when_not_installed() {
-    let (conn, dir) =
-        setup_test_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
-
-    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
-    let parsed: serde_json::Value =
-        serde_json::from_str(&json).unwrap_or_else(|e| panic!("[T-011] invalid JSON: {e}\n{json}"));
-    assert_eq!(
-        parsed["degraded"], true,
-        "[T-011] should be degraded when embedder is NotInstalled: {json}"
-    );
-}
-
-#[test]
 fn user_note_exact_values_for_all_variants() {
     assert_eq!(DegradedReason::Disabled.user_note(), None);
     assert_eq!(
@@ -1763,4 +1758,98 @@ fn embed_disabled_yields_degraded_disabled() {
     let _ = y.get_embedder();
 
     assert_eq!(y.degraded_reason(), Some(&DegradedReason::Disabled));
+}
+
+#[test]
+fn json_notes_present_when_degraded() {
+    let (conn, dir) =
+        setup_test_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["degraded"], true);
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        !notes.is_empty(),
+        "notes should contain degradation reason: {json}"
+    );
+    assert_eq!(
+        notes[0], "embedding model not installed; results from text search only",
+        "note should match NotInstalled variant: {json}"
+    );
+}
+
+#[test]
+fn json_notes_empty_via_search_with_ok_embedder() {
+    let (conn, dir) =
+        setup_test_files(&[("src/Nav.tsx", "export function Nav() { return <nav/>; }")]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
+    );
+
+    let json = y.search("nav", 10, 0, OutputFormat::Json).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["degraded"], false, "should not be degraded: {json}");
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        notes.is_empty(),
+        "notes should be empty with working embedder: {json}"
+    );
+}
+
+#[test]
+fn json_notes_outcome_degraded_fallback() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/Card.tsx", "export function Card() { return <div/>; }")],
+        Arc::new(FailingEmbedder::all_fail("inference error")),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["degraded"], true);
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert!(
+        !notes.is_empty(),
+        "notes should contain fallback reason: {json}"
+    );
+    assert_eq!(
+        notes[0], "embedding model not loaded; results from text search only",
+        "note should match outcome.degraded fallback: {json}"
+    );
+}
+
+#[test]
+fn json_notes_backend_unavailable() {
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::BackendUnavailable),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("button", 10, 0, OutputFormat::Json).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(parsed["degraded"], true);
+    let notes = parsed["notes"]
+        .as_array()
+        .expect("notes should be an array");
+    assert_eq!(
+        notes[0], "embedding model unavailable; results from text search only",
+        "note should match BackendUnavailable variant: {json}"
+    );
 }
