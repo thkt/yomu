@@ -192,13 +192,22 @@ impl Yomu {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_test(
+    pub fn for_test(conn: storage::Db, root: PathBuf, embedder: Option<Arc<dyn Embed>>) -> Self {
+        let state = match embedder {
+            Some(e) => Ok(e),
+            None => Err(DegradedReason::NotInstalled),
+        };
+        Self::for_test_raw(conn, root, state)
+    }
+
+    #[cfg(test)]
+    fn for_test_raw(
         conn: storage::Db,
         root: PathBuf,
-        embedder: Result<Arc<dyn Embed>, DegradedReason>,
+        state: Result<Arc<dyn Embed>, DegradedReason>,
     ) -> Self {
         let embedder_lock = OnceLock::new();
-        let _ = embedder_lock.set(embedder);
+        let _ = embedder_lock.set(state);
         Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
