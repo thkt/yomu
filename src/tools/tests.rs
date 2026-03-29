@@ -1735,3 +1735,32 @@ fn t011_embed_json_degraded_flag_when_not_installed() {
         "[T-011] should be degraded when embedder is NotInstalled: {json}"
     );
 }
+
+#[test]
+fn user_note_exact_values_for_all_variants() {
+    assert_eq!(DegradedReason::Disabled.user_note(), None);
+    assert_eq!(
+        DegradedReason::NotInstalled.user_note(),
+        Some("embedding model not installed; results from text search only")
+    );
+    assert_eq!(
+        DegradedReason::BackendUnavailable.user_note(),
+        Some("embedding model unavailable; results from text search only")
+    );
+    assert_eq!(
+        DegradedReason::ProbeFailed.user_note(),
+        Some("embedding model unavailable; results from text search only")
+    );
+}
+
+#[test]
+fn embed_disabled_yields_degraded_disabled() {
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test_embed_disabled(conn, dir.path().to_path_buf());
+    let _ = y.get_embedder();
+
+    assert_eq!(y.degraded_reason(), Some(&DegradedReason::Disabled));
+}

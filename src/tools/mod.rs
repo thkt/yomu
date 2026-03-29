@@ -169,6 +169,7 @@ pub struct Yomu {
     embedder: OnceLock<Result<Arc<dyn Embed>, DegradedReason>>,
     root: PathBuf,
     embed_budget: u32,
+    embed_disabled: bool,
 }
 
 impl Yomu {
@@ -183,11 +184,13 @@ impl Yomu {
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
+        let embed_disabled = std::env::var("YOMU_EMBED").as_deref() == Ok("0");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
             embed_budget: parse_embed_budget(),
+            embed_disabled,
         })
     }
 
@@ -204,6 +207,7 @@ impl Yomu {
             embedder: embedder_lock,
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
+            embed_disabled: false,
         }
     }
 
@@ -220,6 +224,20 @@ impl Yomu {
             embedder: embedder_lock,
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
+            embed_disabled: false,
+        }
+    }
+
+    /// Create a Yomu with `embed_disabled` and an empty OnceLock so that
+    /// `get_embedder()` exercises the real `try_load_embedder` path.
+    #[cfg(test)]
+    fn for_test_embed_disabled(conn: storage::Db, root: PathBuf) -> Self {
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            embedder: OnceLock::new(),
+            root,
+            embed_budget: DEFAULT_EMBED_BUDGET,
+            embed_disabled: true,
         }
     }
 
@@ -509,7 +527,7 @@ impl Yomu {
     }
 
     fn get_embedder(&self) -> &dyn Embed {
-        fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
+        fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
             use rurico::embed::{ProbeStatus, model_paths_if_cached};
 
             fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
@@ -517,7 +535,7 @@ impl Yomu {
                 DegradedReason::ProbeFailed
             }
 
-            if std::env::var("YOMU_EMBED").as_deref() == Ok("0") {
+            if disabled {
                 tracing::info!("Embedding disabled via YOMU_EMBED=0");
                 return Err(DegradedReason::Disabled);
             }
@@ -542,9 +560,10 @@ impl Yomu {
             Ok(Arc::new(embedder) as Arc<dyn Embed>)
         }
 
+        let disabled = self.embed_disabled;
         static NOOP: NoOpEmbedder = NoOpEmbedder;
         self.embedder
-            .get_or_init(try_load_embedder)
+            .get_or_init(|| try_load_embedder(disabled))
             .as_deref()
             .ok()
             .unwrap_or(&NOOP)
