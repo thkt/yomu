@@ -18,7 +18,7 @@ fn test_db() -> (storage::Db, tempfile::TempDir) {
 
 fn test_yomu() -> (Yomu, tempfile::TempDir) {
     let (conn, dir) = test_db();
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Err(DegradedReason::NotInstalled));
     (y, dir)
 }
 
@@ -38,7 +38,7 @@ fn setup_test_files(files: &[(&str, &str)]) -> (storage::Db, tempfile::TempDir) 
 
 fn test_yomu_with_files(files: &[(&str, &str)]) -> (Yomu, tempfile::TempDir) {
     let (conn, dir) = setup_test_files(files);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Err(DegradedReason::NotInstalled));
     (y, dir)
 }
 
@@ -47,7 +47,7 @@ fn test_yomu_with_files_and_embedder(
     embedder: Arc<dyn rurico::embed::Embed>,
 ) -> (Yomu, tempfile::TempDir) {
     let (conn, dir) = setup_test_files(files);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Ok(embedder));
     (y, dir)
 }
 
@@ -227,7 +227,7 @@ fn search_degraded_empty_results_shows_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
+        Ok(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
     );
 
     let text = y
@@ -266,7 +266,7 @@ fn search_degraded_with_results_shows_note() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
+        Ok(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
     );
 
     let result = y_failing
@@ -685,7 +685,7 @@ fn status_returns_counts_after_insert() {
     )
     .unwrap();
 
-    let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
+    let y = Yomu::for_test(conn, PathBuf::from("/tmp"), Err(DegradedReason::NotInstalled));
     let text = y.status().unwrap();
     assert!(text.contains("Files: 1"), "expected 1 file, got: {text}");
     assert!(text.contains("Chunks: 1"), "expected 1 chunk, got: {text}");
@@ -713,7 +713,7 @@ fn status_shows_embedded_total() {
     )
     .unwrap();
 
-    let y = Yomu::for_test(conn, PathBuf::from("/tmp"), None);
+    let y = Yomu::for_test(conn, PathBuf::from("/tmp"), Err(DegradedReason::NotInstalled));
     let text = y.status().unwrap();
     assert!(text.contains("0/1"), "expected 0/1 in status: {text}");
 }
@@ -1138,7 +1138,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))),
+        Ok(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn rurico::embed::Embed>),
     );
 
     let result = y_failing.search("Card", 10, 0, OutputFormat::Text).unwrap();
@@ -1598,4 +1598,192 @@ fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
 
     let missing = storage::get_chunk_by_id(&conn, 99999).unwrap();
     assert!(missing.is_none(), "nonexistent ID should return None");
+}
+
+// --- T-005: DegradedReason::NotInstalled → "not installed" note ---
+#[test]
+fn t005_not_installed_note() {
+    assert_eq!(
+        DegradedReason::NotInstalled.user_note(),
+        Some("embedding model not installed; results from text search only"),
+    );
+}
+
+// --- T-006: DegradedReason::BackendUnavailable → "unavailable" note ---
+#[test]
+fn t006_backend_unavailable_note() {
+    assert_eq!(
+        DegradedReason::BackendUnavailable.user_note(),
+        Some("embedding model unavailable; results from text search only"),
+    );
+}
+
+// --- T-007: DegradedReason::Disabled → no note ---
+#[test]
+fn t007_disabled_no_note() {
+    assert_eq!(DegradedReason::Disabled.user_note(), None);
+}
+
+// --- T-008: DegradedReason::ProbeFailed → "unavailable" note ---
+#[test]
+fn t008_probe_failed_note() {
+    assert_eq!(
+        DegradedReason::ProbeFailed.user_note(),
+        Some("embedding model unavailable; results from text search only"),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: for_test with Result<Arc<dyn Embed>, DegradedReason>
+// Red phase: for_test currently takes Option<Arc<dyn Embed>>, not Result.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn t001_search_with_not_installed_shows_note() {
+    // [T-001] FR-001: Err(NotInstalled) -> results contain NotInstalled note
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    assert!(
+        text.contains("not installed"),
+        "[T-001] expected NotInstalled note in results: {text}"
+    );
+}
+
+#[test]
+fn t002_search_with_ok_embedder_no_degraded_note() {
+    // [T-002] FR-002: Ok(embedder) -> no degraded note, results include embeddings
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Ok(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
+    );
+
+    let text = y
+        .search("button component", 10, 0, OutputFormat::Text)
+        .unwrap();
+    assert!(
+        !text.contains("not installed"),
+        "[T-002] should have no 'not installed' note: {text}"
+    );
+    assert!(
+        !text.contains("unavailable"),
+        "[T-002] should have no 'unavailable' note: {text}"
+    );
+}
+
+#[test]
+fn t003_search_with_backend_unavailable_shows_note() {
+    // [T-003] FR-002: Err(BackendUnavailable) -> results contain BackendUnavailable note
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::BackendUnavailable),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    assert!(
+        text.contains("unavailable"),
+        "[T-003] expected BackendUnavailable note in results: {text}"
+    );
+}
+
+#[test]
+fn t004_search_with_probe_failed_shows_note() {
+    // [T-004] FR-007: Err(ProbeFailed) -> note in results
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::ProbeFailed),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    assert!(
+        text.contains("unavailable"),
+        "[T-004] expected ProbeFailed note in results: {text}"
+    );
+}
+
+// [T-004 supplement] FR-007: record_embedder_warning records reason + detail
+#[test]
+fn t004_record_embedder_warning_observation_seam() {
+    RECORDED_WARNINGS.with(|w| w.borrow_mut().clear());
+
+    record_embedder_warning(DegradedReason::ProbeFailed, "model load failed");
+
+    let warnings = get_recorded_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].0, DegradedReason::ProbeFailed);
+    assert_eq!(warnings[0].1, "model load failed");
+}
+
+#[test]
+fn t009_disabled_no_user_note_in_search() {
+    // [T-009] FR-008: YOMU_EMBED=0 -> Disabled suppresses user note (BR-004)
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::Disabled),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.search("button", 10, 0, OutputFormat::Text).unwrap();
+    assert!(
+        !text.contains("not installed"),
+        "[T-009] should not show 'not installed' when disabled: {text}"
+    );
+    assert!(
+        !text.contains("unavailable"),
+        "[T-009] should not show 'unavailable' when disabled: {text}"
+    );
+}
+
+#[test]
+fn t011_embed_json_degraded_flag_when_not_installed() {
+    // [T-011] FR-009: JSON output contains "degraded": true when embedder absent
+    let (conn, dir) = setup_test_files(&[(
+        "src/Card.tsx",
+        "export function Card() { return <div/>; }",
+    )]);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.search("card", 10, 0, OutputFormat::Json).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("[T-011] invalid JSON: {e}\n{json}"));
+    assert_eq!(
+        parsed["degraded"], true,
+        "[T-011] should be degraded when embedder is NotInstalled: {json}"
+    );
 }

@@ -2,12 +2,11 @@ mod format;
 
 use std::collections::HashSet;
 use std::fmt;
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rurico::embed::{Embed, EmbedError, Embedder, ModelPaths};
+use rurico::embed::{Embed, EmbedError, Embedder};
 
 use crate::config;
 use crate::indexer;
@@ -99,69 +98,43 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
     }
 }
 
-const PROBE_EXIT_UNAVAILABLE: u8 = 10;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DegradedReason {
+    Disabled,
+    NotInstalled,
+    BackendUnavailable,
+    ProbeFailed,
+}
 
-/// Entry point for `--probe-embed <model_dir>`. Tries `Embedder::new()` only.
-/// Exit 0 = loadable, exit 10 = Rust-level failure, signal/abort = FFI crash.
-pub fn probe_embedder(model_dir: &str) -> ExitCode {
-    let dir = Path::new(model_dir);
-    let paths = ModelPaths {
-        model: dir.join("model.safetensors"),
-        config: dir.join("config.json"),
-        tokenizer: dir.join("tokenizer.json"),
-    };
-    if paths.validate().is_err() {
-        return ExitCode::from(PROBE_EXIT_UNAVAILABLE);
-    }
-    match Embedder::new(&paths) {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(_) => ExitCode::from(PROBE_EXIT_UNAVAILABLE),
+impl DegradedReason {
+    pub(crate) fn user_note(&self) -> Option<&'static str> {
+        match self {
+            Self::Disabled => None,
+            Self::NotInstalled => {
+                Some("embedding model not installed; results from text search only")
+            }
+            Self::BackendUnavailable | Self::ProbeFailed => {
+                Some("embedding model unavailable; results from text search only")
+            }
+        }
     }
 }
 
-const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+fn record_embedder_warning(reason: DegradedReason, detail: &str) {
+    tracing::warn!(reason = ?reason, detail, "Embedder unavailable, using text search only");
+    #[cfg(test)]
+    RECORDED_WARNINGS.with(|w| w.borrow_mut().push((reason, detail.to_string())));
+}
 
-fn run_embed_probe(model_dir: &Path) -> bool {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "current_exe() failed in embed probe");
-            return false;
-        }
-    };
-    let mut child = match std::process::Command::new(exe)
-        .arg("--probe-embed")
-        .arg(model_dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to spawn embed probe");
-            return false;
-        }
-    };
+#[cfg(test)]
+thread_local! {
+    static RECORDED_WARNINGS: std::cell::RefCell<Vec<(DegradedReason, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) => {
-                if start.elapsed() >= PROBE_TIMEOUT {
-                    tracing::warn!("Embed probe timed out after {}s", PROBE_TIMEOUT.as_secs());
-                    let _ = child.kill();
-                    return false;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "try_wait failed in embed probe");
-                return false;
-            }
-        }
-    }
+#[cfg(test)]
+pub(crate) fn get_recorded_warnings() -> Vec<(DegradedReason, String)> {
+    RECORDED_WARNINGS.with(|w| w.borrow().clone())
 }
 
 struct NoOpEmbedder;
@@ -193,7 +166,7 @@ pub enum YomuError {
 
 pub struct Yomu {
     conn: Arc<Mutex<storage::Db>>,
-    embedder: OnceLock<Option<Arc<dyn Embed>>>,
+    embedder: OnceLock<Result<Arc<dyn Embed>, DegradedReason>>,
     root: PathBuf,
     embed_budget: u32,
 }
@@ -219,7 +192,11 @@ impl Yomu {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_test(conn: storage::Db, root: PathBuf, embedder: Option<Arc<dyn Embed>>) -> Self {
+    pub fn for_test(
+        conn: storage::Db,
+        root: PathBuf,
+        embedder: Result<Arc<dyn Embed>, DegradedReason>,
+    ) -> Self {
         let embedder_lock = OnceLock::new();
         let _ = embedder_lock.set(embedder);
         Self {
@@ -269,7 +246,11 @@ impl Yomu {
         if let Some(msg) = index_notes {
             notes.push(msg);
         }
-        if outcome.degraded {
+        if let Some(reason) = self.degraded_reason() {
+            if let Some(note) = reason.user_note() {
+                notes.push(note.to_string());
+            }
+        } else if outcome.degraded {
             notes.push("embedding model not loaded, results from text search only".into());
         }
 
@@ -512,32 +493,44 @@ impl Yomu {
     }
 
     fn get_embedder(&self) -> &dyn Embed {
-        fn try_load_embedder() -> Option<Arc<dyn Embed>> {
+        fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
+            use rurico::embed::{model_paths_if_cached, ProbeStatus};
+
             if std::env::var("YOMU_EMBED").as_deref() == Ok("0") {
                 tracing::info!("Embedding disabled via YOMU_EMBED=0");
-                return None;
+                return Err(DegradedReason::Disabled);
             }
-            tracing::info!("Downloading embedding model (first run may take a few minutes)");
-            let paths = match rurico::embed::download_model() {
-                Ok(p) => p,
+            let paths = match model_paths_if_cached() {
+                Ok(Some(p)) => p,
+                Ok(None) => return Err(DegradedReason::NotInstalled),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Model download failed, using text search only");
-                    return None;
+                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
+                    return Err(DegradedReason::ProbeFailed);
                 }
             };
-            let model_dir = paths.model.parent()?;
-            if !run_embed_probe(model_dir) {
-                tracing::warn!("Embed probe failed (MLX unavailable), using text search only");
-                return None;
+            match Embedder::probe(&paths) {
+                Ok(ProbeStatus::Available) => {}
+                Ok(ProbeStatus::BackendUnavailable) => {
+                    record_embedder_warning(
+                        DegradedReason::BackendUnavailable,
+                        "MLX backend unavailable",
+                    );
+                    return Err(DegradedReason::BackendUnavailable);
+                }
+                Err(e) => {
+                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
+                    return Err(DegradedReason::ProbeFailed);
+                }
             }
-            let embedder = Embedder::new(&paths)
-                .map_err(|e| {
-                    tracing::warn!(error = %e, "Embedder unavailable, using text search only");
-                    e
-                })
-                .ok()?;
+            let embedder = match Embedder::new(&paths) {
+                Ok(e) => e,
+                Err(e) => {
+                    record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
+                    return Err(DegradedReason::ProbeFailed);
+                }
+            };
             tracing::info!("Embedding model loaded successfully");
-            Some(Arc::new(embedder) as Arc<dyn Embed>)
+            Ok(Arc::new(embedder) as Arc<dyn Embed>)
         }
 
         static NOOP: NoOpEmbedder = NoOpEmbedder;
@@ -546,13 +539,17 @@ impl Yomu {
         }
         self.embedder
             .get()
-            .and_then(|o| o.as_deref())
+            .and_then(|r| r.as_deref().ok())
             .unwrap_or(&NOOP)
+    }
+
+    fn degraded_reason(&self) -> Option<&DegradedReason> {
+        self.embedder.get().and_then(|r| r.as_ref().err())
     }
 
     fn embedding_available(&self) -> bool {
         self.get_embedder();
-        self.embedder.get().and_then(|o| o.as_ref()).is_some()
+        self.embedder.get().map_or(false, |r| r.is_ok())
     }
 
     fn fetch_enrichment_context(

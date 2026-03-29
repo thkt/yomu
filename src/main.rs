@@ -4,7 +4,6 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, OutputFormat, Yomu, YomuError,
-    probe_embedder,
 };
 
 #[derive(Parser)]
@@ -12,10 +11,6 @@ use yomu::tools::{
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-
-    /// Probe whether the embedding model can load safely (hidden, internal use)
-    #[arg(long, hide = true)]
-    probe_embed: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -62,6 +57,8 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    rurico::embed::handle_probe_if_needed();
+
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -71,10 +68,6 @@ fn main() -> ExitCode {
         .init();
 
     let cli = parse_cli();
-
-    if let Some(model_dir) = cli.probe_embed {
-        return probe_embedder(&model_dir);
-    }
 
     let yomu = match Yomu::new() {
         Ok(y) => y,

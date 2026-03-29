@@ -458,19 +458,24 @@ fn shorthand_near_command_name_still_searches() {
     );
 }
 
+// [T-010] FR-004: --probe-embed flag no longer exists after migration.
+// The old probe_embed_reaches_probe_path_without_subcommand test is replaced
+// by this test that verifies the flag is rejected as unrecognized.
 #[test]
-fn probe_embed_reaches_probe_path_without_subcommand() {
-    // --probe-embed with an invalid dir should exit 10 (PROBE_EXIT_UNAVAILABLE),
-    // NOT exit 2 ("requires a subcommand"). This proves the CLI routing fix works.
+fn t010_probe_embed_flag_rejected() {
+    // [T-010] FR-004: --probe-embed must not be recognized after migration
     let output = yomu_cmd()
         .args(["--probe-embed", "/nonexistent/model/dir"])
         .output()
         .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(10),
-        "should exit 10 (probe unavailable), not 2 (missing subcommand): status={:?} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
+    assert!(
+        !output.status.success(),
+        "[T-010] --probe-embed should fail: {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("unrecognized"),
+        "[T-010] should show unrecognized flag error, got: {stderr}"
     );
 }

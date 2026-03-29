@@ -94,17 +94,17 @@ cargo build --release
 
 ### Configure
 
-Semantic search uses a local embedding model ([Ruri v3](https://huggingface.co/cl-nagoya/ruri-v3-310m), ~1.2 GB). The model downloads automatically on first `search` call — no API key required.
+Semantic search uses a local embedding model ([Ruri v3](https://huggingface.co/cl-nagoya/ruri-v3-310m), ~1.2 GB). If the model is already cached locally, `search` uses it automatically — no API key required.
 
-If the model is unavailable (offline, disk full), `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without the model.
+If the model is not installed or unavailable, `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without the model.
 
 No manual indexing. `search` auto-indexes on first call.
 
 #### Platform notes
 
-| Platform              | Build command                                               |
-| --------------------- | ----------------------------------------------------------- |
-| macOS (Apple Silicon) | `cargo build --release` (default: mlx backend)              |
+| Platform              | Build command                                                   |
+| --------------------- | --------------------------------------------------------------- |
+| macOS (Apple Silicon) | `cargo build --release` (default: mlx backend)                  |
 | Linux / x86           | `cargo build --release --no-default-features --features candle` |
 
 ## Commands
@@ -168,7 +168,7 @@ Source files → tree-sitter AST → Semantic chunks → Local embeddings (Ruri 
 | Stage     | Details                                                                                                                                                                                                                                  |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Indexing  | tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. The import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls |
-| Embedding | Chunks are embedded incrementally via a local model (Ruri v3, 310M params). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required                                |
+| Embedding | Chunks are embedded incrementally via a local model (Ruri v3, 310M params). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required                               |
 | Search    | Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test files are pushed down                                                |
 
 ## Supported file types
@@ -185,12 +185,12 @@ Other files fall back to character-based chunking with overlap.
 
 ## Limitations
 
-| Limitation                   | Details                                                                                                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| First-run model download     | ~1.2 GB download on first `search` call (cached after download)                                           |
-| SCSS/Sass not supported      | Only plain CSS                                                                                            |
-| Cold start                   | First `search` call takes a few seconds for chunking + initial embedding                                  |
-| Large files skipped          | Files over 1 MB are excluded from indexing                                                                |
+| Limitation                | Details                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| Model not auto-downloaded | The ~1.2 GB embedding model must be pre-cached; `search` does not download it automatically |
+| SCSS/Sass not supported   | Only plain CSS                                                                              |
+| Cold start                | First `search` call takes a few seconds for chunking + initial embedding                    |
+| Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
 
 ## Architecture
 
