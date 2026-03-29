@@ -260,7 +260,7 @@ impl Yomu {
                 notes.push(note.to_string());
             }
         } else if outcome.degraded {
-            notes.push("embedding model not loaded, results from text search only".into());
+            notes.push("embedding model not loaded; results from text search only".into());
         }
 
         if format == OutputFormat::Json {
@@ -548,7 +548,6 @@ impl Yomu {
     }
 
     fn embedding_available(&self) -> bool {
-        self.get_embedder();
         self.embedder.get().map_or(false, |r| r.is_ok())
     }
 
