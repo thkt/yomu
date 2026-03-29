@@ -2,13 +2,14 @@ use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use yomu::tools::{
-    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, OutputFormat, Yomu, YomuError,
-};
+use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
 struct Cli {
+    /// Output as JSON
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -25,9 +26,9 @@ enum Command {
         /// Skip N results (default: 0)
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=MAX_SEARCH_OFFSET as i64))]
         offset: u32,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
+        /// Deprecated: use global --json instead
+        #[arg(long, hide = true)]
+        format: Option<String>,
     },
     /// Update chunk index incrementally. No API calls.
     Index {
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
         .init();
 
     let cli = parse_cli();
+    let json = cli.json;
 
     let yomu = match Yomu::new() {
         Ok(y) => y,
@@ -96,6 +98,10 @@ fn main() -> ExitCode {
             offset,
             format,
         } => {
+            if format.is_some() {
+                eprintln!("warning: --format is deprecated, use --json instead");
+            }
+            let json = json || format.as_deref() == Some("json");
             let query = match resolve_query(query) {
                 Ok(q) => q,
                 Err(e) => {
@@ -103,28 +109,28 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            yomu.search(&query, limit, offset, format)
+            yomu.search(&query, limit, offset, json)
         }
         Command::Index { dry_run } => {
             if dry_run {
-                yomu.dry_run_index(false)
+                yomu.dry_run_index(false, json)
             } else {
-                yomu.index()
+                yomu.index(json)
             }
         }
         Command::Rebuild { dry_run } => {
             if dry_run {
-                yomu.dry_run_index(true)
+                yomu.dry_run_index(true, json)
             } else {
-                yomu.rebuild()
+                yomu.rebuild(json)
             }
         }
         Command::Impact {
             target,
             symbol,
             depth,
-        } => yomu.impact(&target, symbol.as_deref(), depth),
-        Command::Status => yomu.status(),
+        } => yomu.impact(&target, symbol.as_deref(), depth, json),
+        Command::Status => yomu.status(json),
     };
 
     match result {
@@ -139,20 +145,36 @@ fn main() -> ExitCode {
     }
 }
 
+const GLOBAL_FLAGS: &[&str] = &["--json"];
+
 /// Near-matches of known subcommands (edit distance ≤ 1) are not rewritten,
 /// so clap can show "did you mean?" suggestions for typos.
 fn parse_cli() -> Cli {
     let args: Vec<String> = std::env::args().collect();
     let cmd = Cli::command();
     let known: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
-    if args.len() > 1
-        && !args[1].starts_with('-')
-        && args[1] != "help"
-        && !known.contains(&args[1].as_str())
-        && !is_near_subcommand(&args[1], &known)
+
+    // Strip global flags before shorthand detection so `yomu --json query` works.
+    let (flags, rest): (Vec<_>, Vec<_>) = args
+        .iter()
+        .enumerate()
+        .partition(|(i, a)| *i > 0 && GLOBAL_FLAGS.contains(&a.as_str()));
+    let rest: Vec<&String> = rest.into_iter().map(|(_, a)| a).collect();
+
+    if rest.len() >= 2
+        && !rest[1].starts_with('-')
+        && rest[1] != "help"
+        && !known.contains(&rest[1].as_str())
+        && !is_near_subcommand(rest[1], &known)
     {
-        let mut patched = vec![args[0].clone(), "search".to_string()];
-        patched.extend_from_slice(&args[1..]);
+        let mut patched: Vec<String> = vec![rest[0].clone()];
+        for (_, f) in &flags {
+            patched.push((*f).clone());
+        }
+        patched.push("search".to_string());
+        for r in &rest[1..] {
+            patched.push((*r).clone());
+        }
         Cli::parse_from(patched)
     } else {
         Cli::parse()
