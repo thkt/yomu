@@ -318,8 +318,7 @@ pub fn rerank(
             0.0
         };
 
-        result.score =
-            base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
+        result.score = base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
     }
 
     results.sort_by(|a, b| {
