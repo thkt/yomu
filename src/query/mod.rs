@@ -205,8 +205,6 @@ const TYPE_HINT_BONUS: f32 = 0.03;
 const IMPORT_RANK_BONUS: f32 = 0.03;
 const TEST_PATH_PENALTY: f32 = 0.05;
 const SEMANTIC_KEYWORD_OVERLAP_BONUS: f32 = 0.05;
-const RECENCY_BONUS: f32 = 0.03;
-const RECENCY_HALF_LIFE_DAYS: f64 = 30.0;
 
 fn is_test_path(path: &str) -> bool {
     path.contains("__tests__")
@@ -236,7 +234,6 @@ pub struct RerankContext<'a> {
     pub keywords: &'a [String],
     pub keyword_idfs: &'a [f32],
     pub embed_coverage: f32,
-    pub now_epoch: i64,
 }
 
 impl Default for RerankContext<'_> {
@@ -246,7 +243,6 @@ impl Default for RerankContext<'_> {
             keywords: &[],
             keyword_idfs: &[],
             embed_coverage: 1.0,
-            now_epoch: 0,
         }
     }
 }
@@ -255,7 +251,6 @@ pub fn rerank(
     results: &mut [storage::SearchResult],
     ctx: &RerankContext<'_>,
     import_counts: &std::collections::HashMap<String, u32>,
-    file_mtimes: &std::collections::HashMap<String, i64>,
 ) {
     if results.is_empty() {
         return;
@@ -323,22 +318,7 @@ pub fn rerank(
             0.0
         };
 
-        let recency_bonus = if ctx.now_epoch > 0 {
-            file_mtimes
-                .get(&result.chunk.file_path)
-                .map(|&mtime| {
-                    let age_days = (ctx.now_epoch - mtime) as f64 / 86400.0;
-                    RECENCY_BONUS
-                        * rurico::storage::recency_decay(age_days, RECENCY_HALF_LIFE_DAYS) as f32
-                })
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
-
-        result.score =
-            base + name_bonus + overlap_bonus + type_bonus + import_bonus + recency_bonus
-                - test_penalty;
+        result.score = base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
     }
 
     results.sort_by(|a, b| {
@@ -410,19 +390,13 @@ fn search_pipeline(
 
     let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
     let import_counts = storage::get_import_counts(conn, &file_paths)?;
-    let file_mtimes = storage::get_file_mtimes(conn, &file_paths)?;
-    let now_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     let ctx = RerankContext {
         type_hints: &type_hints,
         keywords: &keywords,
         keyword_idfs: &keyword_idfs,
         embed_coverage,
-        now_epoch,
     };
-    rerank(&mut results, &ctx, &import_counts, &file_mtimes);
+    rerank(&mut results, &ctx, &import_counts);
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     if offset > 0 {
         let skip = std::cmp::min(offset as usize, results.len());
