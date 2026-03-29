@@ -191,6 +191,7 @@ Other files fall back to character-based chunking with overlap.
 | SCSS/Sass not supported   | Only plain CSS                                                                              |
 | Cold start                | First `search` call takes a few seconds for chunking + initial embedding                    |
 | Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
+| `YOMU_EMBED=0`            | Set this env var to disable embedding entirely; `search` falls back to text-only mode       |
 
 ## Architecture
 
