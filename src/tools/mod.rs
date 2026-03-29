@@ -14,9 +14,9 @@ use crate::indexer;
 use crate::query;
 use crate::storage;
 
-use embedder::{DegradedReason, parse_embed_budget};
 #[cfg(any(test, feature = "test-support"))]
 use embedder::DEFAULT_EMBED_BUDGET;
+use embedder::{DegradedReason, parse_embed_budget};
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_impact_all,
     format_impact_results, format_no_results_message, format_results_grouped, format_results_json,

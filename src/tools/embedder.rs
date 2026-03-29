@@ -83,7 +83,7 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
 }
 
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
-    use rurico::embed::{model_paths_if_cached, ProbeStatus};
+    use rurico::embed::{ProbeStatus, model_paths_if_cached};
 
     fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
         record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
