@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 
@@ -133,9 +133,9 @@ pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>
 pub fn get_chunks_by_ids(
     conn: &Connection,
     ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Chunk>, StorageError> {
+) -> Result<HashMap<i64, Chunk>, StorageError> {
     if ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let placeholders = super::sql_placeholders(ids.len());
     let sql = format!(
@@ -152,7 +152,7 @@ pub fn get_chunks_by_ids(
         let chunk = chunk_from_row(row, 1)?;
         Ok((id, chunk))
     })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+    rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
 }
 

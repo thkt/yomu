@@ -46,6 +46,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         }
     }
 
+    // Words ending in -ing that are not gerunds (stripping -ing produces a non-word or keyword).
     const ING_DENY: &[&str] = &[
         "string",
         "bring",
@@ -61,6 +62,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         "sting",
         "wing",
     ];
+    // Words ending in -s that are not plurals (stripping -s produces a non-word).
     const S_DENY: &[&str] = &[
         "class", "this", "alias", "canvas", "focus", "status", "bus", "process", "address",
         "access", "express", "progress",
@@ -317,14 +319,10 @@ fn search_pipeline(
         )?;
         results.extend(fts_results);
     }
-    let embed_coverage = if stats.embeddable_chunks > 0 {
-        stats.embedded_chunks as f32 / stats.embeddable_chunks as f32
-    } else {
-        0.0
-    };
+    let embed_coverage = stats.embed_coverage();
 
     let (keyword_idfs, import_counts) = if results.is_empty() {
-        (Vec::new(), std::collections::HashMap::new())
+        (Vec::new(), HashMap::new())
     } else {
         let dfs =
             storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;

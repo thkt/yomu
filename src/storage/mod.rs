@@ -103,12 +103,16 @@ pub struct IndexStatus {
 }
 
 impl IndexStatus {
-    pub fn embed_percentage(&self) -> u32 {
+    pub fn embed_coverage(&self) -> f32 {
         if self.embeddable_chunks > 0 {
-            (self.embedded_chunks as f64 / self.embeddable_chunks as f64 * 100.0) as u32
+            self.embedded_chunks as f32 / self.embeddable_chunks as f32
         } else {
-            0
+            0.0
         }
+    }
+
+    pub fn embed_percentage(&self) -> u32 {
+        (self.embed_coverage() as f64 * 100.0) as u32
     }
 }
 
