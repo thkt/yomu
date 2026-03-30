@@ -115,8 +115,7 @@ impl IndexStatus {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatchSource {
     Semantic,
-    NameMatch,
-    ContentMatch,
+    Fts,
 }
 
 #[derive(Debug, Clone)]
@@ -200,9 +199,13 @@ fn insert_chunk_row(
     )?;
     let chunk_id = conn.last_insert_rowid();
 
+    let fts_name = chunk
+        .name
+        .map(|n| crate::text::split_identifier(n).join(" "))
+        .unwrap_or_default();
     conn.execute(
-        "INSERT INTO fts_chunks(rowid, content) VALUES (?1, ?2)",
-        rusqlite::params![chunk_id, chunk.content],
+        "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![chunk_id, fts_name, chunk.content, file_path],
     )?;
 
     Ok(chunk_id)

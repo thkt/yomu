@@ -1,4 +1,5 @@
 pub mod config;
+pub mod text;
 pub mod indexer;
 pub mod query;
 pub mod resolver;

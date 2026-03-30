@@ -42,7 +42,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -94,8 +94,7 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
 
     conn.execute_batch(
         "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
-            content,
-            content_rowid='rowid'
+            name, content, file_path
         )",
     )?;
 
@@ -200,11 +199,66 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
         )?;
     }
 
-    // v5 → v6: add mtime_epoch to file_context for recency boost
+    // v5 → v6: add mtime_epoch to file_context
     if from < 6 && !column_exists(conn, "SELECT mtime_epoch FROM file_context LIMIT 0")? {
         conn.execute_batch("ALTER TABLE file_context ADD COLUMN mtime_epoch INTEGER")?;
     }
 
+    // v6 → v7: rebuild FTS with 3 columns (name, content, file_path)
+    if from < 7 {
+        conn.execute_batch("SAVEPOINT fts_v7")?;
+        match rebuild_fts_v7(conn) {
+            Ok(()) => conn.execute_batch("RELEASE fts_v7")?,
+            Err(e) => {
+                if let Err(rb_err) = conn.execute_batch("ROLLBACK TO fts_v7") {
+                    tracing::error!(
+                        error = %rb_err,
+                        original_error = %e,
+                        "ROLLBACK TO fts_v7 failed"
+                    );
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
+    let _automerge = FtsAutomergeGuard::new(conn)?;
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")?;
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")?;
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE fts_chunks USING fts5(name, content, file_path)",
+    )?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path, name, content FROM chunks",
+    )?;
+    let mut rows = stmt.query([])?;
+    {
+        let mut insert = conn.prepare(
+            "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let path: String = row.get(1)?;
+            let name: Option<String> = row.get(2)?;
+            let content: String = row.get(3)?;
+            let fts_name = name
+                .as_deref()
+                .map(|n| crate::text::split_identifier(n).join(" "))
+                .unwrap_or_default();
+            insert.execute(rusqlite::params![id, fts_name, content, path])?;
+        }
+    }
+
+    fts_optimize(conn)?;
+
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)",
+    )?;
     Ok(())
 }
 

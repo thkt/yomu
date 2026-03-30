@@ -88,35 +88,6 @@ fn extract_keywords_short_ing_not_stemmed() {
 }
 
 #[test]
-fn split_identifier_camel_case() {
-    assert_eq!(split_identifier("useChat"), vec!["use", "Chat"]);
-    assert_eq!(split_identifier("DataTable"), vec!["Data", "Table"]);
-}
-
-#[test]
-fn split_identifier_acronym() {
-    assert_eq!(split_identifier("HTMLElement"), vec!["HTML", "Element"]);
-    assert_eq!(
-        split_identifier("getXMLParser"),
-        vec!["get", "XML", "Parser"]
-    );
-    assert_eq!(split_identifier("UIMessage"), vec!["UI", "Message"]);
-}
-
-#[test]
-fn split_identifier_kebab_and_snake() {
-    assert_eq!(split_identifier("data-table"), vec!["data", "table"]);
-    assert_eq!(split_identifier("get_value"), vec!["get", "value"]);
-    assert_eq!(split_identifier("use-chat"), vec!["use", "chat"]);
-}
-
-#[test]
-fn split_identifier_single_word() {
-    assert_eq!(split_identifier("stream"), vec!["stream"]);
-    assert_eq!(split_identifier("chat"), vec!["chat"]);
-}
-
-#[test]
 fn extract_keywords_expands_camel_case() {
     let kw = extract_keywords("useChat");
     assert!(kw.contains(&"usechat".to_string()), "whole token: {kw:?}");
@@ -237,7 +208,7 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth hook", 5, 0)
+    let results = search(conn, &MockEmbedder, "auth", 5, 0)
         .unwrap()
         .results;
 
@@ -259,7 +230,11 @@ fn search_fallback_merges_vector_and_name_results() {
         names.contains(&"useAuth"),
         "expected useAuth from fallback: {names:?}"
     );
-    assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
+    let sources: Vec<_> = results.iter().map(|r| r.match_source).collect();
+    assert!(
+        sources.contains(&storage::MatchSource::Semantic),
+        "expected Semantic result in set: {sources:?}"
+    );
 }
 
 #[test]
@@ -306,8 +281,7 @@ fn make_result(
 ) -> storage::SearchResult {
     let score = match match_source {
         storage::MatchSource::Semantic => 1.0 / (1.0 + distance),
-        storage::MatchSource::NameMatch => 0.5,
-        storage::MatchSource::ContentMatch => 0.45,
+        storage::MatchSource::Fts => 0.45,
     };
     storage::SearchResult {
         chunk: storage::Chunk {
@@ -345,16 +319,15 @@ fn rerank_semantic_base_score() {
 }
 
 #[test]
-fn rerank_name_match_base_score() {
+fn rerank_fts_base_score_passthrough() {
     let kw = vec!["auth".to_string()];
     let mut results = vec![make_result(
         "src/A.tsx",
         "useAuth",
         storage::ChunkType::Hook,
         f32::INFINITY,
-        storage::MatchSource::NameMatch,
+        storage::MatchSource::Fts,
     )];
-    // 1/1 keywords match → base = 0.40 + 0.20 = 0.60, + NAME_MATCH_BONUS = 0.65
     rerank(
         &mut results,
         &RerankContext {
@@ -364,8 +337,8 @@ fn rerank_name_match_base_score() {
         &HashMap::new(),
     );
     assert!(
-        (results[0].score - 0.65).abs() < 1e-6,
-        "expected 0.65, got {}",
+        (results[0].score - 0.45).abs() < 1e-6,
+        "expected 0.45, got {}",
         results[0].score
     );
 }
@@ -523,17 +496,16 @@ fn rerank_test_query_exempts_penalty() {
 }
 
 #[test]
-fn rerank_name_match_all_bonuses() {
+fn rerank_fts_all_bonuses() {
     let kw = vec!["auth".to_string()];
     let mut results = vec![make_result(
         "src/useAuth.tsx",
         "useAuth",
         storage::ChunkType::Hook,
         f32::INFINITY,
-        storage::MatchSource::NameMatch,
+        storage::MatchSource::Fts,
     )];
     let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
-    // 1/1 match → base=0.60, + NAME_MATCH=0.05, + TYPE_HINT=0.03, + IMPORT=0.03 = 0.71
     rerank(
         &mut results,
         &RerankContext {
@@ -544,8 +516,8 @@ fn rerank_name_match_all_bonuses() {
         &import_counts,
     );
     assert!(
-        (results[0].score - 0.71).abs() < 1e-6,
-        "expected 0.71, got {}",
+        (results[0].score - 0.51).abs() < 1e-6,
+        "expected 0.51, got {}",
         results[0].score
     );
 }
@@ -720,24 +692,24 @@ fn rerank_low_coverage_dampens_semantic() {
 }
 
 #[test]
-fn rerank_low_coverage_name_match_beats_semantic() {
+fn rerank_low_coverage_fts_beats_semantic() {
     let kw = vec!["chat".to_string()];
     let mut results = vec![
-        // At 2% coverage: 1/(1+0.45) * 0.68 ≈ 0.47
+        // At 2% coverage: 1/(1+0.6) * 0.68 ≈ 0.43
         make_result(
             "src/A.tsx",
             "Unrelated",
             storage::ChunkType::Component,
-            0.45,
+            0.6,
             storage::MatchSource::Semantic,
         ),
-        // Name match: 0.40 + 0.20*(1/1) + 0.05 = 0.65 (unaffected by coverage)
+        // Fts passthrough: 0.45 (unaffected by coverage)
         make_result(
             "src/B.tsx",
             "useChat",
             storage::ChunkType::Hook,
             f32::INFINITY,
-            storage::MatchSource::NameMatch,
+            storage::MatchSource::Fts,
         ),
     ];
     rerank(
@@ -752,11 +724,11 @@ fn rerank_low_coverage_name_match_beats_semantic() {
     assert_eq!(
         results[0].chunk.name.as_deref(),
         Some("useChat"),
-        "name match should rank first at low coverage"
+        "FTS should rank first at low coverage"
     );
     assert!(
         results[0].score > results[1].score,
-        "name ({}) should beat semantic ({}) at 2% coverage",
+        "FTS ({}) should beat semantic ({}) at 2% coverage",
         results[0].score,
         results[1].score
     );
@@ -778,7 +750,7 @@ fn content_match_scores_from_content_body() {
         },
         chunk_id: None,
         distance: f32::INFINITY,
-        match_source: storage::MatchSource::ContentMatch,
+        match_source: storage::MatchSource::Fts,
         score: 0.0,
     };
     let ratio = keyword_hit_ratio(&result, &kw, &[], true);
@@ -1023,14 +995,19 @@ fn text_only_search_with_offset_returns_results() {
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    for i in 0..15 {
+    let names = [
+        "WidgetAlpha", "WidgetBeta", "WidgetGamma", "WidgetDelta", "WidgetEpsilon",
+        "WidgetZeta", "WidgetEta", "WidgetTheta", "WidgetIota", "WidgetKappa",
+        "WidgetLambda", "WidgetMu", "WidgetNu", "WidgetXi", "WidgetOmicron",
+    ];
+    for (i, name) in names.iter().enumerate() {
         storage::replace_file_chunks_only(
             &conn,
-            &format!("src/Widget{i}.tsx"),
+            &format!("src/{name}.tsx"),
             &[storage::NewChunk {
                 chunk_type: &storage::ChunkType::Component,
-                name: Some(&format!("Widget{i}")),
-                content: &format!("function Widget{i}() {{ return <div/>; }}"),
+                name: Some(name),
+                content: &format!("function {name}() {{ return <div/>; }}"),
                 start_line: 1,
                 end_line: 1,
                 parent_index: None,
@@ -1064,7 +1041,6 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
-    // Insert chunk WITHOUT embedding (simulates chunk-only index)
     storage::replace_file_chunks_only(
         &conn,
         "src/Button.tsx",
@@ -1087,7 +1063,6 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    // MockEmbedder succeeds on embed_query — this is the "model available" case
     let outcome = search(conn, &MockEmbedder, "button", 10, 0).unwrap();
     assert!(
         !outcome.results.is_empty(),

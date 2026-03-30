@@ -562,7 +562,7 @@ fn format_results_grouped_shows_score_for_all() {
             },
             chunk_id: None,
             distance: f32::INFINITY,
-            match_source: storage::MatchSource::NameMatch,
+            match_source: storage::MatchSource::Fts,
             score: 0.55,
         },
     ];
@@ -1317,7 +1317,7 @@ fn t011_innerfn_hit_shows_parent_context_in_text_output() {
         },
         chunk_id: Some(43),
         distance: 0.15,
-        match_source: storage::MatchSource::ContentMatch,
+        match_source: storage::MatchSource::Fts,
         score: 0.85,
     }];
     let ctx = EnrichmentContext {
@@ -1392,7 +1392,7 @@ fn t015_json_output_includes_parent_chunk_id() {
             },
             chunk_id: Some(43),
             distance: 0.2,
-            match_source: storage::MatchSource::ContentMatch,
+            match_source: storage::MatchSource::Fts,
             score: 0.80,
         },
         storage::SearchResult {
@@ -1518,7 +1518,7 @@ fn tc_003_parent_and_child_both_in_results_no_duplicate() {
             },
             chunk_id: Some(43),
             distance: 0.15,
-            match_source: storage::MatchSource::ContentMatch,
+            match_source: storage::MatchSource::Fts,
             score: 0.85,
         },
     ];
