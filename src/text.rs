@@ -93,9 +93,6 @@ mod tests {
 
     #[test]
     fn mixed_delimiters() {
-        assert_eq!(
-            split_identifier("foo-bar_baz"),
-            vec!["foo", "bar", "baz"]
-        );
+        assert_eq!(split_identifier("foo-bar_baz"), vec!["foo", "bar", "baz"]);
     }
 }

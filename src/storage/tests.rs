@@ -2541,9 +2541,11 @@ fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
     replace_file_chunks_only(&conn, "src/form.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Search with split keywords ["handle", "submit"] should find handleSubmit
-    let results =
-        search_by_fts(&conn, &["handle", "submit"], None, &HashSet::new(), 10).unwrap();
-    let names: Vec<_> = results.iter().filter_map(|r| r.chunk.name.as_deref()).collect();
+    let results = search_by_fts(&conn, &["handle", "submit"], None, &HashSet::new(), 10).unwrap();
+    let names: Vec<_> = results
+        .iter()
+        .filter_map(|r| r.chunk.name.as_deref())
+        .collect();
     assert!(
         names.contains(&"handleSubmit"),
         "[T-004] should find handleSubmit via split keywords, got: {names:?}"
@@ -2626,7 +2628,11 @@ fn t_007_search_by_fts_respects_type_filter() {
         10,
     )
     .unwrap();
-    assert_eq!(results.len(), 1, "[T-007] type_filter should limit to hooks");
+    assert_eq!(
+        results.len(),
+        1,
+        "[T-007] type_filter should limit to hooks"
+    );
     assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
 }
 
@@ -2661,6 +2667,10 @@ fn t_016_search_by_fts_excludes_ids() {
     let mut exclude = HashSet::new();
     exclude.insert(first_id);
     let filtered = search_by_fts(&conn, &["auth"], None, &exclude, 10).unwrap();
-    assert_eq!(filtered.len(), 1, "[T-016] excluded id should be filtered out");
+    assert_eq!(
+        filtered.len(),
+        1,
+        "[T-016] excluded id should be filtered out"
+    );
     assert_ne!(filtered[0].chunk_id, Some(first_id));
 }

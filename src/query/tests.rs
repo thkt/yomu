@@ -208,9 +208,7 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth", 5, 0)
-        .unwrap()
-        .results;
+    let results = search(conn, &MockEmbedder, "auth", 5, 0).unwrap().results;
 
     assert!(
         results.len() >= 2,
@@ -996,9 +994,21 @@ fn text_only_search_with_offset_returns_results() {
     let conn = storage::open_db(&db_path).unwrap();
 
     let names = [
-        "WidgetAlpha", "WidgetBeta", "WidgetGamma", "WidgetDelta", "WidgetEpsilon",
-        "WidgetZeta", "WidgetEta", "WidgetTheta", "WidgetIota", "WidgetKappa",
-        "WidgetLambda", "WidgetMu", "WidgetNu", "WidgetXi", "WidgetOmicron",
+        "WidgetAlpha",
+        "WidgetBeta",
+        "WidgetGamma",
+        "WidgetDelta",
+        "WidgetEpsilon",
+        "WidgetZeta",
+        "WidgetEta",
+        "WidgetTheta",
+        "WidgetIota",
+        "WidgetKappa",
+        "WidgetLambda",
+        "WidgetMu",
+        "WidgetNu",
+        "WidgetXi",
+        "WidgetOmicron",
     ];
     for (i, name) in names.iter().enumerate() {
         storage::replace_file_chunks_only(

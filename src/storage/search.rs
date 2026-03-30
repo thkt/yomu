@@ -67,12 +67,10 @@ pub fn search_by_fts(
 
     let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| {
-            match rurico::storage::prepare_match_query(conn, k) {
-                Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
-                Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
-                _ => None,
-            }
+        .filter_map(|k| match rurico::storage::prepare_match_query(conn, k) {
+            Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
+            Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
+            _ => None,
         })
         .collect();
     if parts.is_empty() {
@@ -215,4 +213,3 @@ fn append_exclude_ids(
         }
     }
 }
-

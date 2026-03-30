@@ -229,13 +229,9 @@ fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
     let _automerge = FtsAutomergeGuard::new(conn)?;
     conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")?;
     conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")?;
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE fts_chunks USING fts5(name, content, file_path)",
-    )?;
+    conn.execute_batch("CREATE VIRTUAL TABLE fts_chunks USING fts5(name, content, file_path)")?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, file_path, name, content FROM chunks",
-    )?;
+    let mut stmt = conn.prepare("SELECT id, file_path, name, content FROM chunks")?;
     let mut rows = stmt.query([])?;
     {
         let mut insert = conn.prepare(

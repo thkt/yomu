@@ -324,15 +324,13 @@ fn search_pipeline(
     let (keyword_idfs, import_counts) = if results.is_empty() {
         (Vec::new(), HashMap::new())
     } else {
-        let dfs =
-            storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;
+        let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;
         let total = stats.total_chunks.max(1) as f32;
         let idfs: Vec<f32> = dfs
             .iter()
             .map(|&df| (total / (df.max(1) as f32)).ln())
             .collect();
-        let file_paths: Vec<&str> =
-            results.iter().map(|r| r.chunk.file_path.as_str()).collect();
+        let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
         let ic = storage::get_import_counts(conn, &file_paths)?;
         (idfs, ic)
     };
