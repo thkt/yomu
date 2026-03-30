@@ -1230,110 +1230,6 @@ fn get_files_by_import_count_returns_most_imported_first() {
 }
 
 #[test]
-fn search_by_name_matches_keyword() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuth"),
-            content: "function useAuth() {}",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("LoginForm"),
-            content: "function LoginForm() {}",
-            start_line: 5,
-            end_line: 10,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
-    assert_eq!(results[0].match_source, MatchSource::NameMatch);
-    assert_eq!(results[0].distance, f32::INFINITY);
-}
-
-#[test]
-fn search_by_name_filters_by_type() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useBtn"),
-            content: "function useBtn() {}",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("BtnGroup"),
-            content: "function BtnGroup() {}",
-            start_line: 5,
-            end_line: 10,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/btn.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_name(
-        &conn,
-        &["btn"],
-        Some(&[ChunkType::Hook]),
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useBtn"));
-    assert_eq!(results[0].chunk.chunk_type, ChunkType::Hook);
-}
-
-#[test]
-fn search_by_name_excludes_ids() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuth"),
-            content: "function useAuth() {}",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuthProvider"),
-            content: "function useAuthProvider() {}",
-            start_line: 5,
-            end_line: 10,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let ids = get_chunk_ids(&conn, "src/auth.tsx");
-    let mut exclude = HashSet::new();
-    exclude.insert(ids[0]);
-
-    let results = search_by_name(&conn, &["auth"], None, &exclude, 10).unwrap();
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useAuthProvider"));
-}
-
-#[test]
 fn get_files_by_import_count_boosts_hook_component_files() {
     let (conn, _dir) = test_db();
 
@@ -1429,24 +1325,6 @@ fn search_similar_sets_semantic_match_source() {
 }
 
 #[test]
-fn search_by_name_empty_keywords_returns_empty() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::Hook,
-        name: Some("useAuth"),
-        content: "code",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_name(&conn, &[], None, &HashSet::new(), 10).unwrap();
-    assert!(results.is_empty());
-}
-
-#[test]
 fn search_similar_sets_initial_score() {
     let (conn, _dir) = test_db();
     let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
@@ -1477,29 +1355,6 @@ fn search_similar_sets_initial_score() {
     assert!(
         (results[0].score - expected_score).abs() < 1e-6,
         "expected score {expected_score}, got {}",
-        results[0].score
-    );
-}
-
-#[test]
-fn search_by_name_sets_base_score() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::Hook,
-        name: Some("useAuth"),
-        content: "function useAuth() {}",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(results.len(), 1);
-    assert!(
-        (results[0].score - 0.5).abs() < 1e-6,
-        "NameMatch score should be 0.5, got {}",
         results[0].score
     );
 }
@@ -1585,151 +1440,6 @@ fn get_import_counts_returns_empty_for_empty_input() {
 }
 
 #[test]
-fn search_by_name_respects_limit() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuthA"),
-            content: "code",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuthB"),
-            content: "code",
-            start_line: 5,
-            end_line: 8,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useAuthC"),
-            content: "code",
-            start_line: 10,
-            end_line: 13,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_name(&conn, &["auth"], None, &HashSet::new(), 2).unwrap();
-    assert_eq!(results.len(), 2);
-}
-
-#[test]
-fn search_by_name_matches_file_path() {
-    let (conn, _dir) = test_db();
-
-    // Chunk with no name but file_path contains "fetch"
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: None,
-        content: "export default {}",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(
-        &conn,
-        "src/utils/fetch-data.ts",
-        &chunks,
-        "h1",
-        "",
-        &[],
-        None,
-    )
-    .unwrap();
-
-    let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.file_path, "src/utils/fetch-data.ts");
-}
-
-#[test]
-fn search_by_name_matches_name_or_path() {
-    let (conn, _dir) = test_db();
-
-    // Named chunk in unrelated path
-    let named = vec![NewChunk {
-        chunk_type: &ChunkType::Hook,
-        name: Some("useFetch"),
-        content: "code",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &named, "h1", "", &[], None).unwrap();
-
-    // Unnamed chunk in path containing keyword
-    let path_match = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: None,
-        content: "code",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(
-        &conn,
-        "src/fetch/client.ts",
-        &path_match,
-        "h2",
-        "",
-        &[],
-        None,
-    )
-    .unwrap();
-
-    let results = search_by_name(&conn, &["fetch"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(
-        results.len(),
-        2,
-        "should match both name and path: {results:?}"
-    );
-}
-
-#[test]
-fn search_by_name_path_match_respects_type_filter() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Other,
-            name: None,
-            content: "helper",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("Chart"),
-            content: "component",
-            start_line: 5,
-            end_line: 10,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/chart/utils.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    // Filter to components only — path match on "chart" should return only the component
-    let results = search_by_name(
-        &conn,
-        &["chart"],
-        Some(&[ChunkType::Component]),
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.chunk_type, ChunkType::Component);
-}
-
-#[test]
 fn fts5_available() {
     let (conn, _dir) = test_db();
     // Verify FTS5 extension is compiled in
@@ -1739,76 +1449,6 @@ fn fts5_available() {
          DROP TABLE _fts5_test;",
     )
     .expect("FTS5 should be available");
-}
-
-#[test]
-fn search_by_content_matches_code() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useFetch"),
-            content: "function useFetch() { const [loading, setLoading] = useState(false); }",
-            start_line: 1,
-            end_line: 5,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("Button"),
-            content: "function Button({ label }) { return <button>{label}</button>; }",
-            start_line: 7,
-            end_line: 10,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
-    assert_eq!(results[0].match_source, MatchSource::ContentMatch);
-}
-
-#[test]
-fn search_by_content_excludes_ids() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useA"),
-            content: "function useA() { fetch('/api'); }",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useB"),
-            content: "function useB() { fetch('/data'); }",
-            start_line: 5,
-            end_line: 7,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    let ids = get_chunk_ids(&conn, "src/hooks.tsx");
-    let mut exclude = HashSet::new();
-    exclude.insert(ids[0]);
-
-    let results = search_by_content(&conn, &["fetch"], None, &exclude, 10).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useB"));
-}
-
-#[test]
-fn search_by_content_empty_keywords_returns_empty() {
-    let (conn, _dir) = test_db();
-    let results = search_by_content(&conn, &[], None, &HashSet::new(), 10).unwrap();
-    assert!(results.is_empty());
 }
 
 #[test]
@@ -1826,14 +1466,14 @@ fn fts_chunks_deleted_with_file() {
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Should find it before delete
-    let results = search_by_content(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
 
     // Delete file chunks
     delete_file_chunks(&conn, "src/x.tsx").unwrap();
 
     // Should not find it after delete
-    let results = search_by_content(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), 10).unwrap();
     assert!(results.is_empty());
 }
 
@@ -1863,7 +1503,7 @@ fn fts5_migration_from_v2() {
     .unwrap();
 
     // Verify FTS5 is empty
-    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
     assert!(
         results.is_empty(),
         "fts_chunks should be empty before migration"
@@ -1874,7 +1514,7 @@ fn fts5_migration_from_v2() {
     let conn = open_db(&db_path).unwrap();
 
     // Migration should have populated fts_chunks from existing chunks
-    let results = search_by_content(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1, "migration should populate fts_chunks");
     assert_eq!(results[0].chunk.name.as_deref(), Some("useX"));
 }
@@ -1893,46 +1533,9 @@ fn fts5_handles_special_characters_in_content() {
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_by_content(&conn, &["container"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["container"], None, &HashSet::new(), 10).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
-}
-
-#[test]
-fn search_by_content_respects_type_filter() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useFetch"),
-            content: "function useFetch() { fetch('/api'); }",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Component,
-            name: Some("FetchBtn"),
-            content: "function FetchBtn() { onClick(() => fetch('/btn')); }",
-            start_line: 5,
-            end_line: 8,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    // Filter to hooks only
-    let results = search_by_content(
-        &conn,
-        &["fetch"],
-        Some(&[ChunkType::Hook]),
-        &HashSet::new(),
-        10,
-    )
-    .unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useFetch"));
 }
 
 #[test]
@@ -2076,7 +1679,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "6", "schema_version should be 6 after migration");
+    assert_eq!(version, "7", "schema_version should be 7 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -2091,7 +1694,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
     );
 
     // Verify data preserved: chunk should still be searchable
-    let results = search_by_content(&conn, &["migrationTest"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["migrationTest"], None, &HashSet::new(), 10).unwrap();
     assert!(
         !results.is_empty(),
         "seeded chunk should survive v3->v4 migration"
@@ -2128,131 +1731,6 @@ fn get_file_mtimes_empty_input_returns_empty() {
     let (conn, _dir) = test_db();
     let mtimes = get_file_mtimes(&conn, &[]).unwrap();
     assert!(mtimes.is_empty());
-}
-
-#[test]
-fn search_by_content_expands_short_prefix() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: Some("authenticate"),
-        content: "function authenticate() { return authentication(); }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/auth.ts", &chunks, "h1", "", &[], None).unwrap();
-
-    let results = search_by_content(&conn, &["au"], None, &HashSet::new(), 10).unwrap();
-    assert!(
-        !results.is_empty(),
-        "short prefix 'au' should match 'authentication' via vocab expansion"
-    );
-    assert!(
-        results[0].chunk.content.contains("authentication"),
-        "result should contain 'authentication', got: {}",
-        results[0].chunk.content
-    );
-}
-
-#[test]
-fn search_by_content_short_terms_and_semantics() {
-    let (conn, _dir) = test_db();
-
-    let chunks_both = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: Some("authLogger"),
-        content: "function authLogger() { authentication(); log('request received'); }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(
-        &conn,
-        "src/authLogger.ts",
-        &chunks_both,
-        "h1",
-        "",
-        &[],
-        None,
-    )
-    .unwrap();
-
-    let chunks_auth_only = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: Some("authOnly"),
-        content: "function authOnly() { authentication(); }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(
-        &conn,
-        "src/authOnly.ts",
-        &chunks_auth_only,
-        "h2",
-        "",
-        &[],
-        None,
-    )
-    .unwrap();
-
-    let chunks_log_only = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: Some("logOnly"),
-        content: "function logOnly() { logger.info('logged'); }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(
-        &conn,
-        "src/logOnly.ts",
-        &chunks_log_only,
-        "h3",
-        "",
-        &[],
-        None,
-    )
-    .unwrap();
-
-    // "au log" — both short terms. After expansion + AND, only authLogger should match
-    let results = search_by_content(&conn, &["au", "log"], None, &HashSet::new(), 10).unwrap();
-    assert_eq!(
-        results.len(),
-        1,
-        "AND semantics: only doc containing both expanded terms should match, got {} results",
-        results.len()
-    );
-    assert_eq!(
-        results[0].chunk.name.as_deref(),
-        Some("authLogger"),
-        "the matching doc should be authLogger"
-    );
-}
-
-#[test]
-fn search_by_content_preserves_operator_like_keywords() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::Other,
-        name: Some("handleError"),
-        content: "function handleError() { if (not_found) throw new Error('not found'); }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/error.ts", &chunks, "h1", "", &[], None).unwrap();
-
-    // "not" resembles FTS5 NOT operator but is a content word here.
-    // It must survive sanitization and match via fts_quote fallback.
-    let results = search_by_content(&conn, &["not"], None, &HashSet::new(), 10).unwrap();
-    assert!(
-        !results.is_empty(),
-        "operator-like keyword 'not' should match content, not be silently dropped"
-    );
 }
 
 #[test]
@@ -2318,46 +1796,6 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
 }
 
 #[test]
-fn search_by_name_escapes_like_wildcards() {
-    let (conn, _dir) = test_db();
-
-    let chunks = vec![
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("use_Auth"),
-            content: "function use_Auth() {}",
-            start_line: 1,
-            end_line: 1,
-            parent_index: None,
-        },
-        NewChunk {
-            chunk_type: &ChunkType::Hook,
-            name: Some("useXAuth"),
-            content: "function useXAuth() {}",
-            start_line: 2,
-            end_line: 2,
-            parent_index: None,
-        },
-    ];
-    replace_file_chunks_only(&conn, "src/hooks.tsx", &chunks, "h1", "", &[], None).unwrap();
-
-    // Searching for "use_auth" should NOT match "useXAuth" via _ wildcard
-    let results = search_by_name(&conn, &["use_auth"], None, &HashSet::new(), 10).unwrap();
-    let names: Vec<_> = results
-        .iter()
-        .filter_map(|r| r.chunk.name.as_deref())
-        .collect();
-    assert!(
-        names.contains(&"use_Auth"),
-        "should find use_Auth, got: {names:?}"
-    );
-    assert!(
-        !names.contains(&"useXAuth"),
-        "_ should be escaped, not match useXAuth, got: {names:?}"
-    );
-}
-
-#[test]
 fn fts_automerge_guard_restores_on_drop() {
     let (conn, _dir) = test_db();
 
@@ -2402,7 +1840,7 @@ fn fts_automerge_guard_restores_on_drop() {
         None,
     )
     .unwrap();
-    let results = search_by_content(&conn, &["function"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["function"], None, &HashSet::new(), 10).unwrap();
     assert!(
         results.len() >= 2,
         "FTS should work after guard drop, got {} results",
@@ -2783,7 +2221,7 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
         )
         .unwrap();
 
-    let results = search_by_content(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2841,7 +2279,7 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
         )
         .unwrap();
 
-    let results = search_by_name(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), 10).unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2883,7 +2321,7 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
     )
     .unwrap();
 
-    let results = search_by_name(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
+    let results = search_by_fts(&conn, &["userform"], None, &HashSet::new(), 10).unwrap();
 
     assert!(!results.is_empty(), "should find UserForm via name search");
     let component_result = &results[0];
@@ -2892,4 +2330,347 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
         component_result.chunk.parent_chunk_id, None,
         "[T-012] parent chunk should have parent_chunk_id = None in search results"
     );
+}
+
+// ── Phase 1: FTS 3-column unification (FR-001, FR-002, FR-010, FR-011) ──
+
+#[test]
+fn t_001_fts_stores_split_identifier_name() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useAuthProvider"),
+        content: "function useAuthProvider() { return auth; }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    let fts_name: String = conn
+        .query_row(
+            "SELECT name FROM fts_chunks WHERE rowid = (SELECT id FROM chunks LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        fts_name, "use Auth Provider",
+        "[T-001] FTS name column should contain split-identifier output"
+    );
+}
+
+#[test]
+fn t_002_fts_stores_empty_name_for_none() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: None,
+        content: "const x = 42;",
+        start_line: 1,
+        end_line: 1,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/util.ts", &chunks, "h1", "", &[], None).unwrap();
+
+    let fts_name: String = conn
+        .query_row(
+            "SELECT name FROM fts_chunks WHERE rowid = (SELECT id FROM chunks LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        fts_name, "",
+        "[T-002] FTS name column should be empty string when chunk name is None"
+    );
+}
+
+#[test]
+fn t_003_fts_stores_file_path() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("login"),
+        content: "fn login() { authenticate(); }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
+
+    let fts_path: String = conn
+        .query_row(
+            "SELECT file_path FROM fts_chunks WHERE rowid = (SELECT id FROM chunks LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        fts_path, "src/auth/login.ts",
+        "[T-003] FTS file_path column should store the raw file path"
+    );
+}
+
+#[test]
+fn t_014_migration_v6_to_v7_preserves_fts_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = open_db(&db_path).unwrap();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("processData"),
+        content: "fn process_data() { transform(); }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/data.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    // Simulate a v6 DB: roll back schema_version, drop FTS tables
+    conn.execute(
+        "UPDATE index_meta SET value = '6' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")
+        .unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")
+        .unwrap();
+    drop(conn);
+
+    // Re-open triggers migration v6 -> v7
+    let conn = open_db(&db_path).unwrap();
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        version, "7",
+        "[T-014] schema_version should be 7 after migration"
+    );
+
+    let results = search_by_fts(&conn, &["transform"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "[T-014] FTS search should return results after v6->v7 migration"
+    );
+    assert_eq!(results[0].chunk.name.as_deref(), Some("processData"));
+}
+
+#[test]
+fn t_015_migration_populates_fts_name_with_split_identifier() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = open_db(&db_path).unwrap();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("getUserName"),
+        content: "fn get_user_name() { return name; }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/user.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    // Simulate pre-v7: roll back to v6, drop FTS tables
+    conn.execute(
+        "UPDATE index_meta SET value = '6' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")
+        .unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")
+        .unwrap();
+    drop(conn);
+
+    // Re-open triggers migration to v7
+    let conn = open_db(&db_path).unwrap();
+
+    let fts_name: String = conn
+        .query_row(
+            "SELECT name FROM fts_chunks WHERE rowid = (SELECT id FROM chunks LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        fts_name, "get User Name",
+        "[T-015] migration should populate FTS name with split_identifier output"
+    );
+}
+
+// === Phase 2: search_by_fts tests (T-004, T-005, T-007, T-016) ===
+
+#[test]
+fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("handleSubmit"),
+            content: "function handleSubmit() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("submitForm"),
+            content: "function submitForm() {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/form.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    // Search with split keywords ["handle", "submit"] should find handleSubmit
+    let results = search_by_fts(&conn, &["handle", "submit"], None, &HashSet::new(), 10).unwrap();
+    let names: Vec<_> = results
+        .iter()
+        .filter_map(|r| r.chunk.name.as_deref())
+        .collect();
+    assert!(
+        names.contains(&"handleSubmit"),
+        "[T-004] should find handleSubmit via split keywords, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"submitForm"),
+        "[T-004] AND semantics: submitForm should NOT match [handle, submit], got: {names:?}"
+    );
+
+    // TC-7: verify FTS result fields
+    let fts_result = &results[0];
+    assert_eq!(
+        fts_result.match_source,
+        MatchSource::Fts,
+        "[TC-7] search_by_fts should set match_source to Fts"
+    );
+    assert!(
+        fts_result.distance.is_infinite(),
+        "[TC-7] search_by_fts should set distance to INFINITY"
+    );
+    assert!(
+        fts_result.score > 0.0,
+        "[TC-7] search_by_fts bm25 score should be positive, got {}",
+        fts_result.score
+    );
+}
+
+#[test]
+fn t_005_search_by_fts_finds_by_path_segment() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Other,
+        name: Some("login"),
+        content: "function login() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
+
+    let results = search_by_fts(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "[T-005] should find chunk by path segment 'auth'"
+    );
+    assert_eq!(results[0].chunk.file_path, "src/auth/login.ts");
+}
+
+#[test]
+fn t_007_search_by_fts_respects_type_filter() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("AuthButton"),
+            content: "function AuthButton() {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    let results = search_by_fts(
+        &conn,
+        &["auth"],
+        Some(&[ChunkType::Hook]),
+        &HashSet::new(),
+        10,
+    )
+    .unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "[T-007] type_filter should limit to hooks"
+    );
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
+}
+
+#[test]
+fn t_016_search_by_fts_excludes_ids() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuthProvider"),
+            content: "function useAuthProvider() {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    let all = search_by_fts(&conn, &["auth"], None, &HashSet::new(), 10).unwrap();
+    assert_eq!(all.len(), 2);
+
+    let first_id = all[0].chunk_id.unwrap();
+    let mut exclude = HashSet::new();
+    exclude.insert(first_id);
+    let filtered = search_by_fts(&conn, &["auth"], None, &exclude, 10).unwrap();
+    assert_eq!(
+        filtered.len(),
+        1,
+        "[T-016] excluded id should be filtered out"
+    );
+    assert_ne!(filtered[0].chunk_id, Some(first_id));
 }

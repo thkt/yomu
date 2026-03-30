@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
@@ -22,38 +22,11 @@ pub struct SearchOutcome {
 
 const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and", "or"];
 
-fn split_identifier(s: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let chars: Vec<char> = s.chars().collect();
-
-    for i in 0..chars.len() {
-        let c = chars[i];
-        if c == '-' || c == '_' {
-            if !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
-            }
-        } else if c.is_uppercase() {
-            let prev_lower = i > 0 && chars[i - 1].is_lowercase();
-            let prev_upper = i > 0 && chars[i - 1].is_uppercase();
-            let next_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
-            if (prev_lower || (prev_upper && next_lower)) && !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
-            }
-            current.push(c);
-        } else {
-            current.push(c);
-        }
-    }
-    if !current.is_empty() {
-        parts.push(current);
-    }
-    parts
-}
+use crate::text::split_identifier;
 
 pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for token in query.split_whitespace() {
         let lower = token.to_lowercase();
         if lower.chars().count() >= 2
@@ -73,6 +46,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         }
     }
 
+    // Words ending in -ing that are not gerunds (stripping -ing produces a non-word or keyword).
     const ING_DENY: &[&str] = &[
         "string",
         "bring",
@@ -88,6 +62,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         "sting",
         "wing",
     ];
+    // Words ending in -s that are not plurals (stripping -s produces a non-word).
     const S_DENY: &[&str] = &[
         "class", "this", "alias", "canvas", "focus", "status", "bus", "process", "address",
         "access", "express", "progress",
@@ -188,7 +163,7 @@ fn keyword_hit_ratio(
 const MAX_RESULTS_PER_FILE: usize = 2;
 
 fn cap_per_file(results: &mut Vec<storage::SearchResult>, max: usize) {
-    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut counts: HashMap<String, usize> = HashMap::new();
     results.retain(|r| {
         let count = counts.entry(r.chunk.file_path.clone()).or_insert(0);
         *count += 1;
@@ -196,11 +171,6 @@ fn cap_per_file(results: &mut Vec<storage::SearchResult>, max: usize) {
     });
 }
 
-const NAME_MATCH_BASE: f32 = 0.40;
-const NAME_MATCH_RATIO_WEIGHT: f32 = 0.20;
-const CONTENT_MATCH_BASE: f32 = 0.35;
-const CONTENT_MATCH_RATIO_WEIGHT: f32 = 0.15;
-const NAME_MATCH_BONUS: f32 = 0.05;
 const TYPE_HINT_BONUS: f32 = 0.03;
 const IMPORT_RANK_BONUS: f32 = 0.03;
 const TEST_PATH_PENALTY: f32 = 0.05;
@@ -250,7 +220,7 @@ impl Default for RerankContext<'_> {
 pub fn rerank(
     results: &mut [storage::SearchResult],
     ctx: &RerankContext<'_>,
-    import_counts: &std::collections::HashMap<String, u32>,
+    import_counts: &HashMap<String, u32>,
 ) {
     if results.is_empty() {
         return;
@@ -271,20 +241,7 @@ pub fn rerank(
     for result in results.iter_mut() {
         let base = match result.match_source {
             storage::MatchSource::Semantic => 1.0 / (1.0 + result.distance) * confidence,
-            storage::MatchSource::NameMatch => {
-                let ratio = keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, false);
-                NAME_MATCH_BASE + NAME_MATCH_RATIO_WEIGHT * ratio
-            }
-            storage::MatchSource::ContentMatch => {
-                let ratio = keyword_hit_ratio(result, ctx.keywords, ctx.keyword_idfs, true);
-                CONTENT_MATCH_BASE + CONTENT_MATCH_RATIO_WEIGHT * ratio
-            }
-        };
-
-        let name_bonus = if result.match_source == storage::MatchSource::NameMatch {
-            NAME_MATCH_BONUS
-        } else {
-            0.0
+            storage::MatchSource::Fts => result.score,
         };
 
         let overlap_bonus =
@@ -318,14 +275,10 @@ pub fn rerank(
             0.0
         };
 
-        result.score = base + name_bonus + overlap_bonus + type_bonus + import_bonus - test_penalty;
+        result.score = base + overlap_bonus + type_bonus + import_bonus - test_penalty;
     }
 
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| b.score.total_cmp(&a.score));
 }
 
 fn search_pipeline(
@@ -356,40 +309,31 @@ fn search_pipeline(
             Some(type_hints.as_slice())
         };
 
-        let mut exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
-        let name_results = storage::search_by_name(
+        let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
+        let fts_results = storage::search_by_fts(
             conn,
             &keyword_refs,
             type_filter,
             &exclude_ids,
             fallback_limit,
         )?;
-        exclude_ids.extend(name_results.iter().filter_map(|r| r.chunk_id));
-        results.extend(name_results);
-        let content_results = storage::search_by_content(
-            conn,
-            &keyword_refs,
-            type_filter,
-            &exclude_ids,
-            fallback_limit,
-        )?;
-        results.extend(content_results);
+        results.extend(fts_results);
     }
-    let embed_coverage = if stats.embeddable_chunks > 0 {
-        stats.embedded_chunks as f32 / stats.embeddable_chunks as f32
+    let embed_coverage = stats.embed_coverage();
+
+    let (keyword_idfs, import_counts) = if results.is_empty() {
+        (Vec::new(), HashMap::new())
     } else {
-        0.0
+        let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;
+        let total = stats.total_chunks.max(1) as f32;
+        let idfs: Vec<f32> = dfs
+            .iter()
+            .map(|&df| (total / (df.max(1) as f32)).ln())
+            .collect();
+        let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
+        let ic = storage::get_import_counts(conn, &file_paths)?;
+        (idfs, ic)
     };
-
-    let dfs = storage::get_keyword_doc_frequencies(conn, &keyword_refs, stats.total_chunks)?;
-    let total = stats.total_chunks.max(1) as f32;
-    let keyword_idfs: Vec<f32> = dfs
-        .iter()
-        .map(|&df| (total / (df.max(1) as f32)).ln())
-        .collect();
-
-    let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
-    let import_counts = storage::get_import_counts(conn, &file_paths)?;
     let ctx = RerankContext {
         type_hints: &type_hints,
         keywords: &keywords,

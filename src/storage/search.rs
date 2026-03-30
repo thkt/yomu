@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 
@@ -54,58 +54,7 @@ pub fn search_similar(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
-pub fn search_by_name(
-    conn: &Connection,
-    keywords: &[&str],
-    type_filter: Option<&[ChunkType]>,
-    exclude_ids: &HashSet<i64>,
-    limit: u32,
-) -> Result<Vec<SearchResult>, StorageError> {
-    if keywords.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let name_clause = vec!["name LIKE ? ESCAPE '\\'"; keywords.len()].join(" OR ");
-    let path_clause = vec!["file_path LIKE ? ESCAPE '\\'"; keywords.len()].join(" OR ");
-
-    let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
-         FROM chunks WHERE ((name IS NOT NULL AND ({name_clause})) OR ({path_clause}))",
-    );
-
-    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    for k in keywords {
-        all_params
-            .push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
-    }
-    for k in keywords {
-        all_params
-            .push(Box::new(format!("%{}%", escape_like(k))) as Box<dyn rusqlite::types::ToSql>);
-    }
-
-    append_type_filter(&mut sql, &mut all_params, "chunk_type", type_filter);
-    append_exclude_ids(&mut sql, &mut all_params, "id", exclude_ids);
-    sql.push_str(" ORDER BY id LIMIT ?");
-    all_params.push(Box::new(limit));
-
-    let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        all_params.iter().map(|b| b.as_ref()).collect();
-
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(SearchResult {
-            chunk: chunk_from_row(row, 1)?,
-            chunk_id: Some(row.get(0)?),
-            distance: f32::INFINITY,
-            match_source: MatchSource::NameMatch,
-            score: 0.5,
-        })
-    })?;
-
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub fn search_by_content(
+pub fn search_by_fts(
     conn: &Connection,
     keywords: &[&str],
     type_filter: Option<&[ChunkType]>,
@@ -118,13 +67,10 @@ pub fn search_by_content(
 
     let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| {
-            match rurico::storage::prepare_match_query(conn, k) {
-                Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
-                // prepare_match_query rejects bare FTS5 operators; fts_quote wraps them safely.
-                Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
-                _ => None,
-            }
+        .filter_map(|k| match rurico::storage::prepare_match_query(conn, k) {
+            Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
+            Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
+            _ => None,
         })
         .collect();
     if parts.is_empty() {
@@ -132,9 +78,12 @@ pub fn search_by_content(
     }
     let fts_query = parts.join(" AND ");
 
-    let mut sql = String::from(
+    const BM25_EXPR: &str = "bm25(fts_chunks, 5.0, 1.0, 3.0)";
+
+    let mut sql = format!(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, c.parent_chunk_id
+                c.start_line, c.end_line, c.parent_chunk_id,
+                {BM25_EXPR}
          FROM fts_chunks f
          INNER JOIN chunks c ON c.id = f.rowid
          WHERE fts_chunks MATCH ?1",
@@ -145,19 +94,22 @@ pub fn search_by_content(
 
     append_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
     append_exclude_ids(&mut sql, &mut params, "c.id", exclude_ids);
-    sql.push_str(" ORDER BY rank LIMIT ?");
+    sql.push_str(&format!(" ORDER BY {BM25_EXPR} LIMIT ?"));
     params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        let bm25_score: f64 = row.get(8)?;
+        let abs = (bm25_score as f32).abs();
+        let base_score = abs / (1.0 + abs);
         Ok(SearchResult {
             chunk: chunk_from_row(row, 1)?,
             chunk_id: Some(row.get(0)?),
             distance: f32::INFINITY,
-            match_source: MatchSource::ContentMatch,
-            score: 0.45,
+            match_source: MatchSource::Fts,
+            score: base_score,
         })
     })?;
 
@@ -179,9 +131,9 @@ pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>
 pub fn get_chunks_by_ids(
     conn: &Connection,
     ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Chunk>, StorageError> {
+) -> Result<HashMap<i64, Chunk>, StorageError> {
     if ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let placeholders = super::sql_placeholders(ids.len());
     let sql = format!(
@@ -198,7 +150,7 @@ pub fn get_chunks_by_ids(
         let chunk = chunk_from_row(row, 1)?;
         Ok((id, chunk))
     })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+    rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
 }
 
@@ -260,15 +212,4 @@ fn append_exclude_ids(
             params.push(Box::new(*id));
         }
     }
-}
-
-fn escape_like(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len());
-    for c in s.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
 }

@@ -103,20 +103,23 @@ pub struct IndexStatus {
 }
 
 impl IndexStatus {
-    pub fn embed_percentage(&self) -> u32 {
+    pub fn embed_coverage(&self) -> f32 {
         if self.embeddable_chunks > 0 {
-            (self.embedded_chunks as f64 / self.embeddable_chunks as f64 * 100.0) as u32
+            self.embedded_chunks as f32 / self.embeddable_chunks as f32
         } else {
-            0
+            0.0
         }
+    }
+
+    pub fn embed_percentage(&self) -> u32 {
+        (self.embed_coverage() as f64 * 100.0) as u32
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatchSource {
     Semantic,
-    NameMatch,
-    ContentMatch,
+    Fts,
 }
 
 #[derive(Debug, Clone)]
@@ -200,9 +203,13 @@ fn insert_chunk_row(
     )?;
     let chunk_id = conn.last_insert_rowid();
 
+    let fts_name = chunk
+        .name
+        .map(|n| crate::text::split_identifier(n).join(" "))
+        .unwrap_or_default();
     conn.execute(
-        "INSERT INTO fts_chunks(rowid, content) VALUES (?1, ?2)",
-        rusqlite::params![chunk_id, chunk.content],
+        "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![chunk_id, fts_name, chunk.content, file_path],
     )?;
 
     Ok(chunk_id)
