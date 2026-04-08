@@ -11,7 +11,7 @@ fn parse_json(json: &str) -> serde_json::Value {
 }
 
 fn test_embedding() -> Vec<f32> {
-    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
+    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
     emb[0] = 1.0;
     emb
 }
@@ -115,7 +115,7 @@ fn search_without_embedder_degrades_gracefully() {
 fn search_auto_indexes_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Button.tsx", "function Button() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     let text = y.search("button component", 10, 0, false).unwrap();
@@ -143,7 +143,7 @@ fn search_auto_indexes_empty_db() {
 fn search_incremental_embeds_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Form.tsx", "export function Form() { return <form/>; }")],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
@@ -250,13 +250,13 @@ fn search_degraded_with_results_shows_note() {
             "src/Button.tsx",
             "export function Button() { return <div/>; }",
         )],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &rurico::embed::MockEmbedder,
+        &rurico::embed::MockEmbedder::default(),
         false,
     )
     .unwrap();
@@ -926,7 +926,7 @@ fn integration_index_then_impact() {
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &rurico::embed::MockEmbedder,
+        &rurico::embed::MockEmbedder::default(),
         false,
     )
     .unwrap();
@@ -1060,7 +1060,7 @@ fn determine_index_state_variants() {
 fn ensure_indexed_partially_embedded_triggers_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/App.tsx", "export function App() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
@@ -1098,13 +1098,13 @@ fn ensure_indexed_fully_embedded_skips_embed() {
             "src/Button.tsx",
             "export function Button() { return <button/>; }",
         )],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &rurico::embed::MockEmbedder,
+        &rurico::embed::MockEmbedder::default(),
         false,
     )
     .unwrap();
@@ -1126,13 +1126,13 @@ fn ensure_indexed_fully_embedded_skips_embed() {
 fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let (y, dir) = test_yomu_with_files_and_embedder(
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder),
+        Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
     indexer::run_index(
         Arc::clone(&y.conn),
         y.root.as_path(),
-        &rurico::embed::MockEmbedder,
+        &rurico::embed::MockEmbedder::default(),
         false,
     )
     .unwrap();
@@ -1616,7 +1616,7 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
     );
 
     let text = y.search("button component", 10, 0, false).unwrap();
@@ -1765,7 +1765,7 @@ fn json_notes_empty_via_search_with_ok_embedder() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(rurico::embed::MockEmbedder) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
     );
 
     let json = y.search("nav", 10, 0, true).unwrap();

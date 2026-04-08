@@ -7,7 +7,7 @@ use super::*;
 use crate::storage;
 
 fn test_embedding() -> Vec<f32> {
-    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS as usize];
+    let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
     emb[0] = 1.0;
     emb
 }
@@ -37,7 +37,7 @@ fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder, "button", 10, 0).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0).unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -208,7 +208,9 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth", 5, 0).unwrap().results;
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0)
+        .unwrap()
+        .results;
 
     assert!(
         results.len() >= 2,
@@ -260,7 +262,9 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth", 5, 0).unwrap().results;
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0)
+        .unwrap()
+        .results;
 
     let auth_count = results
         .iter()
@@ -623,7 +627,7 @@ fn search_returns_results_sorted_by_score() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder, "auth hook", 5, 0)
+    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0)
         .unwrap()
         .results;
 
@@ -867,7 +871,7 @@ fn search_degrades_on_model_not_available() {
 #[ignore = "requires model download"]
 fn search_returns_results() {
     use rurico::embed::download_model;
-    let paths = download_model().expect("download model");
+    let paths = download_model(rurico::embed::ModelId::default()).expect("download model");
     let embedder = Embedder::new(&paths).expect("load model");
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
@@ -1073,7 +1077,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder, "button", 10, 0).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0).unwrap();
     assert!(
         !outcome.results.is_empty(),
         "should return text/name fallback results even with zero embeddings"

@@ -25,7 +25,7 @@ fn init_db_creates_tables() {
 #[test]
 fn insert_and_read_chunk() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.1_f32; 768];
+    let embedding = vec![0.1_f32; EMBEDDING_DIMS];
 
     let id = insert_chunk(
         &conn,
@@ -62,7 +62,7 @@ fn insert_and_read_chunk() {
 #[test]
 fn should_reindex_returns_false_for_same_hash() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -87,7 +87,7 @@ fn should_reindex_returns_false_for_same_hash() {
 #[test]
 fn should_reindex_returns_true_for_different_hash() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -118,7 +118,7 @@ fn should_reindex_returns_true_for_new_file() {
 #[test]
 fn get_stats_returns_counts() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -177,7 +177,7 @@ fn get_stats_returns_counts() {
 #[test]
 fn get_all_file_paths_returns_distinct_paths() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -237,7 +237,7 @@ fn get_all_file_paths_returns_distinct_paths() {
 #[test]
 fn delete_file_chunks_removes_all_chunks_for_file() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -286,7 +286,7 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
 #[test]
 fn replace_file_chunks_replaces_existing() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -345,9 +345,9 @@ fn replace_file_chunks_replaces_existing() {
 #[test]
 fn search_similar_returns_ordered_results() {
     let (conn, _dir) = test_db();
-    let mut emb_a = vec![0.0_f32; 768];
+    let mut emb_a = vec![0.0_f32; EMBEDDING_DIMS];
     emb_a[0] = 1.0;
-    let mut emb_b = vec![0.0_f32; 768];
+    let mut emb_b = vec![0.0_f32; EMBEDDING_DIMS];
     emb_b[1] = 1.0;
 
     insert_chunk(
@@ -438,7 +438,7 @@ fn chunk_type_from_db_unknown_defaults_to_other() {
 #[test]
 fn delete_file_chunks_also_removes_file_context() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
     let chunks = vec![NewChunk {
         chunk_type: &ChunkType::Component,
         name: Some("A"),
@@ -478,7 +478,7 @@ fn delete_file_chunks_also_removes_file_context() {
 #[test]
 fn replace_file_chunks_stores_file_context() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
     let chunks = vec![NewChunk {
         chunk_type: &ChunkType::Component,
         name: Some("App"),
@@ -521,7 +521,7 @@ fn get_file_contexts_returns_empty_for_empty_input() {
 #[test]
 fn get_file_siblings_returns_all_chunks_for_file() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
     insert_chunk(
         &conn,
         "src/A.tsx",
@@ -667,7 +667,7 @@ fn replace_file_references_replaces_existing() {
 #[test]
 fn delete_file_chunks_also_removes_references() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; 768];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
     let chunks = vec![NewChunk {
         chunk_type: &ChunkType::Component,
         name: Some("A"),
@@ -851,7 +851,7 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
 #[test]
 fn replace_file_chunks_only_deletes_old_embeddings() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -930,9 +930,9 @@ fn add_embeddings_inserts_into_vec_chunks() {
     let ids = get_chunk_ids(&conn, "src/Card.tsx");
     assert_eq!(ids.len(), 2);
 
-    let mut emb1 = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let mut emb1 = vec![0.0_f32; EMBEDDING_DIMS];
     emb1[0] = 1.0;
-    let mut emb2 = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let mut emb2 = vec![0.0_f32; EMBEDDING_DIMS];
     emb2[1] = 1.0;
 
     let embeddings = vec![(ids[0], emb1), (ids[1], emb2)];
@@ -957,7 +957,7 @@ fn add_embeddings_skips_already_embedded() {
     replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[], None).unwrap();
 
     let ids = get_chunk_ids(&conn, "src/Modal.tsx");
-    let emb = vec![0.5_f32; EMBEDDING_DIMS as usize];
+    let emb = vec![0.5_f32; EMBEDDING_DIMS];
     let embeddings = vec![(ids[0], emb.clone())];
 
     let inserted = add_embeddings(&conn, &embeddings).unwrap();
@@ -973,7 +973,7 @@ fn add_embeddings_skips_already_embedded() {
 #[test]
 fn get_unembedded_file_paths_returns_only_unembedded() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -1056,7 +1056,7 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
 #[test]
 fn needs_embedding_returns_false_for_fully_embedded() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -1081,7 +1081,7 @@ fn needs_embedding_returns_false_for_fully_embedded() {
 #[test]
 fn needs_embedding_returns_true_when_hash_changed() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -1106,7 +1106,7 @@ fn needs_embedding_returns_true_when_hash_changed() {
 #[test]
 fn get_stats_reports_embedded_vs_total_chunks() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -1299,7 +1299,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
 #[test]
 fn search_similar_sets_semantic_match_source() {
     let (conn, _dir) = test_db();
-    let mut emb = vec![0.0_f32; 768];
+    let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
     emb[0] = 1.0;
 
     insert_chunk(
@@ -1327,7 +1327,7 @@ fn search_similar_sets_semantic_match_source() {
 #[test]
 fn search_similar_sets_initial_score() {
     let (conn, _dir) = test_db();
-    let mut emb = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
     emb[0] = 1.0;
 
     insert_chunk(
@@ -1578,7 +1578,7 @@ fn get_unembedded_chunks_for_file_returns_triple() {
 #[test]
 fn get_unembedded_chunks_for_file_excludes_embedded() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -1754,7 +1754,7 @@ fn replace_file_chunks_rejects_length_mismatch() {
             parent_index: None,
         },
     ];
-    let embeddings = vec![vec![0.0_f32; EMBEDDING_DIMS as usize]]; // 1 embedding for 2 chunks
+    let embeddings = vec![vec![0.0_f32; EMBEDDING_DIMS]]; // 1 embedding for 2 chunks
 
     let result = replace_file_chunks(&conn, "src/test.rs", &chunks, &embeddings, "h1", "", &[]);
     assert!(result.is_err(), "should reject mismatched lengths");
@@ -1788,7 +1788,7 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
     assert!(result.is_err(), "should reject wrong embedding dimensions");
     match result.unwrap_err() {
         StorageError::DimensionMismatch { expected, actual } => {
-            assert_eq!(expected, EMBEDDING_DIMS as usize);
+            assert_eq!(expected, EMBEDDING_DIMS);
             assert_eq!(actual, 10);
         }
         e => panic!("expected DimensionMismatch, got: {e}"),
@@ -1949,7 +1949,7 @@ fn t_009_out_of_order_chunks_resolves_to_null() {
 #[test]
 fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     let parent = NewChunk {
         chunk_type: &ChunkType::Component,
@@ -2035,7 +2035,7 @@ fn t_016_get_stats_returns_embeddable_and_total_chunks() {
 #[test]
 fn t_017_embed_percentage_uses_embeddable_chunks() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     insert_chunk(
         &conn,
@@ -2085,7 +2085,7 @@ fn t_017_embed_percentage_uses_embeddable_chunks() {
 #[test]
 fn t_018_embed_path_with_innerfn_no_length_mismatch() {
     let (conn, _dir) = test_db();
-    let embedding = vec![0.0_f32; EMBEDDING_DIMS as usize];
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
     let parent = NewChunk {
         chunk_type: &ChunkType::Component,
