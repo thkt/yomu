@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rurico::embed::{Embed, EmbedError, Embedder};
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, Embedder};
 
 use super::Yomu;
 
@@ -53,7 +53,10 @@ impl Embed for NoOpEmbedder {
     fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
         Err(EmbedError::Inference("embedder not available".into()))
     }
-    fn embed_document(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+    fn embed_document(&self, _text: &str) -> Result<ChunkedEmbedding, EmbedError> {
+        Err(EmbedError::Inference("embedder not available".into()))
+    }
+    fn embed_text(&self, _text: &str, _prefix: &str) -> Result<Vec<f32>, EmbedError> {
         Err(EmbedError::Inference("embedder not available".into()))
     }
 }
@@ -83,7 +86,7 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
 }
 
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
-    use rurico::embed::{ProbeStatus, model_paths_if_cached};
+    use rurico::embed::{ModelId, ProbeStatus, cached_artifacts};
 
     fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
         record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
@@ -94,7 +97,7 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
         tracing::info!("Embedding disabled via YOMU_EMBED=0");
         return Err(DegradedReason::Disabled);
     }
-    let paths = match model_paths_if_cached() {
+    let paths = match cached_artifacts(ModelId::default()) {
         Ok(Some(p)) => p,
         Ok(None) => return Err(DegradedReason::NotInstalled),
         Err(e) => return Err(probe_failed(&e)),

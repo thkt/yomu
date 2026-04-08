@@ -208,15 +208,15 @@ fn process_file(
     } else {
         build_references(&pf.parsed_imports, &pf.rel_path, resolver)
     };
-    storage::replace_file_chunks_only(
-        conn,
-        &pf.rel_path,
-        &new_chunks,
-        &pf.hash,
-        &pf.imports_text,
-        &refs,
-        pf.mtime_epoch,
-    )?;
+    let data = storage::FileData {
+        file_path: &pf.rel_path,
+        chunks: &new_chunks,
+        file_hash: &pf.hash,
+        imports_text: &pf.imports_text,
+        refs: &refs,
+        mtime_epoch: pf.mtime_epoch,
+    };
+    storage::replace_file_data(conn, &data, None)?;
     Ok(FileOutcome::Processed(n))
 }
 

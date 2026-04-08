@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embed, EmbedError};
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
 
 use crate::resolver::Resolver;
 use crate::rust_resolver::RustResolver;
@@ -25,6 +25,8 @@ pub(super) struct EmbedStoreResult {
 
 enum EmbedFailure {
     Abort(EmbedError),
+    /// rurico returned an empty `ChunkedEmbedding.chunks`, violating its documented contract.
+    Contract,
     Skip,
 }
 
@@ -64,6 +66,33 @@ fn classify_embed_error(
         EmbedFailure::Abort(e)
     } else {
         EmbedFailure::Skip
+    }
+}
+
+/// yomu stores one embedding per source chunk (1:1 schema). When rurico
+/// produces multiple overlapping chunks for long texts, only the first is kept.
+///
+/// Returns `Err(())` if rurico violates its contract by returning empty chunks.
+fn first_chunk(emb: ChunkedEmbedding) -> Result<Vec<f32>, ()> {
+    emb.chunks.into_iter().next().ok_or(())
+}
+
+fn run_embed_batch(
+    embedder: &(impl Embed + ?Sized),
+    texts: &[String],
+    consecutive_errors: &mut u32,
+    file_path: &str,
+) -> Result<Vec<Vec<f32>>, EmbedFailure> {
+    let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
+    match embedder.embed_documents_batch(&texts_ref) {
+        Ok(embs) => {
+            *consecutive_errors = 0;
+            embs.into_iter()
+                .map(first_chunk)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|()| EmbedFailure::Contract)
+        }
+        Err(e) => Err(classify_embed_error(e, consecutive_errors, file_path)),
     }
 }
 
@@ -113,24 +142,19 @@ pub(super) fn embed_and_store(
             })
             .collect();
 
-        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let embeddings = match embedder.embed_documents_batch(&texts_ref) {
-            Ok(embs) => {
-                consecutive_errors = 0;
-                embs
+        let embeddings = match run_embed_batch(embedder, &texts, &mut consecutive_errors, &pf.rel_path) {
+            Ok(embs) => embs,
+            Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
+            Err(EmbedFailure::Contract) => return Err(IndexError::Internal(
+                "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
+            )),
+            Err(EmbedFailure::Skip) => {
+                files_errored += 1;
+                continue;
             }
-            Err(e) => match classify_embed_error(e, &mut consecutive_errors, &pf.rel_path) {
-                EmbedFailure::Abort(e) => {
-                    return Err(IndexError::Embed(e));
-                }
-                EmbedFailure::Skip => {
-                    files_errored += 1;
-                    continue;
-                }
-            },
         };
 
-        let n = pf.raw_chunks.len() as u32;
+        let n = embeddings.len() as u32;
         let refs = if pf.rel_path.ends_with(".rs") {
             build_references(&pf.parsed_imports, &pf.rel_path, rust_resolver)
         } else {
@@ -211,16 +235,13 @@ fn embed_file_chunks(
     texts: Vec<String>,
     consecutive_errors: &mut u32,
 ) -> Result<Option<u32>, IndexError> {
-    let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let embeddings = match embedder.embed_documents_batch(&texts_ref) {
-        Ok(embs) => {
-            *consecutive_errors = 0;
-            embs
-        }
-        Err(e) => match classify_embed_error(e, consecutive_errors, file_path) {
-            EmbedFailure::Abort(e) => return Err(IndexError::Embed(e)),
-            EmbedFailure::Skip => return Ok(None),
-        },
+    let embeddings = match run_embed_batch(embedder, &texts, consecutive_errors, file_path) {
+        Ok(embs) => embs,
+        Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
+        Err(EmbedFailure::Contract) => return Err(IndexError::Internal(
+            "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
+        )),
+        Err(EmbedFailure::Skip) => return Ok(None),
     };
 
     if embeddings.len() != chunk_ids.len() {
@@ -322,4 +343,25 @@ pub fn run_incremental_embed(
         files_completed,
         budget_exhausted,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_chunk_returns_err_on_empty_chunks() {
+        assert!(first_chunk(ChunkedEmbedding { chunks: vec![] }).is_err());
+    }
+
+    #[test]
+    fn first_chunk_takes_first_only() {
+        let v1 = vec![1.0_f32; 3];
+        let v2 = vec![2.0_f32; 3];
+        let result = first_chunk(ChunkedEmbedding {
+            chunks: vec![v1.clone(), v2],
+        })
+        .unwrap();
+        assert_eq!(result, v1);
+    }
 }

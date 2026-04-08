@@ -112,7 +112,7 @@ fn open_db(root: &Path) -> Arc<Mutex<yomu::storage::Db>> {
 }
 
 fn load_embedder() -> Option<rurico::embed::Embedder> {
-    let paths = rurico::embed::download_model().ok()?;
+    let paths = rurico::embed::download_model(rurico::embed::ModelId::default()).ok()?;
     rurico::embed::Embedder::new(&paths).ok()
 }
 
