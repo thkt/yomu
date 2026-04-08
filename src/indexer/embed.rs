@@ -142,17 +142,20 @@ pub(super) fn embed_and_store(
             })
             .collect();
 
-        let embeddings = match run_embed_batch(embedder, &texts, &mut consecutive_errors, &pf.rel_path) {
-            Ok(embs) => embs,
-            Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
-            Err(EmbedFailure::Contract) => return Err(IndexError::Internal(
-                "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
-            )),
-            Err(EmbedFailure::Skip) => {
-                files_errored += 1;
-                continue;
-            }
-        };
+        let embeddings =
+            match run_embed_batch(embedder, &texts, &mut consecutive_errors, &pf.rel_path) {
+                Ok(embs) => embs,
+                Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
+                Err(EmbedFailure::Contract) => {
+                    return Err(IndexError::Internal(
+                        "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
+                    ));
+                }
+                Err(EmbedFailure::Skip) => {
+                    files_errored += 1;
+                    continue;
+                }
+            };
 
         let n = embeddings.len() as u32;
         let refs = if pf.rel_path.ends_with(".rs") {
@@ -238,9 +241,11 @@ fn embed_file_chunks(
     let embeddings = match run_embed_batch(embedder, &texts, consecutive_errors, file_path) {
         Ok(embs) => embs,
         Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
-        Err(EmbedFailure::Contract) => return Err(IndexError::Internal(
-            "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
-        )),
+        Err(EmbedFailure::Contract) => {
+            return Err(IndexError::Internal(
+                "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
+            ));
+        }
         Err(EmbedFailure::Skip) => return Ok(None),
     };
 
