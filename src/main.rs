@@ -1,3 +1,5 @@
+mod progress;
+
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 
@@ -55,6 +57,21 @@ enum Command {
     },
     /// Show index statistics.
     Status,
+    /// Manage the embedding model.
+    #[command(subcommand_required = true, arg_required_else_help = true, after_help = "\
+Examples:
+  yomu model download
+  YOMU_AUTO_DOWNLOAD_MODEL=1 yomu search \"auth hooks\"")]
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelCommand {
+    /// Download embedding model from Hugging Face Hub.
+    Download,
 }
 
 fn main() -> ExitCode {
@@ -71,14 +88,6 @@ fn main() -> ExitCode {
     let cli = parse_cli();
     let json = cli.json;
 
-    let yomu = match Yomu::new() {
-        Ok(y) => y,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return exit_code_for(&e);
-        }
-    };
-
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
@@ -88,6 +97,31 @@ fn main() -> ExitCode {
                     "requires a subcommand",
                 )
                 .exit();
+        }
+    };
+
+    // model subcommands do not require a project root or DB
+    if let Command::Model { command } = &command {
+        let result = match command {
+            ModelCommand::Download => run_model_download(json),
+        };
+        return match result {
+            Ok(output) => {
+                println!("{output}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                exit_code_for(&e)
+            }
+        };
+    }
+
+    let yomu = match Yomu::new() {
+        Ok(y) => y,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return exit_code_for(&e);
         }
     };
 
@@ -131,6 +165,7 @@ fn main() -> ExitCode {
             depth,
         } => yomu.impact(&target, symbol.as_deref(), depth, json),
         Command::Status => yomu.status(json),
+        Command::Model { .. } => unreachable!("handled before Yomu::new()"),
     };
 
     match result {
@@ -235,11 +270,38 @@ fn resolve_query_with(
             stdin
                 .read_to_string(&mut buf)
                 .map_err(|e| format!("failed to read from stdin: {e}"))?;
-            let trimmed = buf.trim().to_string();
+            let trimmed = buf.trim();
             if trimmed.is_empty() {
                 return Err("empty query from stdin".into());
             }
-            Ok(trimmed)
+            Ok(trimmed.to_string())
+        }
+    }
+}
+
+fn run_model_download(json: bool) -> Result<String, YomuError> {
+    use rurico::embed::{Embedder, ModelId};
+
+    let spinner = progress::Spinner::new("Downloading model...");
+    let paths = match rurico::embed::download_model(ModelId::default()) {
+        Ok(p) => p,
+        Err(e) => {
+            spinner.cancel();
+            return Err(YomuError::Internal(format!("Failed to download model: {e}")));
+        }
+    };
+    match Embedder::new(&paths) {
+        Ok(_) => {
+            spinner.finish("Model ready");
+            if json {
+                Ok(serde_json::json!({"status": "ok"}).to_string())
+            } else {
+                Ok("Model downloaded and verified".to_string())
+            }
+        }
+        Err(e) => {
+            spinner.cancel();
+            Err(YomuError::Internal(format!("Failed to verify model: {e}")))
         }
     }
 }
