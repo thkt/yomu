@@ -58,10 +58,14 @@ enum Command {
     /// Show index statistics.
     Status,
     /// Manage the embedding model.
-    #[command(subcommand_required = true, arg_required_else_help = true, after_help = "\
+    #[command(
+        subcommand_required = true,
+        arg_required_else_help = true,
+        after_help = "\
 Examples:
   yomu model download
-  YOMU_AUTO_DOWNLOAD_MODEL=1 yomu search \"auth hooks\"")]
+  YOMU_AUTO_DOWNLOAD_MODEL=1 yomu search \"auth hooks\""
+    )]
     Model {
         #[command(subcommand)]
         command: ModelCommand,
@@ -288,7 +292,9 @@ fn run_model_download(json: bool) -> Result<String, YomuError> {
         Err(e) => {
             spinner.cancel();
             tracing::error!(error = %e, "Model download failed");
-            return Err(YomuError::Internal(format!("Failed to download model: {e}")));
+            return Err(YomuError::Internal(format!(
+                "Failed to download model: {e}"
+            )));
         }
     };
     match Embedder::probe(&paths) {

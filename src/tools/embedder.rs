@@ -140,15 +140,13 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
     }
     let paths = match cache_check() {
         Ok(Some(p)) => p,
-        Ok(None) if auto_download => {
-            match download_fn() {
-                Ok(p) => p,
-                Err(e) => {
-                    record_embedder_warning(DegradedReason::DownloadFailed, &e.to_string());
-                    return Err(DegradedReason::DownloadFailed);
-                }
+        Ok(None) if auto_download => match download_fn() {
+            Ok(p) => p,
+            Err(e) => {
+                record_embedder_warning(DegradedReason::DownloadFailed, &e.to_string());
+                return Err(DegradedReason::DownloadFailed);
             }
-        }
+        },
         Ok(None) => return Err(DegradedReason::NotInstalled),
         Err(e) => return Err(probe_failed(&e)),
     };
@@ -234,8 +232,8 @@ mod tests {
             false,
             || Ok::<_, &str>(None),
             || -> Result<rurico::embed::Artifacts, &str> {
-            unreachable!("download_fn must not be called when disabled")
-        },
+                unreachable!("download_fn must not be called when disabled")
+            },
         );
         assert!(matches!(result, Err(DegradedReason::Disabled)));
     }
