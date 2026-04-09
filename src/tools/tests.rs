@@ -1721,6 +1721,10 @@ fn user_note_exact_values_for_all_variants() {
         DegradedReason::ProbeFailed.user_note(),
         Some("embedding model unavailable; results from text search only")
     );
+    assert_eq!(
+        DegradedReason::DownloadFailed.user_note(),
+        Some("embedding model download failed; results from text search only")
+    );
 }
 
 #[test]

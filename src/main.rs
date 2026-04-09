@@ -280,16 +280,30 @@ fn resolve_query_with(
 }
 
 fn run_model_download(json: bool) -> Result<String, YomuError> {
-    use rurico::embed::{Embedder, ModelId};
+    use rurico::embed::{Embedder, ModelId, ProbeStatus};
 
     let spinner = progress::Spinner::new("Downloading model...");
     let paths = match rurico::embed::download_model(ModelId::default()) {
         Ok(p) => p,
         Err(e) => {
             spinner.cancel();
+            tracing::error!(error = %e, "Model download failed");
             return Err(YomuError::Internal(format!("Failed to download model: {e}")));
         }
     };
+    match Embedder::probe(&paths) {
+        Ok(ProbeStatus::Available) => {}
+        Ok(ProbeStatus::BackendUnavailable) => {
+            spinner.cancel();
+            return Err(YomuError::Internal(
+                "Model downloaded but MLX backend is unavailable".to_string(),
+            ));
+        }
+        Err(e) => {
+            spinner.cancel();
+            return Err(YomuError::Internal(format!("Model probe failed: {e}")));
+        }
+    }
     match Embedder::new(&paths) {
         Ok(_) => {
             spinner.finish("Model ready");
