@@ -834,6 +834,47 @@ fn order_files_for_embedding_type_hints_prioritize() {
 }
 
 #[test]
+fn run_incremental_embed_with_multi_chunk_embedder_keeps_first_only() {
+    let (conn, _dir) = test_db();
+
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/App.tsx",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("App"),
+            content: "function App() { return <main/>; }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        }],
+        "h1",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    let conn = Arc::new(Mutex::new(conn));
+
+    // MockChunkedEmbedder returns 3 chunks per document; first_chunk keeps only the first.
+    let result = run_incremental_embed(
+        Arc::clone(&conn),
+        &MockChunkedEmbedder::new(3),
+        50,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(result.files_completed, 1);
+    assert_eq!(result.chunks_embedded, 1);
+
+    let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
+    // Embedding count must equal embeddable chunk count (1:1), NOT chunk_count * 3.
+    assert_eq!(stats.embedded_chunks, stats.embeddable_chunks);
+}
+
+#[test]
 fn order_files_for_embedding_empty_hints_no_reorder() {
     let (conn, _dir) = test_db();
 
