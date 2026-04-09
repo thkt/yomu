@@ -14,6 +14,7 @@ pub(super) enum DegradedReason {
     NotInstalled,
     BackendUnavailable,
     ProbeFailed,
+    DownloadFailed,
 }
 
 impl DegradedReason {
@@ -25,6 +26,9 @@ impl DegradedReason {
             }
             Self::BackendUnavailable | Self::ProbeFailed => {
                 Some("embedding model unavailable; results from text search only")
+            }
+            Self::DownloadFailed => {
+                Some("embedding model download failed; results from text search only")
             }
         }
     }
@@ -85,8 +89,45 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
     }
 }
 
+pub(super) fn parse_auto_download(value: Option<&str>) -> bool {
+    match value {
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") | None => false,
+        Some(v) => {
+            tracing::warn!(
+                value = %v,
+                "YOMU_AUTO_DOWNLOAD_MODEL only accepts 1/true/yes/on, ignoring"
+            );
+            false
+        }
+    }
+}
+
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
-    use rurico::embed::{ModelId, ProbeStatus, cached_artifacts};
+    let auto_download =
+        parse_auto_download(std::env::var("YOMU_AUTO_DOWNLOAD_MODEL").ok().as_deref());
+    try_load_embedder_with(
+        disabled,
+        auto_download,
+        || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
+        || {
+            eprintln!("yomu: auto-downloading embedding model...");
+            let result = rurico::embed::download_model(rurico::embed::ModelId::default());
+            if result.is_ok() {
+                eprintln!("yomu: model ready");
+            }
+            result
+        },
+    )
+}
+
+fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
+    disabled: bool,
+    auto_download: bool,
+    cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
+    download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
+) -> Result<Arc<dyn Embed>, DegradedReason> {
+    use rurico::embed::ProbeStatus;
 
     fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
         record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
@@ -97,8 +138,15 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
         tracing::info!("Embedding disabled via YOMU_EMBED=0");
         return Err(DegradedReason::Disabled);
     }
-    let paths = match cached_artifacts(ModelId::default()) {
+    let paths = match cache_check() {
         Ok(Some(p)) => p,
+        Ok(None) if auto_download => match download_fn() {
+            Ok(p) => p,
+            Err(e) => {
+                record_embedder_warning(DegradedReason::DownloadFailed, &e.to_string());
+                return Err(DegradedReason::DownloadFailed);
+            }
+        },
         Ok(None) => return Err(DegradedReason::NotInstalled),
         Err(e) => return Err(probe_failed(&e)),
     };
@@ -169,5 +217,88 @@ impl Yomu {
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // disabled=true → DegradedReason::Disabled
+    #[test]
+    fn disabled_returns_disabled_reason() {
+        let result = try_load_embedder_with(
+            true,
+            false,
+            || Ok::<_, &str>(None),
+            || -> Result<rurico::embed::Artifacts, &str> {
+                unreachable!("download_fn must not be called when disabled")
+            },
+        );
+        assert!(matches!(result, Err(DegradedReason::Disabled)));
+    }
+
+    // cache returns None, no auto_download → DegradedReason::NotInstalled
+    #[test]
+    fn absent_returns_not_installed() {
+        let result = try_load_embedder_with(
+            false,
+            false,
+            || Ok::<_, &str>(None),
+            || -> Result<rurico::embed::Artifacts, &str> {
+                unreachable!("download_fn must not be called when auto_download=false")
+            },
+        );
+        assert!(matches!(result, Err(DegradedReason::NotInstalled)));
+    }
+
+    // cache_check fails → DegradedReason::ProbeFailed
+    #[test]
+    fn cache_error_returns_probe_failed() {
+        let result = try_load_embedder_with(
+            false,
+            false,
+            || Err::<Option<rurico::embed::Artifacts>, _>("cache broken"),
+            || -> Result<rurico::embed::Artifacts, &str> {
+                unreachable!("download_fn must not be called when cache_check fails")
+            },
+        );
+        assert!(matches!(result, Err(DegradedReason::ProbeFailed)));
+    }
+
+    // auto_download=true, model absent, download fails → DegradedReason::DownloadFailed
+    #[test]
+    fn auto_download_failure_returns_download_failed() {
+        let result = try_load_embedder_with(
+            false,
+            true,
+            || Ok::<_, &str>(None),
+            || Err::<rurico::embed::Artifacts, _>("download failed"),
+        );
+        assert!(matches!(result, Err(DegradedReason::DownloadFailed)));
+    }
+
+    #[test]
+    fn parse_auto_download_truthy_values() {
+        assert!(parse_auto_download(Some("1")));
+        assert!(parse_auto_download(Some("true")));
+        assert!(parse_auto_download(Some("yes")));
+        assert!(parse_auto_download(Some("on")));
+    }
+
+    #[test]
+    fn parse_auto_download_falsy_values() {
+        assert!(!parse_auto_download(Some("0")));
+        assert!(!parse_auto_download(Some("false")));
+        assert!(!parse_auto_download(Some("no")));
+        assert!(!parse_auto_download(Some("off")));
+        assert!(!parse_auto_download(None));
+    }
+
+    #[test]
+    fn parse_auto_download_unrecognized_returns_false() {
+        assert!(!parse_auto_download(Some("TRUE")));
+        assert!(!parse_auto_download(Some("2")));
+        assert!(!parse_auto_download(Some("enabled")));
     }
 }
