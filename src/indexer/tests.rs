@@ -858,13 +858,8 @@ fn run_incremental_embed_with_multi_chunk_embedder_keeps_first_only() {
     let conn = Arc::new(Mutex::new(conn));
 
     // MockChunkedEmbedder returns 3 chunks per document; first_chunk keeps only the first.
-    let result = run_incremental_embed(
-        Arc::clone(&conn),
-        &MockChunkedEmbedder::new(3),
-        50,
-        None,
-    )
-    .unwrap();
+    let result =
+        run_incremental_embed(Arc::clone(&conn), &MockChunkedEmbedder::new(3), 50, None).unwrap();
 
     assert_eq!(result.files_completed, 1);
     assert_eq!(result.chunks_embedded, 1);
