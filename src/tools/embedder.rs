@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, Embedder};
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, EmbedInitError, Embedder};
 
 use super::Yomu;
 
@@ -136,11 +136,37 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
     cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
     download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
 ) -> Result<Arc<dyn Embed>, DegradedReason> {
+    try_load_embedder_with_fns(
+        auto_download,
+        cache_check,
+        download_fn,
+        |a| Embedder::probe(a),
+        |a| Embedder::new(a),
+    )
+}
+
+fn try_load_embedder_with_fns<CE, DE>(
+    auto_download: bool,
+    cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
+    download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
+    probe_fn: impl FnOnce(&rurico::embed::Artifacts) -> Result<rurico::embed::ProbeStatus, EmbedInitError>,
+    new_fn: impl FnOnce(&rurico::embed::Artifacts) -> Result<Embedder, EmbedInitError>,
+) -> Result<Arc<dyn Embed>, DegradedReason>
+where
+    CE: std::fmt::Display,
+    DE: std::fmt::Display,
+{
     use rurico::embed::ProbeStatus;
 
     fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
         record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
         DegradedReason::ProbeFailed
+    }
+
+    fn delete_corrupt(paths: rurico::embed::Artifacts) {
+        if let Err(e) = paths.delete_files() {
+            tracing::warn!(error = %e, "failed to delete corrupt model files");
+        }
     }
 
     let paths = match cache_check() {
@@ -155,7 +181,7 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
         Ok(None) => return Err(DegradedReason::NotInstalled),
         Err(e) => return Err(probe_failed(&e)),
     };
-    match Embedder::probe(&paths) {
+    match probe_fn(&paths) {
         Ok(ProbeStatus::Available) => {}
         Ok(ProbeStatus::BackendUnavailable) => {
             record_embedder_warning(
@@ -164,9 +190,13 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
             );
             return Err(DegradedReason::BackendUnavailable);
         }
+        Err(e @ EmbedInitError::ModelCorrupt { .. }) => {
+            delete_corrupt(paths);
+            return Err(probe_failed(&e));
+        }
         Err(e) => return Err(probe_failed(&e)),
     }
-    let embedder = Embedder::new(&paths).map_err(|e| probe_failed(&e))?;
+    let embedder = new_fn(&paths).map_err(|e| probe_failed(&e))?;
     tracing::info!("Embedding model loaded successfully");
     Ok(Arc::new(embedder) as Arc<dyn Embed>)
 }
