@@ -1,5 +1,6 @@
-mod progress;
 mod shorthand;
+
+use yomu::progress;
 
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;

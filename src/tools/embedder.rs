@@ -114,12 +114,19 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
         auto_download,
         || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
         || {
-            eprintln!("yomu: auto-downloading embedding model...");
+            let spinner =
+                crate::progress::Spinner::new("Downloading model (YOMU_AUTO_DOWNLOAD_MODEL=1)...");
             let result = rurico::embed::download_model(rurico::embed::ModelId::default());
-            if result.is_ok() {
-                eprintln!("yomu: model ready");
+            match result {
+                Ok(p) => {
+                    spinner.finish("Model ready");
+                    Ok(p)
+                }
+                Err(e) => {
+                    spinner.cancel();
+                    Err(e)
+                }
             }
-            result
         },
     )
 }
