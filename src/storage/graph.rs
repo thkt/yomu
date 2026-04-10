@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 
 #[cfg(test)]
 use super::Reference;
-use super::{ChunkType, StorageError, in_placeholders};
+use super::{ChunkType, StorageError, as_sql_params, in_placeholders};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
@@ -18,7 +20,21 @@ pub struct SiblingInfo {
     pub end_line: u32,
 }
 
-const HOOK_COMPONENT_PRIORITY_BOOST: u32 = 3;
+const SQL_FILES_BY_IMPORT_COUNT: &str = "SELECT c.file_path
+         FROM chunks c
+         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
+         WHERE v.chunk_id IS NULL
+         GROUP BY c.file_path
+         ORDER BY (
+             SELECT COUNT(*) FROM file_references r
+             WHERE r.target_file = c.file_path
+         ) + (
+             SELECT CASE WHEN EXISTS(
+                 SELECT 1 FROM chunks c2
+                 WHERE c2.file_path = c.file_path
+                 AND c2.chunk_type IN ('hook', 'component')
+             ) THEN 3 ELSE 0 END
+         ) DESC, c.file_path ASC";
 
 pub fn get_transitive_dependents(
     conn: &Connection,
@@ -26,7 +42,7 @@ pub fn get_transitive_dependents(
     max_depth: u32,
 ) -> Result<Vec<Dependent>, StorageError> {
     let max_depth = max_depth.min(10);
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "WITH RECURSIVE deps(file_path, depth, visited) AS (
             SELECT DISTINCT source_file, 1,
                    ',' || ?1 || ',' || source_file || ','
@@ -57,7 +73,7 @@ pub fn get_symbol_dependents(
     target_file: &str,
     symbol_name: &str,
 ) -> Result<Vec<String>, StorageError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT source_file FROM file_references
          WHERE target_file = ?1 AND symbol_name = ?2",
     )?;
@@ -75,24 +91,7 @@ pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
 
 /// Returns un-embedded file paths ordered by import count (most-imported first).
 pub fn get_files_by_import_count(conn: &Connection) -> Result<Vec<String>, StorageError> {
-    let sql = format!(
-        "SELECT c.file_path
-         FROM chunks c
-         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE v.chunk_id IS NULL
-         GROUP BY c.file_path
-         ORDER BY (
-             SELECT COUNT(*) FROM file_references r
-             WHERE r.target_file = c.file_path
-         ) + (
-             SELECT CASE WHEN EXISTS(
-                 SELECT 1 FROM chunks c2
-                 WHERE c2.file_path = c.file_path
-                 AND c2.chunk_type IN ('hook', 'component')
-             ) THEN {HOOK_COMPONENT_PRIORITY_BOOST} ELSE 0 END
-         ) DESC, c.file_path ASC"
-    );
-    let mut stmt = conn.prepare(&sql)?;
+    let mut stmt = conn.prepare_cached(SQL_FILES_BY_IMPORT_COUNT)?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
@@ -100,9 +99,9 @@ pub fn get_files_by_import_count(conn: &Connection) -> Result<Vec<String>, Stora
 pub fn get_import_counts(
     conn: &Connection,
     file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, u32>, StorageError> {
+) -> Result<HashMap<String, u32>, StorageError> {
     if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let sql = format!(
         "SELECT fp.path, COALESCE(cnt.c, 0)
@@ -120,69 +119,57 @@ pub fn get_import_counts(
             .join(" UNION ALL ")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
+    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
     })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+    rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
 }
 
 pub fn get_file_mtimes(
     conn: &Connection,
     file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, i64>, StorageError> {
+) -> Result<HashMap<String, i64>, StorageError> {
     if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
         "SELECT file_path, mtime_epoch FROM file_context WHERE file_path IN ({placeholders}) AND mtime_epoch IS NOT NULL"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
+    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+    rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
 }
 
 pub fn get_file_contexts(
     conn: &Connection,
     file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, String>, StorageError> {
+) -> Result<HashMap<String, String>, StorageError> {
     if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
         "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
+    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
-    rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+    rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
 }
 
 pub fn get_file_siblings(
     conn: &Connection,
     file_paths: &[&str],
-) -> Result<std::collections::HashMap<String, Vec<SiblingInfo>>, StorageError> {
+) -> Result<HashMap<String, Vec<SiblingInfo>>, StorageError> {
     if file_paths.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
@@ -191,11 +178,7 @@ pub fn get_file_siblings(
          ORDER BY file_path, start_line"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = file_paths
-        .iter()
-        .map(|s| s as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
+    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
         Ok((
             row.get::<_, String>(0)?,
             SiblingInfo {
@@ -206,8 +189,7 @@ pub fn get_file_siblings(
             },
         ))
     })?;
-    let mut map: std::collections::HashMap<String, Vec<SiblingInfo>> =
-        std::collections::HashMap::new();
+    let mut map: HashMap<String, Vec<SiblingInfo>> = HashMap::new();
     for row in rows {
         let (path, info) = row?;
         map.entry(path).or_default().push(info);
@@ -247,8 +229,9 @@ pub fn get_dependents(
     conn: &Connection,
     target_file: &str,
 ) -> Result<Vec<Dependent>, StorageError> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1")?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1",
+    )?;
     let rows = stmt.query_map([target_file], |row| {
         Ok(Dependent {
             file_path: row.get(0)?,
