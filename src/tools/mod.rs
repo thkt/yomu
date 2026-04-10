@@ -126,6 +126,7 @@ impl Yomu {
         query: &str,
         limit: u32,
         offset: u32,
+        paths: &[String],
         json: bool,
     ) -> Result<String, YomuError> {
         if query.is_empty() {
@@ -137,11 +138,15 @@ impl Yomu {
             )));
         }
 
+        for path in paths {
+            validate_path(path)?;
+        }
+
         let embedder = self.get_embedder();
         let limit = limit.min(MAX_SEARCH_LIMIT);
         let offset = offset.min(MAX_SEARCH_OFFSET);
 
-        tracing::debug!(query, limit, offset, "search request");
+        tracing::debug!(query, limit, offset, ?paths, "search request");
 
         let type_hints = query::extract_type_hints(query);
         let hints_ref = if type_hints.is_empty() {
@@ -161,6 +166,7 @@ impl Yomu {
             limit,
             offset,
             self.get_reranker(),
+            paths,
         )?;
 
         let mut notes: Vec<String> = Vec::new();
@@ -286,11 +292,7 @@ impl Yomu {
 
         let (file_path, parsed_symbol) = parse_impact_target(target);
 
-        if file_path.contains("..") || std::path::Path::new(file_path).is_absolute() {
-            return Err(YomuError::InvalidInput(
-                "target path must be relative and must not contain '..'".into(),
-            ));
-        }
+        validate_path(file_path)?;
 
         let symbol_filter = symbol.or(parsed_symbol);
         let max_depth = depth.min(MAX_IMPACT_DEPTH);
@@ -488,6 +490,15 @@ impl Yomu {
         let conn = self.conn.lock().unwrap();
         f(&conn).map_err(YomuError::from)
     }
+}
+
+fn validate_path(path: &str) -> Result<(), YomuError> {
+    if path.contains("..") || std::path::Path::new(path).is_absolute() {
+        return Err(YomuError::InvalidInput(format!(
+            "'{path}' must be a relative path and must not contain '..'"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_impact_target(target: &str) -> (&str, Option<&str>) {

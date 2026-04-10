@@ -38,7 +38,7 @@ fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -209,7 +209,7 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None)
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
         .unwrap()
         .results;
 
@@ -263,7 +263,7 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None)
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
         .unwrap()
         .results;
 
@@ -628,7 +628,7 @@ fn search_returns_results_sorted_by_score() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0, None)
+    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0, None, &[])
         .unwrap()
         .results;
 
@@ -839,6 +839,7 @@ fn search_degrades_on_embed_failure() {
         10,
         0,
         None,
+        &[],
     )
     .unwrap();
     assert!(outcome.degraded, "should be degraded when embed fails");
@@ -862,7 +863,7 @@ fn search_degrades_on_model_not_available() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &embedder, "test", 10, 0, None).unwrap();
+    let outcome = search(conn, &embedder, "test", 10, 0, None, &[]).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
@@ -979,6 +980,7 @@ fn t001_reranker_reorders_results_by_cross_encoder_score() {
         5,
         0,
         Some(&reranker),
+        &[],
     )
     .unwrap();
 
@@ -1031,11 +1033,12 @@ fn t002_no_reranker_produces_rrf_results() {
         5,
         0,
         None,
+        &[],
     )
     .unwrap();
 
     // Also call the existing (no reranker param) signature for reference
-    let outcome_existing = search(conn, &MockEmbedder::default(), "auth", 5, 0, None).unwrap();
+    let outcome_existing = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
 
     assert_eq!(
         outcome.results.len(),
@@ -1104,6 +1107,7 @@ fn t006_reranker_increases_fetch_limit() {
         limit,
         offset,
         Some(&reranker),
+        &[],
     )
     .unwrap();
 
@@ -1198,6 +1202,7 @@ fn t007_reranker_scores_applied_before_cap_per_file() {
         10,
         0,
         Some(&reranker),
+        &[],
     )
     .unwrap();
 
@@ -1264,7 +1269,7 @@ fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &embedder, "button", 10, 0, None).unwrap();
+    let outcome = search(conn, &embedder, "button", 10, 0, None, &[]).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
@@ -1292,7 +1297,7 @@ fn search_pipeline_text_only_returns_name_matches() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "auth", None, 10, 0, None).unwrap();
+    let results = search_pipeline(&conn, "auth", None, 10, 0, None, &[]).unwrap();
     assert!(
         !results.is_empty(),
         "text-only pipeline should find name matches"
@@ -1325,7 +1330,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "button", Some(&emb), 10, 0, None).unwrap();
+    let results = search_pipeline(&conn, "button", Some(&emb), 10, 0, None, &[]).unwrap();
     assert!(!results.is_empty());
     assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
 }
@@ -1348,7 +1353,7 @@ fn search_pipeline_caps_per_file() {
         .collect();
     storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_pipeline(&conn, "fn", None, 10, 0, None).unwrap();
+    let results = search_pipeline(&conn, "fn", None, 10, 0, None, &[]).unwrap();
     let file_count = results
         .iter()
         .filter(|r| r.chunk.file_path == "src/big.ts")
@@ -1410,6 +1415,7 @@ fn text_only_search_with_offset_returns_results() {
         3,
         10,
         None,
+        &[],
     )
     .unwrap();
     assert!(
@@ -1446,7 +1452,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
     assert!(
         !outcome.results.is_empty(),
         "should return text/name fallback results even with zero embeddings"

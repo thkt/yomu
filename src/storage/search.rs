@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::{
     Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, as_sql_params,
-    f32_as_bytes, in_placeholders,
+    f32_as_bytes,
 };
 
 fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
@@ -25,6 +25,7 @@ pub fn vec_search(
     conn: &Connection,
     query_embedding: &[f32],
     limit: u32,
+    path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
     let query_bytes = f32_as_bytes(query_embedding);
     let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
@@ -62,15 +63,21 @@ pub fn vec_search(
 
     // Batch-fetch chunk metadata for deduplicated chunk_ids.
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
-    let sql = format!(
+    let mut sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
          FROM chunks WHERE id IN ({})",
-        in_placeholders(chunk_ids.len())
+        anon_placeholders(chunk_ids.len())
     );
-    let params = as_sql_params(&chunk_ids);
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = chunk_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    append_path_filter(&mut sql, &mut params, "file_path", path_filter);
+
     let mut stmt2 = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let meta: HashMap<i64, Chunk> = stmt2
-        .query_map(params.as_slice(), |row| {
+        .query_map(param_refs.as_slice(), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 Chunk {
@@ -110,6 +117,7 @@ pub fn search_by_fts(
     type_filter: Option<&[ChunkType]>,
     exclude_ids: &HashSet<i64>,
     limit: u32,
+    path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
     if keywords.is_empty() {
         return Ok(Vec::new());
@@ -144,6 +152,7 @@ pub fn search_by_fts(
 
     append_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
     append_exclude_ids(&mut sql, &mut params, "c.id", exclude_ids);
+    append_path_filter(&mut sql, &mut params, "c.file_path", path_filter);
     sql.push_str(&format!(" ORDER BY {BM25_EXPR} LIMIT ?"));
     params.push(Box::new(limit));
 
@@ -257,5 +266,30 @@ fn append_exclude_ids(
         for id in exclude_ids {
             params.push(Box::new(*id));
         }
+    }
+}
+
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn append_path_filter(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    column: &str,
+    paths: &[String],
+) {
+    if paths.is_empty() {
+        return;
+    }
+    let conditions: Vec<String> = paths
+        .iter()
+        .map(|_| format!("{column} LIKE ? ESCAPE '\\'"))
+        .collect();
+    sql.push_str(&format!(" AND ({})", conditions.join(" OR ")));
+    for path in paths {
+        params.push(Box::new(format!("{}%", escape_like(path))));
     }
 }

@@ -310,6 +310,7 @@ fn search_pipeline(
     limit: u32,
     offset: u32,
     reranker: Option<&dyn Rerank>,
+    path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
     let keywords = extract_keywords(query);
     let type_hints = extract_type_hints(query);
@@ -323,7 +324,7 @@ fn search_pipeline(
     };
     let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
-        Some(emb) if use_semantic => storage::vec_search(conn, emb, fetch_limit)?,
+        Some(emb) if use_semantic => storage::vec_search(conn, emb, fetch_limit, path_filter)?,
         _ => Vec::new(),
     };
 
@@ -345,6 +346,7 @@ fn search_pipeline(
             type_filter,
             &exclude_ids,
             fallback_limit,
+            path_filter,
         )?;
         results.extend(fts_results);
     }
@@ -390,6 +392,7 @@ pub fn search(
     limit: u32,
     offset: u32,
     reranker: Option<&dyn Rerank>,
+    path_filter: &[String],
 ) -> Result<SearchOutcome, QueryError> {
     let (query_embedding, degraded) = match embedder.embed_query(query) {
         Ok(emb) => (Some(emb), false),
@@ -407,6 +410,7 @@ pub fn search(
         limit,
         offset,
         reranker,
+        path_filter,
     )?;
     Ok(SearchOutcome { results, degraded })
 }
