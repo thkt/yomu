@@ -189,8 +189,7 @@ pub fn get_file_siblings(
             },
         ))
     })?;
-    let mut map: HashMap<String, Vec<SiblingInfo>> =
-        HashMap::new();
+    let mut map: HashMap<String, Vec<SiblingInfo>> = HashMap::new();
     for row in rows {
         let (path, info) = row?;
         map.entry(path).or_default().push(info);
@@ -230,8 +229,9 @@ pub fn get_dependents(
     conn: &Connection,
     target_file: &str,
 ) -> Result<Vec<Dependent>, StorageError> {
-    let mut stmt =
-        conn.prepare_cached("SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1")?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT source_file FROM file_references WHERE target_file = ?1",
+    )?;
     let rows = stmt.query_map([target_file], |row| {
         Ok(Dependent {
             file_path: row.get(0)?,

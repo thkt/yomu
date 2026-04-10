@@ -99,7 +99,9 @@ pub fn get_files_with_chunk_types(
         .chain(files.iter().cloned())
         .collect();
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(as_sql_params(&params).as_slice(), |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(as_sql_params(&params).as_slice(), |row| {
+        row.get::<_, String>(0)
+    })?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
