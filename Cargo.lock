@@ -2039,7 +2039,7 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=5569a30#5569a30cc9a6509b5ce2b8220e95dc0257a35d2c"
+source = "git+https://github.com/thkt/rurico?rev=03275f7#03275f78ec1c1b677566a9c04d3cdad03e29b3d9"
 dependencies = [
  "bytemuck",
  "hf-hub",

@@ -239,7 +239,7 @@ fn resolve_query_with(
 }
 
 fn run_model_download(json: bool) -> Result<String, YomuError> {
-    use rurico::embed::{Embedder, ModelId, ProbeStatus};
+    use rurico::embed::{EmbedInitError, Embedder, ModelId, ProbeStatus};
 
     let spinner = progress::Spinner::new("Downloading model...");
     let paths = match rurico::embed::download_model(ModelId::default()) {
@@ -262,6 +262,11 @@ fn run_model_download(json: bool) -> Result<String, YomuError> {
         }
         Err(e) => {
             spinner.cancel();
+            if matches!(e, EmbedInitError::ModelCorrupt { .. })
+                && let Err(del_err) = paths.delete_files()
+            {
+                tracing::warn!(error = %del_err, "failed to delete corrupt model files");
+            }
             return Err(YomuError::Internal(format!("Model probe failed: {e}")));
         }
     }
