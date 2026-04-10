@@ -37,12 +37,30 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
          PRAGMA busy_timeout=5000;",
     )?;
 
-    init_schema(&conn)?;
+    init_schema(&conn, path)?;
     verify_required_columns(&conn, path)?;
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
+
+const DDL_EMBEDDED_CHUNK_IDS: &str = "\
+    CREATE TABLE IF NOT EXISTS embedded_chunk_ids (\
+        chunk_id INTEGER NOT NULL, \
+        sub_idx INTEGER NOT NULL, \
+        vec_rowid INTEGER NOT NULL, \
+        PRIMARY KEY (chunk_id, sub_idx)\
+    )";
+
+fn ddl_vec_chunks() -> String {
+    format!(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(\
+             embedding FLOAT[{EMBEDDING_DIMS}], \
+             +chunk_id INTEGER, \
+             +sub_idx INTEGER\
+         )"
+    )
+}
 
 const DDL: &str = "
     CREATE TABLE IF NOT EXISTS chunks (
@@ -82,15 +100,11 @@ const DDL: &str = "
     CREATE INDEX IF NOT EXISTS idx_refs_target_symbol ON file_references(target_file, symbol_name);
 ";
 
-fn init_schema(conn: &Connection) -> Result<(), StorageError> {
+fn init_schema(conn: &Connection, path: &Path) -> Result<(), StorageError> {
     conn.execute_batch(DDL)?;
 
-    conn.execute_batch(&format!(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-            chunk_id INTEGER PRIMARY KEY,
-            embedding FLOAT[{EMBEDDING_DIMS}]
-        )"
-    ))?;
+    conn.execute_batch(&ddl_vec_chunks())?;
+    conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
 
     conn.execute_batch(
         "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
@@ -112,7 +126,7 @@ fn init_schema(conn: &Connection) -> Result<(), StorageError> {
     };
 
     if stored != SCHEMA_VERSION {
-        migrate(conn, stored)?;
+        migrate(conn, stored, path)?;
         conn.execute(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('schema_version', ?1)",
             [SCHEMA_VERSION.to_string()],
@@ -168,7 +182,7 @@ fn column_exists(conn: &Connection, probe_sql: &str) -> Result<bool, StorageErro
     }
 }
 
-fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
+fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError> {
     let to = SCHEMA_VERSION;
     if from >= to {
         return Ok(());
@@ -220,6 +234,21 @@ fn migrate(conn: &Connection, from: u32) -> Result<(), StorageError> {
                 return Err(e);
             }
         }
+    }
+
+    // v7 → v8: migrate vec_chunks to multi-sub-chunk schema, add embedded_chunk_ids
+    if from < 8 {
+        conn.execute_batch("DROP TABLE IF EXISTS vec_chunks")?;
+        conn.execute_batch(&ddl_vec_chunks())?;
+        conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
+        // Clear file hashes so unchanged files are re-embedded on the next `yomu index`.
+        // Without this, should_reindex() would skip every file whose content hasn't changed,
+        // leaving embedded_chunk_ids permanently empty after the migration.
+        conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
+        tracing::warn!(
+            path = %path.display(),
+            "schema upgraded to v8: embeddings cleared, please re-run `yomu index`"
+        );
     }
 
     Ok(())

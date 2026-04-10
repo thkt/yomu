@@ -31,7 +31,7 @@ fn search_with_mock_embedder() {
             parent_index: None,
         },
         "hash1",
-        &emb,
+        &storage::ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -184,7 +184,7 @@ fn search_fallback_merges_vector_and_name_results() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &storage::ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -256,7 +256,7 @@ fn search_deduplicates_vector_and_name_results() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &storage::ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -603,7 +603,7 @@ fn search_returns_results_sorted_by_score() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &storage::ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -890,7 +890,7 @@ fn search_returns_results() {
             parent_index: None,
         },
         "hash1",
-        &embedding,
+        &storage::ce(embedding),
         None,
     )
     .unwrap();
@@ -952,7 +952,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &storage::ce(emb.clone()),
         None,
     )
     .unwrap();

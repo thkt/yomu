@@ -72,7 +72,7 @@ fn seed_index(conn: &storage::Db) {
             parent_index: None,
         },
         "seed",
-        &embedding,
+        &storage::ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -679,7 +679,7 @@ fn status_returns_counts_after_insert() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &storage::ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1925,7 +1925,7 @@ fn status_json_with_data() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &storage::ce(embedding.clone()),
         None,
     )
     .unwrap();

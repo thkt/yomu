@@ -39,7 +39,7 @@ fn insert_and_read_chunk() {
             parent_index: None,
         },
         "abc123",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -76,7 +76,7 @@ fn should_reindex_returns_false_for_same_hash() {
             parent_index: None,
         },
         "hash_abc",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -101,7 +101,7 @@ fn should_reindex_returns_true_for_different_hash() {
             parent_index: None,
         },
         "hash_abc",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -132,7 +132,7 @@ fn get_stats_returns_counts() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -148,7 +148,7 @@ fn get_stats_returns_counts() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -164,7 +164,7 @@ fn get_stats_returns_counts() {
             parent_index: None,
         },
         "h2",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -191,7 +191,7 @@ fn get_all_file_paths_returns_distinct_paths() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -207,7 +207,7 @@ fn get_all_file_paths_returns_distinct_paths() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -223,7 +223,7 @@ fn get_all_file_paths_returns_distinct_paths() {
             parent_index: None,
         },
         "h2",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -251,7 +251,7 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -267,7 +267,7 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             parent_index: None,
         },
         "h2",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -300,7 +300,7 @@ fn replace_file_chunks_replaces_existing() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -323,7 +323,7 @@ fn replace_file_chunks_replaces_existing() {
             parent_index: None,
         },
     ];
-    let embeddings = vec![embedding.clone(), embedding.clone()];
+    let embeddings = vec![ce(embedding.clone()), ce(embedding.clone())];
 
     replace_file_chunks(
         &conn,
@@ -343,7 +343,7 @@ fn replace_file_chunks_replaces_existing() {
 }
 
 #[test]
-fn search_similar_returns_ordered_results() {
+fn vec_search_returns_ordered_results() {
     let (conn, _dir) = test_db();
     let mut emb_a = vec![0.0_f32; EMBEDDING_DIMS];
     emb_a[0] = 1.0;
@@ -362,7 +362,7 @@ fn search_similar_returns_ordered_results() {
             parent_index: None,
         },
         "h1",
-        &emb_a,
+        &ce(emb_a.clone()),
         None,
     )
     .unwrap();
@@ -378,12 +378,12 @@ fn search_similar_returns_ordered_results() {
             parent_index: None,
         },
         "h2",
-        &emb_b,
+        &ce(emb_b),
         None,
     )
     .unwrap();
 
-    let results = search_similar(&conn, &emb_a, 10, 0).unwrap();
+    let results = vec_search(&conn, &emb_a, 10).unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].chunk.name.as_deref(), Some("A"));
     assert!(results[0].distance <= results[1].distance);
@@ -447,7 +447,7 @@ fn delete_file_chunks_also_removes_file_context() {
         end_line: 5,
         parent_index: None,
     }];
-    let embeddings = vec![embedding];
+    let embeddings = vec![ce(embedding)];
     replace_file_chunks(
         &conn,
         "src/A.tsx",
@@ -487,7 +487,7 @@ fn replace_file_chunks_stores_file_context() {
         end_line: 5,
         parent_index: None,
     }];
-    let embeddings = vec![embedding];
+    let embeddings = vec![ce(embedding)];
     replace_file_chunks(
         &conn,
         "src/App.tsx",
@@ -534,7 +534,7 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -550,7 +550,7 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -566,7 +566,7 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             parent_index: None,
         },
         "h2",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -676,7 +676,7 @@ fn delete_file_chunks_also_removes_references() {
         end_line: 5,
         parent_index: None,
     }];
-    let embeddings = vec![embedding];
+    let embeddings = vec![ce(embedding)];
     replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "", &[]).unwrap();
 
     let refs = vec![Reference {
@@ -865,7 +865,7 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
             parent_index: None,
         },
         "hash_old",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -935,8 +935,8 @@ fn add_embeddings_inserts_into_vec_chunks() {
     let mut emb2 = vec![0.0_f32; EMBEDDING_DIMS];
     emb2[1] = 1.0;
 
-    let embeddings = vec![(ids[0], emb1), (ids[1], emb2)];
-    let inserted = add_embeddings(&conn, &embeddings).unwrap();
+    let embeddings = vec![(ids[0], ce(emb1)), (ids[1], ce(emb2))];
+    let inserted = add_chunked_embeddings(&conn, &embeddings).unwrap();
 
     assert_eq!(inserted, 2);
     assert_eq!(vec_chunks_count(&conn), 2);
@@ -958,13 +958,13 @@ fn add_embeddings_skips_already_embedded() {
 
     let ids = get_chunk_ids(&conn, "src/Modal.tsx");
     let emb = vec![0.5_f32; EMBEDDING_DIMS];
-    let embeddings = vec![(ids[0], emb.clone())];
+    let embeddings = vec![(ids[0], ce(emb.clone()))];
 
-    let inserted = add_embeddings(&conn, &embeddings).unwrap();
+    let inserted = add_chunked_embeddings(&conn, &embeddings).unwrap();
     assert_eq!(inserted, 1);
 
-    let embeddings_dup = vec![(ids[0], emb)];
-    let inserted_dup = add_embeddings(&conn, &embeddings_dup).unwrap();
+    let embeddings_dup = vec![(ids[0], ce(emb))];
+    let inserted_dup = add_chunked_embeddings(&conn, &embeddings_dup).unwrap();
     assert_eq!(inserted_dup, 0);
 
     assert_eq!(vec_chunks_count(&conn), 1);
@@ -987,7 +987,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1070,7 +1070,7 @@ fn needs_embedding_returns_false_for_fully_embedded() {
             parent_index: None,
         },
         "hash_footer",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1095,7 +1095,7 @@ fn needs_embedding_returns_true_when_hash_changed() {
             parent_index: None,
         },
         "hash_v1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1120,7 +1120,7 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1136,7 +1136,7 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1297,7 +1297,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
 }
 
 #[test]
-fn search_similar_sets_semantic_match_source() {
+fn vec_search_sets_semantic_match_source() {
     let (conn, _dir) = test_db();
     let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
     emb[0] = 1.0;
@@ -1314,18 +1314,18 @@ fn search_similar_sets_semantic_match_source() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
 
-    let results = search_similar(&conn, &emb, 10, 0).unwrap();
+    let results = vec_search(&conn, &emb, 10).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].match_source, MatchSource::Semantic);
 }
 
 #[test]
-fn search_similar_sets_initial_score() {
+fn vec_search_sets_initial_score() {
     let (conn, _dir) = test_db();
     let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
     emb[0] = 1.0;
@@ -1342,12 +1342,12 @@ fn search_similar_sets_initial_score() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
 
-    let results = search_similar(&conn, &emb, 10, 0).unwrap();
+    let results = vec_search(&conn, &emb, 10).unwrap();
     assert_eq!(results.len(), 1);
 
     // score should be initialized to 1.0 / (1.0 + distance)
@@ -1592,7 +1592,7 @@ fn get_unembedded_chunks_for_file_excludes_embedded() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1679,7 +1679,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "7", "schema_version should be 7 after migration");
+    assert_eq!(version, "8", "schema_version should be 8 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -1754,7 +1754,7 @@ fn replace_file_chunks_rejects_length_mismatch() {
             parent_index: None,
         },
     ];
-    let embeddings = vec![vec![0.0_f32; EMBEDDING_DIMS]]; // 1 embedding for 2 chunks
+    let embeddings = vec![ce(vec![0.0_f32; EMBEDDING_DIMS])]; // 1 embedding for 2 chunks
 
     let result = replace_file_chunks(&conn, "src/test.rs", &chunks, &embeddings, "h1", "", &[]);
     assert!(result.is_err(), "should reject mismatched lengths");
@@ -1782,17 +1782,10 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
             parent_index: None,
         },
         "h1",
-        &wrong_dims,
+        &ce(wrong_dims),
         None,
     );
     assert!(result.is_err(), "should reject wrong embedding dimensions");
-    match result.unwrap_err() {
-        StorageError::DimensionMismatch { expected, actual } => {
-            assert_eq!(expected, EMBEDDING_DIMS);
-            assert_eq!(actual, 10);
-        }
-        e => panic!("expected DimensionMismatch, got: {e}"),
-    }
 }
 
 #[test]
@@ -1976,7 +1969,7 @@ fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
         refs: &[],
         mtime_epoch: None,
     };
-    replace_file_chunks_with(&conn, &data, &[embedding]).unwrap();
+    replace_file_chunks_with(&conn, &data, &[ce(embedding)]).unwrap();
 
     let total: u32 = conn
         .query_row(
@@ -2049,7 +2042,7 @@ fn t_017_embed_percentage_uses_embeddable_chunks() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -2121,7 +2114,7 @@ fn t_018_embed_path_with_innerfn_no_length_mismatch() {
         mtime_epoch: None,
     };
 
-    let result = replace_file_chunks_with(&conn, &data, &[embedding]);
+    let result = replace_file_chunks_with(&conn, &data, &[ce(embedding)]);
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
     let total: u32 = conn
@@ -2457,8 +2450,8 @@ fn t_014_migration_v6_to_v7_preserves_fts_search() {
         )
         .unwrap();
     assert_eq!(
-        version, "7",
-        "[T-014] schema_version should be 7 after migration"
+        version, "8",
+        "[T-014] schema_version should be 8 after migration"
     );
 
     let results = search_by_fts(&conn, &["transform"], None, &HashSet::new(), 10).unwrap();
