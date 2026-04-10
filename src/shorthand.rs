@@ -70,9 +70,7 @@ mod tests {
     // T-031: known subcommand as first positional → not expanded
     #[test]
     fn known_subcommand_not_expanded() {
-        assert!(
-            try_expand_shorthand(&os(&["yomu", "search", "認証"]), KNOWN, GLOBAL).is_none()
-        );
+        assert!(try_expand_shorthand(&os(&["yomu", "search", "認証"]), KNOWN, GLOBAL).is_none());
     }
 
     // T-022: trailing options pass through after the inserted "search"
