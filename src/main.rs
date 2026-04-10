@@ -84,7 +84,7 @@ enum ModelCommand {
 }
 
 fn main() -> ExitCode {
-    rurico::embed::handle_probe_if_needed();
+    rurico::model_probe::handle_probe_if_needed();
 
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
