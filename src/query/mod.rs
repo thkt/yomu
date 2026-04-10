@@ -327,7 +327,9 @@ fn search_pipeline(
         _ => Vec::new(),
     };
 
-    let fallback_limit = fetch_limit * 3;
+    // FTS fallback is independent of reranker's semantic overfetch to avoid
+    // handing an excessively large batch to the cross-encoder.
+    let fallback_limit = limit.saturating_add(offset).saturating_mul(3);
 
     if !keywords.is_empty() {
         let type_filter = if type_hints.is_empty() {

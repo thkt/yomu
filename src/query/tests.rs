@@ -1056,52 +1056,6 @@ fn t002_no_reranker_produces_rrf_results() {
     }
 }
 
-/// [T-003] YOMU_RERANK=1 + reranker absent -> RRF fallback + hint message.
-///
-/// When search() receives reranker=None (because model is absent),
-/// results should use existing RRF scoring. The hint message is handled
-/// by the caller (tools/mod.rs), not by query::search itself,
-/// so here we verify the results are RRF-based.
-#[test]
-fn t003_reranker_absent_falls_back_to_rrf() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let conn = storage::open_db(&db_path).unwrap();
-
-    let emb = test_embedding();
-    storage::insert_chunk(
-        &conn,
-        "src/A.tsx",
-        &storage::NewChunk {
-            chunk_type: &storage::ChunkType::Component,
-            name: Some("AuthForm"),
-            content: "function AuthForm() {}",
-            start_line: 1,
-            end_line: 3,
-            parent_index: None,
-        },
-        "h1",
-        &storage::ce(emb.clone()),
-        None,
-    )
-    .unwrap();
-
-    let conn = Arc::new(Mutex::new(conn));
-    // reranker absent: None
-    let outcome = search(conn, &MockEmbedder::default(), "auth", 5, 0, None).unwrap();
-
-    assert!(!outcome.degraded, "[T-003] should not be degraded");
-    assert!(
-        !outcome.results.is_empty(),
-        "[T-003] should return RRF results"
-    );
-    assert_eq!(
-        outcome.results[0].chunk.name.as_deref(),
-        Some("AuthForm"),
-        "[T-003] RRF should return AuthForm"
-    );
-}
-
 /// [T-006] YOMU_RERANK=1, limit=10, offset=5 -> fetch_limit = 10 * 4 + 5 = 45.
 ///
 /// When reranker is present, search_pipeline should fetch 4x candidates

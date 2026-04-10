@@ -73,6 +73,8 @@ pub struct Yomu {
     root: PathBuf,
     embed_budget: u32,
     embed_disabled: bool,
+    rerank_enabled: bool,
+    reranker: OnceLock<reranker::ModelLoad<Box<dyn Rerank>>>,
 }
 
 impl Yomu {
@@ -88,12 +90,15 @@ impl Yomu {
         let conn = storage::open_db(&db_path)?;
 
         let embed_disabled = std::env::var("YOMU_EMBED").as_deref() == Ok("0");
+        let rerank_enabled = std::env::var("YOMU_RERANK").as_deref() == Ok("1");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
             embed_budget: parse_embed_budget(),
             embed_disabled,
+            rerank_enabled,
+            reranker: OnceLock::new(),
         })
     }
 
@@ -111,6 +116,8 @@ impl Yomu {
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
+            rerank_enabled: false,
+            reranker: OnceLock::new(),
         }
     }
 
@@ -147,45 +154,21 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
-        let rerank_enabled = std::env::var("YOMU_RERANK").as_deref() == Ok("1");
-        let reranker_load = if rerank_enabled {
-            Some(reranker::try_load_reranker())
-        } else {
-            None
-        };
-        let reranker_ref: Option<&dyn Rerank> = reranker_load.as_ref().and_then(|load| {
-            if let reranker::ModelLoad::Ready(r) = load {
-                Some(r.as_ref())
-            } else {
-                None
-            }
-        });
-
         let outcome = query::search(
             Arc::clone(&self.conn),
             embedder,
             query,
             limit,
             offset,
-            reranker_ref,
+            self.get_reranker(),
         )?;
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
             notes.push(msg);
         }
-        if let Some(load) = reranker_load {
-            match load {
-                reranker::ModelLoad::Absent => {
-                    notes.push(
-                        "reranking requested (YOMU_RERANK=1) but model not cached; install with `sae download reranker`".into(),
-                    );
-                }
-                reranker::ModelLoad::Failed(msg) => {
-                    notes.push(format!("reranker failed to load: {msg}"));
-                }
-                reranker::ModelLoad::Ready(_) => {}
-            }
+        if let Some(note) = self.reranker_note() {
+            notes.push(note);
         }
         if let Some(reason) = self.degraded_reason() {
             if let Some(note) = reason.user_note() {
