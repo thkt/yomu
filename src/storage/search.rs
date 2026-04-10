@@ -29,7 +29,7 @@ pub fn vec_search(
     let query_bytes = f32_as_bytes(query_embedding);
     let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
 
-    // Step 1: KNN query — fetch only chunk_id + distance.
+    // KNN query — fetch only chunk_id + distance.
     // vec0 auxiliary columns (+chunk_id) cannot be used in JOIN conditions,
     // so we avoid a direct JOIN here.
     let knn_rows: Vec<(i64, f32)> = {
@@ -51,20 +51,12 @@ pub fn vec_search(
     // MaxSim: keep the sub-embedding with the smallest distance per chunk_id.
     let mut best: HashMap<i64, f32> = HashMap::new();
     for (chunk_id, distance) in &knn_rows {
-        use std::collections::hash_map::Entry;
-        match best.entry(*chunk_id) {
-            Entry::Vacant(v) => {
-                v.insert(*distance);
-            }
-            Entry::Occupied(mut o) => {
-                if distance < o.get() {
-                    *o.get_mut() = *distance;
-                }
-            }
-        }
+        best.entry(*chunk_id)
+            .and_modify(|d| { if *distance < *d { *d = *distance; } })
+            .or_insert(*distance);
     }
 
-    // Step 2: batch-fetch chunk metadata for deduplicated chunk_ids.
+    // Batch-fetch chunk metadata for deduplicated chunk_ids.
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
     let sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \

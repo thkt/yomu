@@ -75,17 +75,12 @@ fn insert_chunk_row(
     Ok(chunk_id)
 }
 
-pub fn insert_chunk(
+pub(crate) fn insert_sub_embeddings(
     conn: &Connection,
-    file_path: &str,
-    chunk: &NewChunk,
-    file_hash: &str,
-    embedding: &rurico::embed::ChunkedEmbedding,
-    parent_chunk_id: Option<i64>,
-) -> Result<i64, StorageError> {
-    let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash, parent_chunk_id)?;
-
-    for (sub_idx, emb_slice) in embedding.chunks.iter().enumerate() {
+    chunk_id: i64,
+    chunked_emb: &rurico::embed::ChunkedEmbedding,
+) -> Result<(), StorageError> {
+    for (sub_idx, emb_slice) in chunked_emb.chunks.iter().enumerate() {
         let bytes = f32_as_bytes(emb_slice);
         conn.execute(
             "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
@@ -97,7 +92,19 @@ pub fn insert_chunk(
             rusqlite::params![chunk_id, sub_idx as i64, vec_rowid],
         )?;
     }
+    Ok(())
+}
 
+pub fn insert_chunk(
+    conn: &Connection,
+    file_path: &str,
+    chunk: &NewChunk,
+    file_hash: &str,
+    embedding: &rurico::embed::ChunkedEmbedding,
+    parent_chunk_id: Option<i64>,
+) -> Result<i64, StorageError> {
+    let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash, parent_chunk_id)?;
+    insert_sub_embeddings(conn, chunk_id, embedding)?;
     Ok(chunk_id)
 }
 
@@ -351,6 +358,10 @@ pub fn delete_file_chunks(conn: &Connection, file_path: &str) -> Result<(), Stor
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn ce(v: Vec<f32>) -> rurico::embed::ChunkedEmbedding {
+    rurico::embed::ChunkedEmbedding { chunks: vec![v] }
+}
 
 #[cfg(test)]
 mod tests;

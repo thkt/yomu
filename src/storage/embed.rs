@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rurico::embed::ChunkedEmbedding;
 use rusqlite::Connection;
 
-use super::{ChunkType, StorageError, anon_placeholders, as_sql_params, f32_as_bytes, in_placeholders};
+use super::{ChunkType, StorageError, anon_placeholders, as_sql_params, f32_as_bytes, in_placeholders, insert_sub_embeddings};
 
 pub fn add_chunked_embeddings(
     conn: &Connection,
@@ -20,19 +20,7 @@ pub fn add_chunked_embeddings(
         if existing.contains(chunk_id) {
             continue;
         }
-        for (sub_idx, embedding) in chunked_emb.chunks.iter().enumerate() {
-            let bytes: &[u8] = f32_as_bytes(embedding);
-            tx.execute(
-                "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
-                rusqlite::params![bytes, chunk_id, sub_idx as i64],
-            )?;
-            let vec_rowid = tx.last_insert_rowid();
-            tx.execute(
-                "INSERT INTO embedded_chunk_ids (chunk_id, sub_idx, vec_rowid) \
-                 VALUES (?1, ?2, ?3)",
-                rusqlite::params![chunk_id, sub_idx as i64, vec_rowid],
-            )?;
-        }
+        insert_sub_embeddings(&tx, *chunk_id, chunked_emb)?;
         count += 1;
     }
     tx.commit()?;
@@ -47,7 +35,7 @@ fn existing_embedded_ids(
         return Ok(HashSet::new());
     }
     let sql = format!(
-        "SELECT DISTINCT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
+        "SELECT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
         in_placeholders(chunk_ids.len())
     );
     let params = as_sql_params(chunk_ids);

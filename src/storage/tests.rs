@@ -1,11 +1,5 @@
 use super::*;
 
-use rurico::embed::ChunkedEmbedding;
-
-fn ce(v: Vec<f32>) -> ChunkedEmbedding {
-    ChunkedEmbedding { chunks: vec![v] }
-}
-
 fn test_db() -> (Connection, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");

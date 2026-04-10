@@ -241,6 +241,10 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         conn.execute_batch("DROP TABLE IF EXISTS vec_chunks")?;
         conn.execute_batch(&ddl_vec_chunks())?;
         conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
+        // Clear file hashes so unchanged files are re-embedded on the next `yomu index`.
+        // Without this, should_reindex() would skip every file whose content hasn't changed,
+        // leaving embedded_chunk_ids permanently empty after the migration.
+        conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
         tracing::warn!(
             path = %path.display(),
             "schema upgraded to v8: embeddings cleared, please re-run `yomu index`"
