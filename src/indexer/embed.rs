@@ -360,8 +360,12 @@ mod tests {
     #[test]
     fn validate_passes_non_empty_chunks() {
         let embs = vec![
-            ChunkedEmbedding { chunks: vec![vec![1.0_f32; 3]] },
-            ChunkedEmbedding { chunks: vec![vec![2.0_f32; 3], vec![3.0_f32; 3]] },
+            ChunkedEmbedding {
+                chunks: vec![vec![1.0_f32; 3]],
+            },
+            ChunkedEmbedding {
+                chunks: vec![vec![2.0_f32; 3], vec![3.0_f32; 3]],
+            },
         ];
         assert!(validate_chunked_embeddings(embs).is_ok());
     }

@@ -52,7 +52,11 @@ pub fn vec_search(
     let mut best: HashMap<i64, f32> = HashMap::new();
     for (chunk_id, distance) in &knn_rows {
         best.entry(*chunk_id)
-            .and_modify(|d| { if *distance < *d { *d = *distance; } })
+            .and_modify(|d| {
+                if *distance < *d {
+                    *d = *distance;
+                }
+            })
             .or_insert(*distance);
     }
 

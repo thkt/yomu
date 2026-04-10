@@ -35,7 +35,10 @@ pub(crate) fn anon_placeholders(n: usize) -> String {
 pub(crate) fn as_sql_params<T: rusqlite::types::ToSql>(
     values: &[T],
 ) -> Vec<&dyn rusqlite::types::ToSql> {
-    values.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect()
+    values
+        .iter()
+        .map(|v| v as &dyn rusqlite::types::ToSql)
+        .collect()
 }
 
 fn insert_chunk_row(

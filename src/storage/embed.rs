@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use rurico::embed::ChunkedEmbedding;
 use rusqlite::Connection;
 
-use super::{ChunkType, StorageError, anon_placeholders, as_sql_params, f32_as_bytes, in_placeholders, insert_sub_embeddings};
+use super::{
+    ChunkType, StorageError, anon_placeholders, as_sql_params, in_placeholders,
+    insert_sub_embeddings,
+};
 
 pub fn add_chunked_embeddings(
     conn: &Connection,
@@ -98,8 +101,7 @@ pub fn get_files_with_chunk_types(
     for f in files {
         params.push(Box::new(f.clone()));
     }
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
