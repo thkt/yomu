@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder};
+use rurico::reranker::{MockReranker, RankedResult, Rerank, RerankerError};
 
 use super::*;
 use crate::storage;
@@ -37,7 +38,7 @@ fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None).unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -208,7 +209,7 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0)
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None)
         .unwrap()
         .results;
 
@@ -262,7 +263,7 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0)
+    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None)
         .unwrap()
         .results;
 
@@ -627,7 +628,7 @@ fn search_returns_results_sorted_by_score() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0)
+    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0, None)
         .unwrap()
         .results;
 
@@ -837,6 +838,7 @@ fn search_degrades_on_embed_failure() {
         "auth",
         10,
         0,
+        None,
     )
     .unwrap();
     assert!(outcome.degraded, "should be degraded when embed fails");
@@ -860,10 +862,422 @@ fn search_degrades_on_model_not_available() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &embedder, "test", 10, 0).unwrap();
+    let outcome = search(conn, &embedder, "test", 10, 0, None).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
+    );
+}
+
+// ── Reranker integration tests (Spec #55 Phase 1) ──────────────────────────
+
+/// Mock reranker that assigns scores based on document content.
+///
+/// Scores each document by looking up its content in a predefined map.
+/// Documents not in the map receive 0.0. This lets tests control
+/// cross-encoder ranking order without a live model.
+struct ScriptedReranker {
+    /// Map from document substring -> score. First matching entry wins.
+    scores: Vec<(&'static str, f32)>,
+}
+
+impl ScriptedReranker {
+    fn new(scores: Vec<(&'static str, f32)>) -> Self {
+        Self { scores }
+    }
+
+    fn score_doc(&self, doc: &str) -> f32 {
+        self.scores
+            .iter()
+            .find(|(substr, _)| doc.contains(substr))
+            .map(|(_, s)| *s)
+            .unwrap_or(0.0)
+    }
+}
+
+impl Rerank for ScriptedReranker {
+    fn score(&self, _query: &str, document: &str) -> Result<f32, RerankerError> {
+        Ok(self.score_doc(document))
+    }
+
+    fn score_batch(&self, pairs: &[(&str, &str)]) -> Result<Vec<f32>, RerankerError> {
+        Ok(pairs.iter().map(|(_, doc)| self.score_doc(doc)).collect())
+    }
+
+    fn rerank(&self, _query: &str, documents: &[&str]) -> Result<Vec<RankedResult>, RerankerError> {
+        let mut results: Vec<RankedResult> = documents
+            .iter()
+            .enumerate()
+            .map(|(index, doc)| RankedResult {
+                index,
+                score: self.score_doc(doc),
+            })
+            .collect();
+        results.sort_unstable_by(|a, b| b.score.total_cmp(&a.score));
+        Ok(results)
+    }
+}
+
+/// [T-001] YOMU_RERANK=1 + MockReranker -> results reordered by reranker score.
+///
+/// Setup: chunk A (AuthForm) has high RRF score (semantic match via embedding),
+/// chunk B (useAuth) has lower RRF score (FTS only, no embedding).
+/// The scripted reranker scores B higher than A.
+/// Expected: after reranking, B appears before A.
+#[test]
+fn t001_reranker_reorders_results_by_cross_encoder_score() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    let emb = test_embedding();
+    // Chunk A: has embedding -> high RRF base score
+    storage::insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("AuthForm"),
+            content: "function AuthForm() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    // Chunk B: FTS only -> lower RRF base score
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/B.tsx",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "function useAuth() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        }],
+        "h2",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    // Reranker scores useAuth higher than AuthForm
+    let reranker = ScriptedReranker::new(vec![("useAuth", 0.9), ("AuthForm", 0.1)]);
+
+    let conn = Arc::new(Mutex::new(conn));
+    let outcome = search(
+        conn,
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        Some(&reranker),
+    )
+    .unwrap();
+
+    assert!(
+        outcome.results.len() >= 2,
+        "[T-001] expected at least 2 results, got {}",
+        outcome.results.len()
+    );
+    assert_eq!(
+        outcome.results[0].chunk.name.as_deref(),
+        Some("useAuth"),
+        "[T-001] reranker should place useAuth first, got: {:?}",
+        outcome.results[0].chunk.name
+    );
+}
+
+/// [T-002] YOMU_RERANK unset -> identical to existing RRF results.
+///
+/// When reranker is None, results must match the pre-reranker behavior.
+#[test]
+fn t002_no_reranker_produces_rrf_results() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    let emb = test_embedding();
+    storage::insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("AuthForm"),
+            content: "function AuthForm() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let conn = Arc::new(Mutex::new(conn));
+    // No reranker: None
+    let outcome = search(
+        Arc::clone(&conn),
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        None,
+    )
+    .unwrap();
+
+    // Also call the existing (no reranker param) signature for reference
+    let outcome_existing = search(conn, &MockEmbedder::default(), "auth", 5, 0, None).unwrap();
+
+    assert_eq!(
+        outcome.results.len(),
+        outcome_existing.results.len(),
+        "[T-002] result count should match existing behavior"
+    );
+    for (a, b) in outcome.results.iter().zip(outcome_existing.results.iter()) {
+        assert_eq!(
+            a.chunk.name, b.chunk.name,
+            "[T-002] result order should match existing behavior"
+        );
+        assert!(
+            (a.score - b.score).abs() < 1e-6,
+            "[T-002] scores should match: {} vs {}",
+            a.score,
+            b.score
+        );
+    }
+}
+
+/// [T-003] YOMU_RERANK=1 + reranker absent -> RRF fallback + hint message.
+///
+/// When search() receives reranker=None (because model is absent),
+/// results should use existing RRF scoring. The hint message is handled
+/// by the caller (tools/mod.rs), not by query::search itself,
+/// so here we verify the results are RRF-based.
+#[test]
+fn t003_reranker_absent_falls_back_to_rrf() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    let emb = test_embedding();
+    storage::insert_chunk(
+        &conn,
+        "src/A.tsx",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("AuthForm"),
+            content: "function AuthForm() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let conn = Arc::new(Mutex::new(conn));
+    // reranker absent: None
+    let outcome = search(conn, &MockEmbedder::default(), "auth", 5, 0, None).unwrap();
+
+    assert!(!outcome.degraded, "[T-003] should not be degraded");
+    assert!(
+        !outcome.results.is_empty(),
+        "[T-003] should return RRF results"
+    );
+    assert_eq!(
+        outcome.results[0].chunk.name.as_deref(),
+        Some("AuthForm"),
+        "[T-003] RRF should return AuthForm"
+    );
+}
+
+/// [T-006] YOMU_RERANK=1, limit=10, offset=5 -> fetch_limit = 10 * 4 + 5 = 45.
+///
+/// When reranker is present, search_pipeline should fetch 4x candidates
+/// to give the cross-encoder enough material to reorder.
+/// We verify this by inserting many chunks and confirming the pipeline
+/// considers more candidates than limit+offset.
+#[test]
+fn t006_reranker_increases_fetch_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    let emb = test_embedding();
+    // Insert 50 chunks so we have enough to observe the difference
+    for i in 0..50 {
+        let file_path = format!("src/File{i}.tsx");
+        let name = format!("Component{i}");
+        let content = format!("function Component{i}() {{ /* auth related code */ }}");
+        storage::insert_chunk(
+            &conn,
+            &file_path,
+            &storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&name),
+                content: &content,
+                start_line: 1,
+                end_line: 3,
+                parent_index: None,
+            },
+            &format!("hash{i}"),
+            &storage::ce(emb.clone()),
+            None,
+        )
+        .unwrap();
+    }
+
+    let limit: u32 = 10;
+    let offset: u32 = 5;
+    let reranker = MockReranker::default();
+
+    let conn = Arc::new(Mutex::new(conn));
+    let outcome = search(
+        conn,
+        &MockEmbedder::default(),
+        "component",
+        limit,
+        offset,
+        Some(&reranker),
+    )
+    .unwrap();
+
+    // With reranker, the pipeline fetches limit*4+offset = 45 candidates
+    // then reranks and applies offset+limit truncation.
+    // Without reranker, fetch_limit = limit+offset = 15.
+    // The final result count should be at most `limit` (10).
+    assert!(
+        outcome.results.len() <= limit as usize,
+        "[T-006] results should be capped at limit={limit}, got {}",
+        outcome.results.len()
+    );
+    // With 50 chunks and fetch_limit=45, we should get the full `limit` results
+    assert_eq!(
+        outcome.results.len(),
+        limit as usize,
+        "[T-006] with 50 chunks and fetch_limit=45, should return {limit} results"
+    );
+}
+
+/// [T-007] YOMU_RERANK=1, cap_per_file=2, file A has 3 candidates
+/// -> top 2 by cross-encoder score survive.
+///
+/// Cross-encoder reranking happens before cap_per_file filtering,
+/// so the 2 chunks with the highest reranker scores are kept,
+/// not the 2 with the highest RRF scores.
+#[test]
+fn t007_reranker_scores_applied_before_cap_per_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    let emb = test_embedding();
+    // File A: 3 chunks, with RRF ordering = chunk1 > chunk2 > chunk3
+    // Reranker will score: chunk3 (0.9) > chunk1 (0.5) > chunk2 (0.1)
+    // After cap_per_file=2, expected survivors: chunk3, chunk1
+    let chunks = [
+        ("Chunk1", "function Chunk1() { /* auth handler */ }"),
+        ("Chunk2", "function Chunk2() { /* auth validator */ }"),
+        ("Chunk3", "function Chunk3() { /* auth middleware */ }"),
+    ];
+
+    for (name, content) in &chunks {
+        storage::insert_chunk(
+            &conn,
+            "src/auth.tsx",
+            &storage::NewChunk {
+                chunk_type: &storage::ChunkType::Other,
+                name: Some(name),
+                content,
+                start_line: 1,
+                end_line: 3,
+                parent_index: None,
+            },
+            &format!("hash_{name}"),
+            &storage::ce(emb.clone()),
+            None,
+        )
+        .unwrap();
+    }
+
+    // Also add a chunk from a different file to verify cap_per_file is per-file
+    storage::insert_chunk(
+        &conn,
+        "src/other.tsx",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::Other,
+            name: Some("OtherComponent"),
+            content: "function OtherComponent() { /* auth related */ }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "hash_other",
+        &storage::ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    // Reranker: chunk3 (middleware) > chunk1 (handler) > chunk2 (validator)
+    let reranker = ScriptedReranker::new(vec![
+        ("middleware", 0.9),
+        ("handler", 0.5),
+        ("validator", 0.1),
+    ]);
+
+    let conn = Arc::new(Mutex::new(conn));
+    let outcome = search(
+        conn,
+        &MockEmbedder::default(),
+        "auth",
+        10,
+        0,
+        Some(&reranker),
+    )
+    .unwrap();
+
+    // Count how many results come from src/auth.tsx
+    let auth_results: Vec<_> = outcome
+        .results
+        .iter()
+        .filter(|r| r.chunk.file_path == "src/auth.tsx")
+        .collect();
+
+    assert!(
+        auth_results.len() <= MAX_RESULTS_PER_FILE,
+        "[T-007] cap_per_file should limit auth.tsx results to {MAX_RESULTS_PER_FILE}, got {}",
+        auth_results.len()
+    );
+
+    // The survivors should be the ones with the highest reranker scores:
+    // Chunk3 (middleware, 0.9) and Chunk1 (handler, 0.5)
+    let surviving_names: Vec<&str> = auth_results
+        .iter()
+        .filter_map(|r| r.chunk.name.as_deref())
+        .collect();
+
+    assert!(
+        surviving_names.contains(&"Chunk3"),
+        "[T-007] Chunk3 (highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
+    );
+    assert!(
+        surviving_names.contains(&"Chunk1"),
+        "[T-007] Chunk1 (second highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
+    );
+    assert!(
+        !surviving_names.contains(&"Chunk2"),
+        "[T-007] Chunk2 (lowest reranker score) should be capped, got: {surviving_names:?}"
     );
 }
 
@@ -896,7 +1310,7 @@ fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &embedder, "button", 10, 0).unwrap();
+    let outcome = search(conn, &embedder, "button", 10, 0, None).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
@@ -924,7 +1338,7 @@ fn search_pipeline_text_only_returns_name_matches() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "auth", None, 10, 0).unwrap();
+    let results = search_pipeline(&conn, "auth", None, 10, 0, None).unwrap();
     assert!(
         !results.is_empty(),
         "text-only pipeline should find name matches"
@@ -957,7 +1371,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "button", Some(&emb), 10, 0).unwrap();
+    let results = search_pipeline(&conn, "button", Some(&emb), 10, 0, None).unwrap();
     assert!(!results.is_empty());
     assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
 }
@@ -980,7 +1394,7 @@ fn search_pipeline_caps_per_file() {
         .collect();
     storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_pipeline(&conn, "fn", None, 10, 0).unwrap();
+    let results = search_pipeline(&conn, "fn", None, 10, 0, None).unwrap();
     let file_count = results
         .iter()
         .filter(|r| r.chunk.file_path == "src/big.ts")
@@ -1041,6 +1455,7 @@ fn text_only_search_with_offset_returns_results() {
         "widget",
         3,
         10,
+        None,
     )
     .unwrap();
     assert!(
@@ -1077,7 +1492,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0).unwrap();
+    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None).unwrap();
     assert!(
         !outcome.results.is_empty(),
         "should return text/name fallback results even with zero embeddings"

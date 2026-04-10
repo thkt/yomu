@@ -1,11 +1,13 @@
 mod embedder;
 mod format;
+mod reranker;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rurico::embed::Embed;
+use rurico::reranker::Rerank;
 
 use crate::config;
 use crate::indexer;
@@ -145,11 +147,45 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
-        let outcome = query::search(Arc::clone(&self.conn), embedder, query, limit, offset)?;
+        let rerank_enabled = std::env::var("YOMU_RERANK").as_deref() == Ok("1");
+        let reranker_load = if rerank_enabled {
+            Some(reranker::try_load_reranker())
+        } else {
+            None
+        };
+        let reranker_ref: Option<&dyn Rerank> = reranker_load.as_ref().and_then(|load| {
+            if let reranker::ModelLoad::Ready(r) = load {
+                Some(r.as_ref())
+            } else {
+                None
+            }
+        });
+
+        let outcome = query::search(
+            Arc::clone(&self.conn),
+            embedder,
+            query,
+            limit,
+            offset,
+            reranker_ref,
+        )?;
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
             notes.push(msg);
+        }
+        if let Some(load) = reranker_load {
+            match load {
+                reranker::ModelLoad::Absent => {
+                    notes.push(
+                        "reranking requested (YOMU_RERANK=1) but model not cached; install with `sae download reranker`".into(),
+                    );
+                }
+                reranker::ModelLoad::Failed(msg) => {
+                    notes.push(format!("reranker failed to load: {msg}"));
+                }
+                reranker::ModelLoad::Ready(_) => {}
+            }
         }
         if let Some(reason) = self.degraded_reason() {
             if let Some(note) = reason.user_note() {
