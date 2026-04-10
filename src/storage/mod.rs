@@ -19,14 +19,23 @@ pub type Db = Connection;
 pub use rurico::embed::EMBEDDING_DIMS;
 pub use rurico::storage::f32_as_bytes;
 
-fn check_embedding_dims(embedding: &[f32]) -> Result<(), StorageError> {
-    if embedding.len() != EMBEDDING_DIMS {
-        return Err(StorageError::DimensionMismatch {
-            expected: EMBEDDING_DIMS,
-            actual: embedding.len(),
-        });
-    }
-    Ok(())
+pub(crate) fn in_placeholders(len: usize) -> String {
+    (1..=len)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// Use when multiple IN clauses share a parameter list: unnamed `?` avoids
+// index collisions that numbered `?N` would cause when params are appended incrementally.
+pub(crate) fn anon_placeholders(n: usize) -> String {
+    vec!["?"; n].join(", ")
+}
+
+pub(crate) fn as_sql_params<T: rusqlite::types::ToSql>(
+    values: &[T],
+) -> Vec<&dyn rusqlite::types::ToSql> {
+    values.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect()
 }
 
 fn insert_chunk_row(
@@ -71,17 +80,23 @@ pub fn insert_chunk(
     file_path: &str,
     chunk: &NewChunk,
     file_hash: &str,
-    embedding: &[f32],
+    embedding: &rurico::embed::ChunkedEmbedding,
     parent_chunk_id: Option<i64>,
 ) -> Result<i64, StorageError> {
-    check_embedding_dims(embedding)?;
     let chunk_id = insert_chunk_row(conn, file_path, chunk, file_hash, parent_chunk_id)?;
 
-    let embedding_bytes = f32_as_bytes(embedding);
-    conn.execute(
-        "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
-        rusqlite::params![chunk_id, embedding_bytes],
-    )?;
+    for (sub_idx, emb_slice) in embedding.chunks.iter().enumerate() {
+        let bytes = f32_as_bytes(emb_slice);
+        conn.execute(
+            "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
+            rusqlite::params![bytes, chunk_id, sub_idx as i64],
+        )?;
+        let vec_rowid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO embedded_chunk_ids (chunk_id, sub_idx, vec_rowid) VALUES (?1, ?2, ?3)",
+            rusqlite::params![chunk_id, sub_idx as i64, vec_rowid],
+        )?;
+    }
 
     Ok(chunk_id)
 }
@@ -121,7 +136,7 @@ fn write_file_metadata(
 pub fn replace_file_chunks_with(
     conn: &Connection,
     data: &FileData,
-    embeddings: &[Vec<f32>],
+    embeddings: &[rurico::embed::ChunkedEmbedding],
 ) -> Result<(), StorageError> {
     let embeddable_count = data
         .chunks
@@ -142,7 +157,7 @@ pub fn replace_file_chunks(
     conn: &Connection,
     file_path: &str,
     chunks: &[NewChunk],
-    embeddings: &[Vec<f32>],
+    embeddings: &[rurico::embed::ChunkedEmbedding],
     file_hash: &str,
     imports_text: &str,
     refs: &[Reference],
@@ -182,7 +197,7 @@ pub fn replace_file_chunks_only(
 pub(crate) fn replace_file_data(
     conn: &Connection,
     data: &FileData,
-    embeddings: Option<&[Vec<f32>]>,
+    embeddings: Option<&[rurico::embed::ChunkedEmbedding]>,
 ) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
     delete_file_chunks_in(&tx, data.file_path)?;
@@ -259,8 +274,11 @@ pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
             row.get(0)
         })?;
 
-    let embedded_chunks: u32 =
-        conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))?;
+    let embedded_chunks: u32 = conn.query_row(
+        "SELECT COUNT(DISTINCT chunk_id) FROM embedded_chunk_ids",
+        [],
+        |row| row.get(0),
+    )?;
 
     let last_indexed_at: Option<String> = match conn.query_row(
         "SELECT value FROM index_meta WHERE key = 'last_indexed_at'",
@@ -306,7 +324,14 @@ pub fn delete_file_chunks_in(conn: &Connection, file_path: &str) -> Result<(), S
         [file_path],
     )?;
     conn.execute(
-        "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1)",
+        "DELETE FROM vec_chunks WHERE rowid IN \
+         (SELECT vec_rowid FROM embedded_chunk_ids \
+          WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1))",
+        [file_path],
+    )?;
+    conn.execute(
+        "DELETE FROM embedded_chunk_ids \
+         WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?1)",
         [file_path],
     )?;
     conn.execute("DELETE FROM chunks WHERE file_path = ?1", [file_path])?;
@@ -326,19 +351,6 @@ pub fn delete_file_chunks(conn: &Connection, file_path: &str) -> Result<(), Stor
     Ok(())
 }
 
-pub fn sql_placeholders(count: usize) -> String {
-    if count == 0 {
-        return String::new();
-    }
-    let mut s = String::with_capacity(count * 2 - 1);
-    for i in 0..count {
-        if i > 0 {
-            s.push(',');
-        }
-        s.push('?');
-    }
-    s
-}
 
 #[cfg(test)]
 mod tests;

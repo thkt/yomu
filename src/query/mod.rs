@@ -296,7 +296,7 @@ fn search_pipeline(
     let fetch_limit = limit.saturating_add(offset);
     let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
-        Some(emb) if use_semantic => storage::search_similar(conn, emb, fetch_limit, 0)?,
+        Some(emb) if use_semantic => storage::vec_search(conn, emb, fetch_limit)?,
         _ => Vec::new(),
     };
 

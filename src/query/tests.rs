@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder};
+use rurico::embed::{ChunkedEmbedding, Embedder, FailingEmbedder, MockEmbedder};
 
 use super::*;
 use crate::storage;
@@ -10,6 +10,10 @@ fn test_embedding() -> Vec<f32> {
     let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
     emb[0] = 1.0;
     emb
+}
+
+fn ce(v: Vec<f32>) -> ChunkedEmbedding {
+    ChunkedEmbedding { chunks: vec![v] }
 }
 
 #[test]
@@ -31,7 +35,7 @@ fn search_with_mock_embedder() {
             parent_index: None,
         },
         "hash1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -184,7 +188,7 @@ fn search_fallback_merges_vector_and_name_results() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -256,7 +260,7 @@ fn search_deduplicates_vector_and_name_results() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -603,7 +607,7 @@ fn search_returns_results_sorted_by_score() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();
@@ -890,7 +894,7 @@ fn search_returns_results() {
             parent_index: None,
         },
         "hash1",
-        &embedding,
+        &ce(embedding),
         None,
     )
     .unwrap();
@@ -952,7 +956,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
             parent_index: None,
         },
         "h1",
-        &emb,
+        &ce(emb.clone()),
         None,
     )
     .unwrap();

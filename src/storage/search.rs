@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::Connection;
 
 use super::{
-    Chunk, ChunkType, MatchSource, SearchResult, StorageError, f32_as_bytes, sql_placeholders,
+    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, as_sql_params,
+    f32_as_bytes, in_placeholders,
 };
 
 fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
@@ -18,40 +19,95 @@ fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Ch
     })
 }
 
-pub fn search_similar(
+const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
+
+pub fn vec_search(
     conn: &Connection,
     query_embedding: &[f32],
     limit: u32,
-    offset: u32,
 ) -> Result<Vec<SearchResult>, StorageError> {
     let query_bytes = f32_as_bytes(query_embedding);
+    let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
 
-    let k = limit.saturating_add(offset);
+    // Step 1: KNN query — fetch only chunk_id + distance.
+    // vec0 auxiliary columns (+chunk_id) cannot be used in JOIN conditions,
+    // so we avoid a direct JOIN here.
+    let knn_rows: Vec<(i64, f32)> = {
+        let mut stmt = conn.prepare(
+            "SELECT chunk_id, distance FROM vec_chunks \
+             WHERE embedding MATCH ?1 AND k = ?2 \
+             ORDER BY distance",
+        )?;
+        stmt.query_map(rusqlite::params![query_bytes, k], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
 
-    let mut stmt = conn.prepare(
-        "SELECT c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, c.parent_chunk_id, v.distance, c.id
-         FROM vec_chunks v
-         INNER JOIN chunks c ON c.id = v.chunk_id
-         WHERE v.embedding MATCH ?1 AND k = ?2
-               AND v.distance >= 0.0 -- filters NULL rows; vec0 disallows IS NOT NULL in KNN queries
-         ORDER BY v.distance
-         LIMIT ?3
-         OFFSET ?4",
-    )?;
+    if knn_rows.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    let rows = stmt.query_map(rusqlite::params![query_bytes, k, limit, offset], |row| {
-        let distance: f32 = row.get(7)?;
-        Ok(SearchResult {
-            chunk: chunk_from_row(row, 0)?,
-            chunk_id: Some(row.get(8)?),
-            distance,
-            match_source: MatchSource::Semantic,
-            score: 1.0 / (1.0 + distance),
+    // MaxSim: keep the sub-embedding with the smallest distance per chunk_id.
+    let mut best: HashMap<i64, f32> = HashMap::new();
+    for (chunk_id, distance) in &knn_rows {
+        use std::collections::hash_map::Entry;
+        match best.entry(*chunk_id) {
+            Entry::Vacant(v) => {
+                v.insert(*distance);
+            }
+            Entry::Occupied(mut o) => {
+                if distance < o.get() {
+                    *o.get_mut() = *distance;
+                }
+            }
+        }
+    }
+
+    // Step 2: batch-fetch chunk metadata for deduplicated chunk_ids.
+    let chunk_ids: Vec<i64> = best.keys().copied().collect();
+    let sql = format!(
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
+         FROM chunks WHERE id IN ({})",
+        in_placeholders(chunk_ids.len())
+    );
+    let params = as_sql_params(&chunk_ids);
+    let mut stmt2 = conn.prepare(&sql)?;
+    let meta: HashMap<i64, Chunk> = stmt2
+        .query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                Chunk {
+                    file_path: row.get(1)?,
+                    chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
+                    name: row.get(3)?,
+                    content: row.get(4)?,
+                    start_line: row.get(5)?,
+                    end_line: row.get(6)?,
+                    parent_chunk_id: row.get(7)?,
+                },
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .collect();
+
+    let mut results: Vec<SearchResult> = best
+        .into_iter()
+        .filter_map(|(chunk_id, distance)| {
+            meta.get(&chunk_id).map(|chunk| SearchResult {
+                chunk: chunk.clone(),
+                chunk_id: Some(chunk_id),
+                distance,
+                match_source: MatchSource::Semantic,
+                score: 1.0 / (1.0 + distance),
+            })
         })
-    })?;
+        .collect();
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    results.truncate(limit as usize);
+    Ok(results)
 }
 
 pub fn search_by_fts(
@@ -135,7 +191,7 @@ pub fn get_chunks_by_ids(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = super::sql_placeholders(ids.len());
+    let placeholders = super::in_placeholders(ids.len());
     let sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
          FROM chunks WHERE id IN ({placeholders})"
@@ -189,7 +245,7 @@ fn append_type_filter(
     {
         sql.push_str(&format!(
             " AND {column} IN ({})",
-            sql_placeholders(types.len())
+            anon_placeholders(types.len())
         ));
         for t in types {
             params.push(Box::new(t.as_str().to_string()));
@@ -206,7 +262,7 @@ fn append_exclude_ids(
     if !exclude_ids.is_empty() {
         sql.push_str(&format!(
             " AND {column} NOT IN ({})",
-            sql_placeholders(exclude_ids.len())
+            anon_placeholders(exclude_ids.len())
         ));
         for id in exclude_ids {
             params.push(Box::new(*id));

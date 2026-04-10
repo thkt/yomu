@@ -4,7 +4,7 @@ use super::embedder::{
 use super::*;
 use std::collections::HashMap;
 
-use rurico::embed::FailingEmbedder;
+use rurico::embed::{ChunkedEmbedding, FailingEmbedder};
 
 fn parse_json(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
@@ -14,6 +14,10 @@ fn test_embedding() -> Vec<f32> {
     let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
     emb[0] = 1.0;
     emb
+}
+
+fn ce(v: Vec<f32>) -> ChunkedEmbedding {
+    ChunkedEmbedding { chunks: vec![v] }
 }
 
 fn test_db() -> (storage::Db, tempfile::TempDir) {
@@ -72,7 +76,7 @@ fn seed_index(conn: &storage::Db) {
             parent_index: None,
         },
         "seed",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -679,7 +683,7 @@ fn status_returns_counts_after_insert() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();
@@ -1925,7 +1929,7 @@ fn status_json_with_data() {
             parent_index: None,
         },
         "h1",
-        &embedding,
+        &ce(embedding.clone()),
         None,
     )
     .unwrap();

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 #[cfg(test)]
 use super::Reference;
-use super::{ChunkType, StorageError, sql_placeholders};
+use super::{ChunkType, StorageError, in_placeholders};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
@@ -138,7 +138,7 @@ pub fn get_file_mtimes(
     if file_paths.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let placeholders = sql_placeholders(file_paths.len());
+    let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
         "SELECT file_path, mtime_epoch FROM file_context WHERE file_path IN ({placeholders}) AND mtime_epoch IS NOT NULL"
     );
@@ -161,7 +161,7 @@ pub fn get_file_contexts(
     if file_paths.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let placeholders = sql_placeholders(file_paths.len());
+    let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
         "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})"
     );
@@ -184,7 +184,7 @@ pub fn get_file_siblings(
     if file_paths.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let placeholders = sql_placeholders(file_paths.len());
+    let placeholders = in_placeholders(file_paths.len());
     let sql = format!(
         "SELECT file_path, name, chunk_type, start_line, end_line \
          FROM chunks WHERE file_path IN ({placeholders}) \

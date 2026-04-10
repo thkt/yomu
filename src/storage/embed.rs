@@ -1,63 +1,61 @@
 use std::collections::HashSet;
 
+use rurico::embed::ChunkedEmbedding;
 use rusqlite::Connection;
 
-use super::{ChunkType, StorageError, check_embedding_dims, f32_as_bytes, sql_placeholders};
+use super::{ChunkType, StorageError, anon_placeholders, as_sql_params, f32_as_bytes, in_placeholders};
 
-pub fn add_embeddings(
+pub fn add_chunked_embeddings(
     conn: &Connection,
-    embeddings: &[(i64, Vec<f32>)],
+    embeddings: &[(i64, ChunkedEmbedding)],
 ) -> Result<u32, StorageError> {
     if embeddings.is_empty() {
         return Ok(0);
     }
-
-    // vec0 virtual tables don't support INSERT OR IGNORE, so batch-fetch existing IDs.
-    let ph = sql_placeholders(embeddings.len());
-    let sql = format!("SELECT chunk_id FROM vec_chunks WHERE chunk_id IN ({ph})");
-    let params: Vec<Box<dyn rusqlite::types::ToSql>> = embeddings
-        .iter()
-        .map(|(id, _)| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let existing: HashSet<i64> = stmt
-        .query_map(param_refs.as_slice(), |row| row.get::<_, i64>(0))?
-        .collect::<Result<HashSet<_>, _>>()?;
-
+    let chunk_ids: Vec<i64> = embeddings.iter().map(|(id, _)| *id).collect();
+    let existing = existing_embedded_ids(conn, &chunk_ids)?;
     let tx = conn.unchecked_transaction()?;
-    let mut inserted = 0u32;
-
-    for (chunk_id, embedding) in embeddings {
+    let mut count = 0u32;
+    for (chunk_id, chunked_emb) in embeddings {
         if existing.contains(chunk_id) {
             continue;
         }
-        check_embedding_dims(embedding)?;
-        let bytes = f32_as_bytes(embedding);
-        tx.execute(
-            "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)",
-            rusqlite::params![chunk_id, bytes],
-        )?;
-        inserted += 1;
+        for (sub_idx, embedding) in chunked_emb.chunks.iter().enumerate() {
+            let bytes: &[u8] = f32_as_bytes(embedding);
+            tx.execute(
+                "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
+                rusqlite::params![bytes, chunk_id, sub_idx as i64],
+            )?;
+            let vec_rowid = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO embedded_chunk_ids (chunk_id, sub_idx, vec_rowid) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![chunk_id, sub_idx as i64, vec_rowid],
+            )?;
+        }
+        count += 1;
     }
-
     tx.commit()?;
-    Ok(inserted)
+    Ok(count)
 }
 
-#[cfg(test)]
-pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>, StorageError> {
-    let mut stmt = conn.prepare(
-        "SELECT c.file_path, COUNT(*) as chunk_count
-         FROM chunks c
-         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE v.chunk_id IS NULL AND c.chunk_type != 'inner_fn'
-         GROUP BY c.file_path",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+fn existing_embedded_ids(
+    conn: &Connection,
+    chunk_ids: &[i64],
+) -> Result<HashSet<i64>, StorageError> {
+    if chunk_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let sql = format!(
+        "SELECT DISTINCT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
+        in_placeholders(chunk_ids.len())
+    );
+    let params = as_sql_params(chunk_ids);
+    let mut stmt = conn.prepare(&sql)?;
+    let ids = stmt
+        .query_map(params.as_slice(), |row| row.get::<_, i64>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(ids)
 }
 
 pub fn get_unembedded_chunks_for_file(
@@ -66,8 +64,8 @@ pub fn get_unembedded_chunks_for_file(
 ) -> Result<Vec<(i64, String, String)>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.content, c.chunk_type FROM chunks c
-         LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-         WHERE c.file_path = ?1 AND v.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
+         LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
+         WHERE c.file_path = ?1 AND e.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
     )?;
     let rows = stmt.query_map([file_path], |row| {
         Ok((
@@ -99,8 +97,8 @@ pub fn get_files_with_chunk_types(
     if files.is_empty() || types.is_empty() {
         return Ok(HashSet::new());
     }
-    let type_ph = sql_placeholders(types.len());
-    let file_ph = sql_placeholders(files.len());
+    let type_ph = anon_placeholders(types.len());
+    let file_ph = anon_placeholders(files.len());
     let sql = format!(
         "SELECT DISTINCT file_path FROM chunks WHERE chunk_type IN ({type_ph}) AND file_path IN ({file_ph})"
     );
@@ -112,10 +110,35 @@ pub fn get_files_with_chunk_types(
     for f in files {
         params.push(Box::new(f.clone()));
     }
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
+}
+
+pub fn has_embeddings(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM embedded_chunk_ids)",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| {
+        tracing::warn!(error = %e, "has_embeddings query failed, assuming no embeddings");
+        e
+    })
+    .unwrap_or(false)
+}
+
+pub fn should_reindex(
+    conn: &Connection,
+    file_path: &str,
+    current_hash: &str,
+) -> Result<bool, StorageError> {
+    match stored_hash_for_file(conn, file_path)? {
+        None => Ok(true),
+        Some(h) => Ok(h != current_hash),
+    }
 }
 
 fn stored_hash_for_file(
@@ -134,6 +157,21 @@ fn stored_hash_for_file(
 }
 
 #[cfg(test)]
+pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT c.file_path, COUNT(*) as chunk_count
+         FROM chunks c
+         LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
+         WHERE e.chunk_id IS NULL AND c.chunk_type != 'inner_fn'
+         GROUP BY c.file_path",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+#[cfg(test)]
 pub fn needs_embedding(
     conn: &Connection,
     file_path: &str,
@@ -146,24 +184,13 @@ pub fn needs_embedding(
             let has_unembedded: bool = conn.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM chunks c
-                    LEFT JOIN vec_chunks v ON c.id = v.chunk_id
-                    WHERE c.file_path = ?1 AND v.chunk_id IS NULL
+                    LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
+                    WHERE c.file_path = ?1 AND e.chunk_id IS NULL
                 )",
                 [file_path],
                 |row| row.get(0),
             )?;
             Ok(has_unembedded)
         }
-    }
-}
-
-pub fn should_reindex(
-    conn: &Connection,
-    file_path: &str,
-    current_hash: &str,
-) -> Result<bool, StorageError> {
-    match stored_hash_for_file(conn, file_path)? {
-        None => Ok(true),
-        Some(h) => Ok(h != current_hash),
     }
 }
