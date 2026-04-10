@@ -44,6 +44,12 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
 
 const SCHEMA_VERSION: u32 = 8;
 
+const DDL_FTS_CHUNKS: &str =
+    "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path)";
+
+const DDL_FTS_CHUNKS_VOCAB: &str =
+    "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)";
+
 const DDL_EMBEDDED_CHUNK_IDS: &str = "\
     CREATE TABLE IF NOT EXISTS embedded_chunk_ids (\
         chunk_id INTEGER NOT NULL, \
@@ -106,11 +112,7 @@ fn init_schema(conn: &Connection, path: &Path) -> Result<(), StorageError> {
     conn.execute_batch(&ddl_vec_chunks())?;
     conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
 
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
-            name, content, file_path
-        )",
-    )?;
+    conn.execute_batch(DDL_FTS_CHUNKS)?;
 
     let stored: u32 = match conn.query_row(
         "SELECT value FROM index_meta WHERE key = 'schema_version'",
@@ -201,9 +203,7 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
 
     // v3 → v4: add fts5vocab table for short-term expansion
     if from < 4 {
-        conn.execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)",
-        )?;
+        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
     }
 
     // v4 → v5: add parent_chunk_id for subchunk extraction
@@ -281,9 +281,7 @@ fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
 
     fts_optimize(conn)?;
 
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)",
-    )?;
+    conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
     Ok(())
 }
 

@@ -322,7 +322,7 @@ pub fn is_index_fresh(conn: &Connection, max_age_secs: u32) -> Result<bool, Stor
 }
 
 pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageError> {
-    let mut stmt = conn.prepare("SELECT DISTINCT file_path FROM chunks")?;
+    let mut stmt = conn.prepare_cached("SELECT DISTINCT file_path FROM chunks")?;
     let paths = stmt.query_map([], |row| row.get::<_, String>(0))?;
     paths.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }

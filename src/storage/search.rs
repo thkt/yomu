@@ -33,7 +33,7 @@ pub fn vec_search(
     // vec0 auxiliary columns (+chunk_id) cannot be used in JOIN conditions,
     // so we avoid a direct JOIN here.
     let knn_rows: Vec<(i64, f32)> = {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT chunk_id, distance FROM vec_chunks \
              WHERE embedding MATCH ?1 AND k = ?2 \
              ORDER BY distance",
@@ -84,9 +84,7 @@ pub fn vec_search(
                 },
             ))
         })?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .collect();
+        .collect::<Result<HashMap<_, _>, _>>()?;
 
     let mut results: Vec<SearchResult> = best
         .into_iter()
@@ -169,7 +167,7 @@ pub fn search_by_fts(
 }
 
 pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>, StorageError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
          FROM chunks WHERE id = ?1",
     )?;
@@ -193,11 +191,7 @@ pub fn get_chunks_by_ids(
          FROM chunks WHERE id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = ids
-        .iter()
-        .map(|id| id as &dyn rusqlite::types::ToSql)
-        .collect();
-    let rows = stmt.query_map(params.as_slice(), |row| {
+    let rows = stmt.query_map(as_sql_params(ids).as_slice(), |row| {
         let id: i64 = row.get(0)?;
         let chunk = chunk_from_row(row, 1)?;
         Ok((id, chunk))

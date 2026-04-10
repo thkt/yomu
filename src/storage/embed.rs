@@ -53,7 +53,7 @@ pub fn get_unembedded_chunks_for_file(
     conn: &Connection,
     file_path: &str,
 ) -> Result<Vec<(i64, String, String)>, StorageError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT c.id, c.content, c.chunk_type FROM chunks c
          LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
          WHERE c.file_path = ?1 AND e.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
@@ -93,17 +93,13 @@ pub fn get_files_with_chunk_types(
     let sql = format!(
         "SELECT DISTINCT file_path FROM chunks WHERE chunk_type IN ({type_ph}) AND file_path IN ({file_ph})"
     );
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-        Vec::with_capacity(types.len() + files.len());
-    for t in types {
-        params.push(Box::new(t.as_str().to_string()));
-    }
-    for f in files {
-        params.push(Box::new(f.clone()));
-    }
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let params: Vec<String> = types
+        .iter()
+        .map(|t| t.as_str().to_string())
+        .chain(files.iter().cloned())
+        .collect();
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(as_sql_params(&params).as_slice(), |row| row.get::<_, String>(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
@@ -148,7 +144,7 @@ fn stored_hash_for_file(
 
 #[cfg(test)]
 pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>, StorageError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT c.file_path, COUNT(*) as chunk_count
          FROM chunks c
          LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
