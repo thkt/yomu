@@ -1,11 +1,13 @@
 mod embedder;
 mod format;
+mod reranker;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rurico::embed::Embed;
+use rurico::reranker::Rerank;
 
 use crate::config;
 use crate::indexer;
@@ -71,6 +73,8 @@ pub struct Yomu {
     root: PathBuf,
     embed_budget: u32,
     embed_disabled: bool,
+    rerank_enabled: bool,
+    reranker: OnceLock<reranker::ModelLoad<Box<dyn Rerank>>>,
 }
 
 impl Yomu {
@@ -86,12 +90,15 @@ impl Yomu {
         let conn = storage::open_db(&db_path)?;
 
         let embed_disabled = std::env::var("YOMU_EMBED").as_deref() == Ok("0");
+        let rerank_enabled = std::env::var("YOMU_RERANK").as_deref() == Ok("1");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
             embed_budget: parse_embed_budget(),
             embed_disabled,
+            rerank_enabled,
+            reranker: OnceLock::new(),
         })
     }
 
@@ -109,6 +116,8 @@ impl Yomu {
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
+            rerank_enabled: false,
+            reranker: OnceLock::new(),
         }
     }
 
@@ -145,11 +154,21 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
-        let outcome = query::search(Arc::clone(&self.conn), embedder, query, limit, offset)?;
+        let outcome = query::search(
+            Arc::clone(&self.conn),
+            embedder,
+            query,
+            limit,
+            offset,
+            self.get_reranker(),
+        )?;
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
             notes.push(msg);
+        }
+        if let Some(note) = self.reranker_note() {
+            notes.push(note);
         }
         if let Some(reason) = self.degraded_reason() {
             if let Some(note) = reason.user_note() {

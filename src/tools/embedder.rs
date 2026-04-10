@@ -206,6 +206,8 @@ impl Yomu {
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
+            rerank_enabled: false,
+            reranker: std::sync::OnceLock::new(),
         }
     }
 
@@ -221,6 +223,8 @@ impl Yomu {
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: true,
+            rerank_enabled: false,
+            reranker: std::sync::OnceLock::new(),
         }
     }
 }

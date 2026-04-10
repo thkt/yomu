@@ -197,7 +197,7 @@ fn run_explorer(conn: &Arc<Mutex<yomu::storage::Db>>, embedder: &rurico::embed::
 
     for query in &queries {
         let start = Instant::now();
-        let results = yomu::query::search(Arc::clone(conn), embedder, query, 5, 0);
+        let results = yomu::query::search(Arc::clone(conn), embedder, query, 5, 0, None);
         let elapsed = start.elapsed();
 
         match results {

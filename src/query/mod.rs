@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
 use rurico::embed::{Embed, EmbedError};
+use rurico::reranker::Rerank;
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
@@ -162,6 +163,27 @@ fn keyword_hit_ratio(
 
 const MAX_RESULTS_PER_FILE: usize = 2;
 
+fn cross_encoder_rerank(results: &mut [SearchResult], query: &str, reranker: &dyn Rerank) {
+    if results.is_empty() {
+        return;
+    }
+    let pairs: Vec<(&str, &str)> = results
+        .iter()
+        .map(|r| (query, r.chunk.content.as_str()))
+        .collect();
+    match reranker.score_batch(&pairs) {
+        Ok(scores) => {
+            for (result, score) in results.iter_mut().zip(scores) {
+                result.score = score;
+            }
+            results.sort_by(|a, b| b.score.total_cmp(&a.score));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "cross-encoder reranking failed, keeping heuristic order");
+        }
+    }
+}
+
 fn cap_per_file(results: &mut Vec<storage::SearchResult>, max: usize) {
     let mut counts: HashMap<String, usize> = HashMap::new();
     results.retain(|r| {
@@ -287,20 +309,27 @@ fn search_pipeline(
     query_embedding: Option<&[f32]>,
     limit: u32,
     offset: u32,
+    reranker: Option<&dyn Rerank>,
 ) -> Result<Vec<SearchResult>, StorageError> {
     let keywords = extract_keywords(query);
     let type_hints = extract_type_hints(query);
     let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
 
     let stats = storage::get_stats(conn)?;
-    let fetch_limit = limit.saturating_add(offset);
+    let fetch_limit = if reranker.is_some() {
+        limit.saturating_mul(4).saturating_add(offset)
+    } else {
+        limit.saturating_add(offset)
+    };
     let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
         Some(emb) if use_semantic => storage::vec_search(conn, emb, fetch_limit)?,
         _ => Vec::new(),
     };
 
-    let fallback_limit = fetch_limit * 3;
+    // FTS fallback is independent of reranker's semantic overfetch to avoid
+    // handing an excessively large batch to the cross-encoder.
+    let fallback_limit = limit.saturating_add(offset).saturating_mul(3);
 
     if !keywords.is_empty() {
         let type_filter = if type_hints.is_empty() {
@@ -341,6 +370,9 @@ fn search_pipeline(
         embed_coverage,
     };
     rerank(&mut results, &ctx, &import_counts);
+    if let Some(ranker) = reranker {
+        cross_encoder_rerank(&mut results, query, ranker);
+    }
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     if offset > 0 {
         let skip = std::cmp::min(offset as usize, results.len());
@@ -357,6 +389,7 @@ pub fn search(
     query: &str,
     limit: u32,
     offset: u32,
+    reranker: Option<&dyn Rerank>,
 ) -> Result<SearchOutcome, QueryError> {
     let (query_embedding, degraded) = match embedder.embed_query(query) {
         Ok(emb) => (Some(emb), false),
@@ -367,7 +400,14 @@ pub fn search(
     };
 
     let conn = conn.lock().unwrap();
-    let results = search_pipeline(&conn, query, query_embedding.as_deref(), limit, offset)?;
+    let results = search_pipeline(
+        &conn,
+        query,
+        query_embedding.as_deref(),
+        limit,
+        offset,
+        reranker,
+    )?;
     Ok(SearchOutcome { results, degraded })
 }
 
