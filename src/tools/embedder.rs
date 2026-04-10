@@ -104,10 +104,13 @@ pub(super) fn parse_auto_download(value: Option<&str>) -> bool {
 }
 
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
+    if disabled {
+        tracing::info!("Embedding disabled via YOMU_EMBED=0");
+        return Err(DegradedReason::Disabled);
+    }
     let auto_download =
         parse_auto_download(std::env::var("YOMU_AUTO_DOWNLOAD_MODEL").ok().as_deref());
     try_load_embedder_with(
-        disabled,
         auto_download,
         || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
         || {
@@ -122,7 +125,6 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
 }
 
 fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
-    disabled: bool,
     auto_download: bool,
     cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
     download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
@@ -134,10 +136,6 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
         DegradedReason::ProbeFailed
     }
 
-    if disabled {
-        tracing::info!("Embedding disabled via YOMU_EMBED=0");
-        return Err(DegradedReason::Disabled);
-    }
     let paths = match cache_check() {
         Ok(Some(p)) => p,
         Ok(None) if auto_download => match download_fn() {
@@ -227,14 +225,7 @@ mod tests {
     // disabled=true → DegradedReason::Disabled
     #[test]
     fn disabled_returns_disabled_reason() {
-        let result = try_load_embedder_with(
-            true,
-            false,
-            || Ok::<_, &str>(None),
-            || -> Result<rurico::embed::Artifacts, &str> {
-                unreachable!("download_fn must not be called when disabled")
-            },
-        );
+        let result = try_load_embedder(true);
         assert!(matches!(result, Err(DegradedReason::Disabled)));
     }
 
@@ -242,7 +233,6 @@ mod tests {
     #[test]
     fn absent_returns_not_installed() {
         let result = try_load_embedder_with(
-            false,
             false,
             || Ok::<_, &str>(None),
             || -> Result<rurico::embed::Artifacts, &str> {
@@ -257,7 +247,6 @@ mod tests {
     fn cache_error_returns_probe_failed() {
         let result = try_load_embedder_with(
             false,
-            false,
             || Err::<Option<rurico::embed::Artifacts>, _>("cache broken"),
             || -> Result<rurico::embed::Artifacts, &str> {
                 unreachable!("download_fn must not be called when cache_check fails")
@@ -270,7 +259,6 @@ mod tests {
     #[test]
     fn auto_download_failure_returns_download_failed() {
         let result = try_load_embedder_with(
-            false,
             true,
             || Ok::<_, &str>(None),
             || Err::<rurico::embed::Artifacts, _>("download failed"),
