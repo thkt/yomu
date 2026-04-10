@@ -30,6 +30,9 @@ enum Command {
         /// Skip N results (default: 0)
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=MAX_SEARCH_OFFSET as i64))]
         offset: u32,
+        /// Restrict search to files under this path prefix (repeatable)
+        #[arg(long)]
+        path: Vec<String>,
         /// Deprecated: use global --json instead
         #[arg(long, hide = true)]
         format: Option<String>,
@@ -136,6 +139,7 @@ fn main() -> ExitCode {
             query,
             limit,
             offset,
+            path,
             format,
         } => {
             if format.is_some() {
@@ -149,7 +153,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            yomu.search(&query, limit, offset, json)
+            yomu.search(&query, limit, offset, &path, json)
         }
         Command::Index { dry_run } => {
             if dry_run {
@@ -364,6 +368,49 @@ mod tests {
         match cli.command.unwrap() {
             Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
             other => panic!("[T-049] expected Search, got {other:?}"),
+        }
+    }
+
+    // T-076: --path parses into path vec
+    #[test]
+    fn search_path_filter_parses() {
+        let cli = parse_cli_args(["yomu", "search", "query", "--path", "src/fetcher/"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { path, .. } => {
+                assert_eq!(path, vec!["src/fetcher/"]);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    // T-076: multiple --path values
+    #[test]
+    fn search_multiple_path_filters_parse() {
+        let cli = parse_cli_args([
+            "yomu",
+            "search",
+            "query",
+            "--path",
+            "src/fetcher/",
+            "--path",
+            "src/client/",
+        ])
+        .unwrap();
+        match cli.command.unwrap() {
+            Command::Search { path, .. } => {
+                assert_eq!(path, vec!["src/fetcher/", "src/client/"]);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    // T-076: --path absent → empty vec (full search)
+    #[test]
+    fn search_no_path_defaults_to_empty() {
+        let cli = parse_cli_args(["yomu", "search", "query"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { path, .. } => assert!(path.is_empty()),
+            other => panic!("expected Search, got {other:?}"),
         }
     }
 
