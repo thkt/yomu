@@ -1,4 +1,5 @@
 mod progress;
+mod shorthand;
 
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
@@ -16,7 +17,7 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Semantic code search. Finds components, hooks, types by meaning.
     Search {
@@ -72,7 +73,7 @@ Examples:
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum ModelCommand {
     /// Download embedding model from Hugging Face Hub.
     Download,
@@ -89,7 +90,7 @@ fn main() -> ExitCode {
         )
         .init();
 
-    let cli = parse_cli();
+    let cli = parse_cli_args(std::env::args_os()).unwrap_or_else(|e| e.exit());
     let json = cli.json;
 
     let command = match cli.command {
@@ -184,73 +185,26 @@ fn main() -> ExitCode {
     }
 }
 
+const KNOWN_SUBCOMMANDS: &[&str] = &["search", "index", "rebuild", "impact", "status", "model"];
 const GLOBAL_FLAGS: &[&str] = &["--json"];
 
-/// Near-matches of known subcommands (edit distance ≤ 1) are not rewritten,
-/// so clap can show "did you mean?" suggestions for typos.
-fn parse_cli() -> Cli {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = Cli::command();
-    let known: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
-
-    // Strip global flags before shorthand detection so `yomu --json query` works.
-    let (flags, rest): (Vec<_>, Vec<_>) = args
-        .iter()
-        .enumerate()
-        .partition(|(i, a)| *i > 0 && GLOBAL_FLAGS.contains(&a.as_str()));
-    let rest: Vec<&String> = rest.into_iter().map(|(_, a)| a).collect();
-
-    if rest.len() >= 2
-        && !rest[1].starts_with('-')
-        && rest[1] != "help"
-        && !known.contains(&rest[1].as_str())
-        && !is_near_subcommand(rest[1], &known)
-    {
-        let mut patched: Vec<String> = vec![rest[0].clone()];
-        for (_, f) in &flags {
-            patched.push((*f).clone());
-        }
-        patched.push("search".to_string());
-        for r in &rest[1..] {
-            patched.push((*r).clone());
-        }
-        Cli::parse_from(patched)
-    } else {
-        Cli::parse()
-    }
-}
-
-fn is_near_subcommand(input: &str, known: &[&str]) -> bool {
-    known.iter().any(|cmd| osa_distance(input, cmd) <= 1)
-}
-
-#[allow(clippy::needless_range_loop)]
-fn osa_distance(a: &str, b: &str) -> usize {
-    let a = a.as_bytes();
-    let b = b.as_bytes();
-    let (m, n) = (a.len(), b.len());
-    if m.abs_diff(n) > 1 {
-        return m.abs_diff(n);
-    }
-    let mut d = vec![vec![0usize; n + 1]; m + 1];
-    for i in 0..=m {
-        d[i][0] = i;
-    }
-    for j in 0..=n {
-        d[0][j] = j;
-    }
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            d[i][j] = (d[i - 1][j] + 1)
-                .min(d[i][j - 1] + 1)
-                .min(d[i - 1][j - 1] + cost);
-            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
-                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
-            }
+fn parse_cli_args<I, T>(args: I) -> Result<Cli, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let expanded = shorthand::try_expand_shorthand(&args, KNOWN_SUBCOMMANDS, GLOBAL_FLAGS);
+    if let Some(expanded) = expanded {
+        if let Ok(cli) = Cli::try_parse_from(&expanded) {
+            let display: Vec<_> = std::iter::once("yomu")
+                .chain(expanded[1..].iter().filter_map(|a| a.to_str()))
+                .collect();
+            eprintln!("→ {}", display.join(" "));
+            return Ok(cli);
         }
     }
-    d[m][n]
+    Cli::try_parse_from(args)
 }
 
 fn resolve_query(arg: Option<String>) -> Result<String, String> {
@@ -376,23 +330,56 @@ mod tests {
         assert!(result.unwrap_err().contains("empty query"));
     }
 
+    // T-030: explicit `yomu search "認証"` is not double-injected
     #[test]
-    fn near_subcommand_catches_typos() {
-        let known = ["search", "index", "rebuild", "impact", "status"];
-        // Transpositions (OSA distance 1)
-        assert!(is_near_subcommand("stauts", &known)); // status
-        assert!(is_near_subcommand("serach", &known)); // search
-        // Single deletion
-        assert!(is_near_subcommand("indx", &known)); // index
+    fn explicit_search_not_double_injected() {
+        let cli = parse_cli_args(["yomu", "search", "認証"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("認証")),
+            other => panic!("expected Search, got {other:?}"),
+        }
     }
 
+    // T-033: `yomu search` (missing arg) parses to stdin fallback path
     #[test]
-    fn near_subcommand_passes_valid_queries() {
-        let known = ["search", "index", "rebuild", "impact", "status"];
-        assert!(!is_near_subcommand("state", &known)); // OSA 2 from status
-        assert!(!is_near_subcommand("auth", &known));
-        assert!(!is_near_subcommand("button", &known));
-        assert!(!is_near_subcommand("statusBar", &known));
-        assert!(!is_near_subcommand("認証", &known));
+    fn search_missing_arg_parses_for_stdin_fallback() {
+        let cli = parse_cli_args(["yomu", "search"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { query, .. } => assert_eq!(query, None),
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    // T-049: parse_cli_args(["yomu", "query"]) → Command::Search (json=false) - regression
+    #[test]
+    fn shorthand_without_flags_has_json_false() {
+        let cli = parse_cli_args(["yomu", "query"]).unwrap();
+        assert!(!cli.json, "[T-049] json should default to false");
+        match cli.command.unwrap() {
+            Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
+            other => panic!("[T-049] expected Search, got {other:?}"),
+        }
+    }
+
+    // T-025: typo (OSA ≤ 1) → clap error, not shorthand expansion
+    #[test]
+    fn typo_subcommand_is_clap_error() {
+        let result = parse_cli_args(["yomu", "serach"]);
+        assert!(result.is_err(), "typo 'serach' should be clap error");
+    }
+
+    // TC-014: non-search subcommand names are not rewritten as search shorthand
+    #[test]
+    fn all_subcommands_not_shorthand() {
+        for cmd in ["index", "rebuild", "impact", "status"] {
+            let result = parse_cli_args(["yomu", cmd]);
+            assert!(
+                !matches!(
+                    result.as_ref().map(|c| c.command.as_ref()),
+                    Ok(Some(Command::Search { .. }))
+                ),
+                "[TC-014] subcommand '{cmd}' should not be rewritten as Search shorthand"
+            );
+        }
     }
 }
