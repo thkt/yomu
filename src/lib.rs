@@ -1,5 +1,6 @@
 pub mod config;
 pub mod indexer;
+pub mod progress;
 pub mod query;
 pub mod resolver;
 pub mod rust_resolver;

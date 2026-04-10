@@ -9,13 +9,13 @@ use std::time::Duration;
 const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const TICK_MS: u64 = 80;
 
-pub(crate) struct Spinner {
+pub struct Spinner {
     done: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Spinner {
-    pub(crate) fn new(msg: &str) -> Self {
+    pub fn new(msg: &str) -> Self {
         let done = Arc::new(AtomicBool::new(false));
 
         let thread = if std::io::stderr().is_terminal() {
@@ -35,21 +35,24 @@ impl Spinner {
                 }
             }))
         } else {
+            eprintln!("{msg}");
             None
         };
 
         Self { done, thread }
     }
 
-    pub(crate) fn finish(self, msg: &str) {
+    pub fn finish(self, msg: &str) {
         let is_tty = self.thread.is_some();
         drop(self);
         if is_tty {
             eprintln!("\x1b[32m✓\x1b[0m {msg}");
+        } else {
+            eprintln!("{msg}");
         }
     }
 
-    pub(crate) fn cancel(self) {
+    pub fn cancel(self) {
         tracing::trace!("spinner cancelled");
     }
 }
