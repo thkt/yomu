@@ -140,8 +140,8 @@ fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
         auto_download,
         cache_check,
         download_fn,
-        |a| Embedder::probe(a),
-        |a| Embedder::new(a),
+        Embedder::probe,
+        Embedder::new,
     )
 }
 
@@ -149,7 +149,9 @@ fn try_load_embedder_with_fns<CE, DE>(
     auto_download: bool,
     cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
     download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
-    probe_fn: impl FnOnce(&rurico::embed::Artifacts) -> Result<rurico::embed::ProbeStatus, EmbedInitError>,
+    probe_fn: impl FnOnce(
+        &rurico::embed::Artifacts,
+    ) -> Result<rurico::embed::ProbeStatus, EmbedInitError>,
     new_fn: impl FnOnce(&rurico::embed::Artifacts) -> Result<Embedder, EmbedInitError>,
 ) -> Result<Arc<dyn Embed>, DegradedReason>
 where

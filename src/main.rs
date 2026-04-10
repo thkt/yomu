@@ -262,10 +262,10 @@ fn run_model_download(json: bool) -> Result<String, YomuError> {
         }
         Err(e) => {
             spinner.cancel();
-            if matches!(e, EmbedInitError::ModelCorrupt { .. }) {
-                if let Err(del_err) = paths.delete_files() {
-                    tracing::warn!(error = %del_err, "failed to delete corrupt model files");
-                }
+            if matches!(e, EmbedInitError::ModelCorrupt { .. })
+                && let Err(del_err) = paths.delete_files()
+            {
+                tracing::warn!(error = %del_err, "failed to delete corrupt model files");
             }
             return Err(YomuError::Internal(format!("Model probe failed: {e}")));
         }
