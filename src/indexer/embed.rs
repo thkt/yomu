@@ -47,10 +47,14 @@ pub(super) fn enrich_for_embedding(
 ) -> String {
     let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
     if let Some(n) = name {
-        result.push_str(&format!("// Name: {n}\n"));
+        result.push_str("// Name: ");
+        result.push_str(n);
+        result.push('\n');
     }
     if let Some(p) = parent_name {
-        result.push_str(&format!("// Parent: {p}\n"));
+        result.push_str("// Parent: ");
+        result.push_str(p);
+        result.push('\n');
     }
     if !imports.is_empty() {
         for line in imports.lines() {
@@ -137,7 +141,9 @@ pub(super) fn embed_and_store(
             .iter()
             .filter(|c| c.chunk_type != storage::ChunkType::InnerFn)
             .map(|c| {
-                let parent_name = c.parent_index.and_then(|i| pf.raw_chunks[i].name.as_deref());
+                let parent_name = c
+                    .parent_index
+                    .and_then(|i| pf.raw_chunks[i].name.as_deref());
                 enrich_for_embedding(
                     &pf.rel_path,
                     c.chunk_type.as_str(),
@@ -226,17 +232,17 @@ fn fetch_unembedded_file(
     let conn_guard = conn.lock().unwrap();
     let rows = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
     let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
-    let ids: Vec<i64> = rows.iter().map(|(id, _, _, _, _)| *id).collect();
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let texts: Vec<String> = rows
         .into_iter()
-        .map(|(_, content, chunk_type, name, parent_name)| {
+        .map(|r| {
             enrich_for_embedding(
                 file_path,
-                &chunk_type,
-                name.as_deref(),
-                parent_name.as_deref(),
+                &r.chunk_type,
+                r.name.as_deref(),
+                r.parent_name.as_deref(),
                 &imports,
-                &content,
+                &r.content,
             )
         })
         .collect();

@@ -37,7 +37,14 @@ fn enrich_for_embedding_with_imports() {
 
 #[test]
 fn enrich_for_embedding_without_imports() {
-    let result = enrich_for_embedding("src/utils.ts", "function", None, None, "", "function add() {}");
+    let result = enrich_for_embedding(
+        "src/utils.ts",
+        "function",
+        None,
+        None,
+        "",
+        "function add() {}",
+    );
     assert_eq!(
         result,
         "// File: src/utils.ts\n// Type: function\nfunction add() {}"

@@ -1539,7 +1539,7 @@ fn fts5_handles_special_characters_in_content() {
 }
 
 #[test]
-fn get_unembedded_chunks_for_file_returns_triple() {
+fn get_unembedded_chunks_for_file_returns_rows() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -1565,12 +1565,11 @@ fn get_unembedded_chunks_for_file_returns_triple() {
     let rows = get_unembedded_chunks_for_file(&conn, "src/Card.tsx").unwrap();
     assert_eq!(rows.len(), 2);
 
-    let types: Vec<&str> = rows.iter().map(|(_, _, t, _, _)| t.as_str()).collect();
+    let types: Vec<&str> = rows.iter().map(|r| r.chunk_type.as_str()).collect();
     assert!(types.contains(&"component"));
     assert!(types.contains(&"hook"));
 
-    // Verify content is returned correctly
-    let contents: Vec<&str> = rows.iter().map(|(_, c, _, _, _)| c.as_str()).collect();
+    let contents: Vec<&str> = rows.iter().map(|r| r.content.as_str()).collect();
     assert!(contents.contains(&"function Card() {}"));
     assert!(contents.contains(&"function useCard() {}"));
 }
