@@ -1562,15 +1562,15 @@ fn get_unembedded_chunks_for_file_returns_triple() {
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[], None).unwrap();
 
-    let triples = get_unembedded_chunks_for_file(&conn, "src/Card.tsx").unwrap();
-    assert_eq!(triples.len(), 2);
+    let rows = get_unembedded_chunks_for_file(&conn, "src/Card.tsx").unwrap();
+    assert_eq!(rows.len(), 2);
 
-    let types: Vec<&str> = triples.iter().map(|(_, _, t)| t.as_str()).collect();
+    let types: Vec<&str> = rows.iter().map(|(_, _, t, _, _)| t.as_str()).collect();
     assert!(types.contains(&"component"));
     assert!(types.contains(&"hook"));
 
     // Verify content is returned correctly
-    let contents: Vec<&str> = triples.iter().map(|(_, c, _)| c.as_str()).collect();
+    let contents: Vec<&str> = rows.iter().map(|(_, c, _, _, _)| c.as_str()).collect();
     assert!(contents.contains(&"function Card() {}"));
     assert!(contents.contains(&"function useCard() {}"));
 }
@@ -1597,8 +1597,8 @@ fn get_unembedded_chunks_for_file_excludes_embedded() {
     )
     .unwrap();
 
-    let triples = get_unembedded_chunks_for_file(&conn, "src/Nav.tsx").unwrap();
-    assert!(triples.is_empty());
+    let rows = get_unembedded_chunks_for_file(&conn, "src/Nav.tsx").unwrap();
+    assert!(rows.is_empty());
 }
 
 #[test]
