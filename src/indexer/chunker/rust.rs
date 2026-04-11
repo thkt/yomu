@@ -29,6 +29,14 @@ pub(super) fn chunk_rust(source: &str) -> FileChunks {
             "line_comment" | "block_comment" => {
                 pending_comments.push(node);
             }
+            "impl_item" => {
+                let impl_index = chunks.len();
+                let name = extract_rust_impl_name(&node, source);
+                let mut impl_chunk = make_chunk(source, &node, ChunkType::RustImpl, name);
+                attach_pending_comments(&mut impl_chunk, &mut pending_comments, source);
+                chunks.push(impl_chunk);
+                chunks.extend(extract_impl_methods(&node, source, impl_index));
+            }
             _ => {
                 if let Some(mut chunk) = classify_rust_node(&node, source) {
                     attach_pending_comments(&mut chunk, &mut pending_comments, source);
@@ -55,14 +63,31 @@ fn classify_rust_node(node: &tree_sitter::Node, source: &str) -> Option<RawChunk
         "struct_item" => ChunkType::RustStruct,
         "enum_item" => ChunkType::RustEnum,
         "trait_item" => ChunkType::RustTrait,
-        "impl_item" => {
-            let name = extract_rust_impl_name(node, source);
-            return Some(make_chunk(source, node, ChunkType::RustImpl, name));
-        }
         _ => return other_or_skip(source, node),
     };
     let name = extract_name(node, source);
     Some(make_chunk(source, node, chunk_type, name))
+}
+
+fn extract_impl_methods(
+    impl_node: &tree_sitter::Node,
+    source: &str,
+    impl_index: usize,
+) -> Vec<RawChunk> {
+    let Some(body) = impl_node.child_by_field_name("body") else {
+        return vec![];
+    };
+    let mut result = Vec::new();
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() == "function_item" {
+            let name = extract_name(&child, source);
+            let mut chunk = make_chunk(source, &child, ChunkType::RustFn, name);
+            chunk.parent_index = Some(impl_index);
+            result.push(chunk);
+        }
+    }
+    result
 }
 
 fn parse_rust_use(node: &tree_sitter::Node, source: &str) -> Vec<ParsedImport> {

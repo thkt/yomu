@@ -49,21 +49,33 @@ fn existing_embedded_ids(
     Ok(ids)
 }
 
+pub struct UnembeddedChunk {
+    pub id: i64,
+    pub content: String,
+    pub chunk_type: String,
+    pub name: Option<String>,
+    pub parent_name: Option<String>,
+}
+
 pub fn get_unembedded_chunks_for_file(
     conn: &Connection,
     file_path: &str,
-) -> Result<Vec<(i64, String, String)>, StorageError> {
+) -> Result<Vec<UnembeddedChunk>, StorageError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT c.id, c.content, c.chunk_type FROM chunks c
+        "SELECT c.id, c.content, c.chunk_type, c.name, p.name
+         FROM chunks c
+         LEFT JOIN chunks p ON c.parent_chunk_id = p.id
          LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
          WHERE c.file_path = ?1 AND e.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
     )?;
     let rows = stmt.query_map([file_path], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
+        Ok(UnembeddedChunk {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            chunk_type: row.get(2)?,
+            name: row.get(3)?,
+            parent_name: row.get(4)?,
+        })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }

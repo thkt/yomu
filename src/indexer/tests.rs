@@ -23,6 +23,8 @@ fn enrich_for_embedding_with_imports() {
     let result = enrich_for_embedding(
         "src/App.tsx",
         "component",
+        None,
+        None,
         "import { useState } from 'react'\nimport { Button } from './Button'",
         "function App() {}",
     );
@@ -35,7 +37,14 @@ fn enrich_for_embedding_with_imports() {
 
 #[test]
 fn enrich_for_embedding_without_imports() {
-    let result = enrich_for_embedding("src/utils.ts", "function", "", "function add() {}");
+    let result = enrich_for_embedding(
+        "src/utils.ts",
+        "function",
+        None,
+        None,
+        "",
+        "function add() {}",
+    );
     assert_eq!(
         result,
         "// File: src/utils.ts\n// Type: function\nfunction add() {}"
@@ -44,8 +53,39 @@ fn enrich_for_embedding_without_imports() {
 
 #[test]
 fn enrich_for_embedding_empty_content() {
-    let result = enrich_for_embedding("src/empty.ts", "other", "", "");
+    let result = enrich_for_embedding("src/empty.ts", "other", None, None, "", "");
     assert_eq!(result, "// File: src/empty.ts\n// Type: other\n");
+}
+
+#[test]
+fn enrich_for_embedding_with_name() {
+    let result = enrich_for_embedding(
+        "src/slack.rs",
+        "rust_fn",
+        Some("handle_rate_limit"),
+        None,
+        "",
+        "fn handle_rate_limit() {}",
+    );
+    assert!(result.contains("// Name: handle_rate_limit\n"));
+    assert!(!result.contains("// Parent:"));
+}
+
+#[test]
+fn enrich_for_embedding_with_name_and_parent() {
+    let result = enrich_for_embedding(
+        "src/client.rs",
+        "rust_fn",
+        Some("handle_rate_limit"),
+        Some("SlackClient"),
+        "",
+        "fn handle_rate_limit() {}",
+    );
+    assert!(result.contains("// Name: handle_rate_limit\n"));
+    assert!(result.contains("// Parent: SlackClient\n"));
+    let name_pos = result.find("// Name:").unwrap();
+    let parent_pos = result.find("// Parent:").unwrap();
+    assert!(name_pos < parent_pos);
 }
 
 #[test]

@@ -40,10 +40,22 @@ fn validate_chunked_embeddings(embs: Vec<ChunkedEmbedding>) -> Result<Vec<Chunke
 pub(super) fn enrich_for_embedding(
     file_path: &str,
     chunk_type: &str,
+    name: Option<&str>,
+    parent_name: Option<&str>,
     imports: &str,
     content: &str,
 ) -> String {
     let mut result = format!("// File: {file_path}\n// Type: {chunk_type}\n");
+    if let Some(n) = name {
+        result.push_str("// Name: ");
+        result.push_str(n);
+        result.push('\n');
+    }
+    if let Some(p) = parent_name {
+        result.push_str("// Parent: ");
+        result.push_str(p);
+        result.push('\n');
+    }
     if !imports.is_empty() {
         for line in imports.lines() {
             result.push_str("// ");
@@ -129,9 +141,14 @@ pub(super) fn embed_and_store(
             .iter()
             .filter(|c| c.chunk_type != storage::ChunkType::InnerFn)
             .map(|c| {
+                let parent_name = c
+                    .parent_index
+                    .and_then(|i| pf.raw_chunks[i].name.as_deref());
                 enrich_for_embedding(
                     &pf.rel_path,
                     c.chunk_type.as_str(),
+                    c.name.as_deref(),
+                    parent_name,
                     &pf.imports_text,
                     &c.content,
                 )
@@ -213,13 +230,20 @@ fn fetch_unembedded_file(
     file_path: &str,
 ) -> Result<(Vec<i64>, Vec<String>), IndexError> {
     let conn_guard = conn.lock().unwrap();
-    let triples = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
+    let rows = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
     let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
-    let ids: Vec<i64> = triples.iter().map(|(id, _, _)| *id).collect();
-    let texts: Vec<String> = triples
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let texts: Vec<String> = rows
         .into_iter()
-        .map(|(_, content, chunk_type)| {
-            enrich_for_embedding(file_path, &chunk_type, &imports, &content)
+        .map(|r| {
+            enrich_for_embedding(
+                file_path,
+                &r.chunk_type,
+                r.name.as_deref(),
+                r.parent_name.as_deref(),
+                &imports,
+                &r.content,
+            )
         })
         .collect();
     Ok((ids, texts))
