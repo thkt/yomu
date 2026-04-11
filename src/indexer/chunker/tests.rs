@@ -431,9 +431,12 @@ fn chunk_rust_trait() {
 fn chunk_rust_impl() {
     let source = "impl Config { fn new() -> Self { Config { name: String::new(), value: 0 } } }";
     let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks.len(), 2);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
     assert_eq!(result.chunks[0].name.as_deref(), Some("Config"));
+    assert_eq!(result.chunks[1].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[1].name.as_deref(), Some("new"));
+    assert_eq!(result.chunks[1].parent_index, Some(0));
 }
 
 #[test]
@@ -441,9 +444,12 @@ fn chunk_rust_impl_trait() {
     let source =
         "impl Display for Config { fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) } }";
     let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks.len(), 2);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
     assert_eq!(result.chunks[0].name.as_deref(), Some("Display for Config"));
+    assert_eq!(result.chunks[1].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[1].name.as_deref(), Some("fmt"));
+    assert_eq!(result.chunks[1].parent_index, Some(0));
 }
 
 #[test]
@@ -477,11 +483,14 @@ fn baz() {}
 fn chunk_rust_impl_generic() {
     let source = "impl<T> From<T> for Wrapper<T> { fn from(val: T) -> Self { Wrapper(val) } }";
     let result = chunk_file(source, "rs");
-    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks.len(), 2);
     assert_eq!(result.chunks[0].chunk_type, ChunkType::RustImpl);
     let name = result.chunks[0].name.as_deref().unwrap();
     assert!(name.contains("From"), "expected From in name: {name}");
     assert!(name.contains("Wrapper"), "expected Wrapper in name: {name}");
+    assert_eq!(result.chunks[1].chunk_type, ChunkType::RustFn);
+    assert_eq!(result.chunks[1].name.as_deref(), Some("from"));
+    assert_eq!(result.chunks[1].parent_index, Some(0));
 }
 
 #[test]
