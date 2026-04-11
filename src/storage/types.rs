@@ -115,8 +115,8 @@ pub struct SearchResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    #[error("Database error: {0}")]
+    Db(#[from] rusqlite::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("chunks/embeddings length mismatch: {chunks} chunks vs {embeddings} embeddings")]
