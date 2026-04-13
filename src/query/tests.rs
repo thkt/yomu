@@ -2100,3 +2100,38 @@ fn search_pipeline_offset_beyond_results_returns_empty() {
         "[TC-5] offset >= results.len() should return empty Vec, got: {results:?}"
     );
 }
+
+// === is_test_path pattern coverage ===
+
+#[test]
+fn is_test_path_returns_true_for_all_patterns() {
+    let cases = [
+        "src/__tests__/foo.ts",
+        "src/__mocks__/foo.ts",
+        "src/__fixtures__/foo.ts",
+        "src/foo.test.ts",
+        "src/foo.spec.ts",
+        "src/foo.stories.ts",
+        "src/test/foo.ts",
+        "test/foo.ts",
+        "src/examples/foo.ts",
+        "examples/foo.ts",
+        "src/fixtures/foo.ts",
+        "src/e2e/foo.ts",
+    ];
+    for path in cases {
+        assert!(is_test_path(path), "expected is_test_path true for: {path}");
+    }
+}
+
+#[test]
+fn is_test_path_returns_false_for_source_files() {
+    let cases = [
+        "src/components/Button.tsx",
+        "src/utils/helpers.ts",
+        "src/query/mod.rs",
+    ];
+    for path in cases {
+        assert!(!is_test_path(path), "expected is_test_path false for: {path}");
+    }
+}
