@@ -25,6 +25,40 @@ const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and"
 
 use crate::text::split_identifier;
 
+// Words ending in -ing that are not gerunds (stripping -ing produces a non-word).
+const ING_DENY: &[&str] = &[
+    "string",
+    "bring",
+    "thing",
+    "nothing",
+    "something",
+    "everything",
+    "ring",
+    "king",
+    "spring",
+    "swing",
+    "sing",
+    "sting",
+    "wing",
+];
+
+// Words ending in -s that are not plurals (stripping -s produces a non-word).
+const S_DENY: &[&str] = &[
+    "class", "this", "alias", "canvas", "focus", "status", "bus", "process", "address", "access",
+    "express", "progress",
+];
+
+fn stem_keyword(kw: &str) -> Option<&str> {
+    let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw) {
+        Some(&kw[..kw.len() - 3])
+    } else if kw.len() > 3 && kw.ends_with('s') && !kw.ends_with("ss") && !S_DENY.contains(&kw) {
+        Some(&kw[..kw.len() - 1])
+    } else {
+        None
+    };
+    stem.filter(|s| s.len() >= 2)
+}
+
 pub fn extract_keywords(query: &str) -> Vec<String> {
     let mut base: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -47,45 +81,11 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         }
     }
 
-    // Words ending in -ing that are not gerunds (stripping -ing produces a non-word or keyword).
-    const ING_DENY: &[&str] = &[
-        "string",
-        "bring",
-        "thing",
-        "nothing",
-        "something",
-        "everything",
-        "ring",
-        "king",
-        "spring",
-        "swing",
-        "sing",
-        "sting",
-        "wing",
-    ];
-    // Words ending in -s that are not plurals (stripping -s produces a non-word).
-    const S_DENY: &[&str] = &[
-        "class", "this", "alias", "canvas", "focus", "status", "bus", "process", "address",
-        "access", "express", "progress",
-    ];
-
     let stems: Vec<String> = base
         .iter()
-        .filter_map(|kw| {
-            let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw.as_str()) {
-                Some(&kw[..kw.len() - 3])
-            } else if kw.len() > 3
-                && kw.ends_with('s')
-                && !kw.ends_with("ss")
-                && !S_DENY.contains(&kw.as_str())
-            {
-                Some(&kw[..kw.len() - 1])
-            } else {
-                None
-            };
-            stem.filter(|s| s.len() >= 2 && !seen.contains(*s))
-                .map(|s| s.to_string())
-        })
+        .filter_map(|kw| stem_keyword(kw))
+        .filter(|s| !seen.contains(*s))
+        .map(|s| s.to_string())
         .collect();
     let mut all = base;
     for s in stems {
