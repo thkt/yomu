@@ -103,6 +103,13 @@ pub(super) fn parse_auto_download(value: Option<&str>) -> bool {
     }
 }
 
+/// Load the embedding model, downloading it if `YOMU_AUTO_DOWNLOAD_MODEL=1`.
+///
+/// # Interruption Safety
+///
+/// If a download is interrupted (e.g. SIGINT), hf-hub leaves only a `.part`
+/// file in the cache and no corrupted blob is written. The next call detects no
+/// cached artifacts and retries the download cleanly.
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     if disabled {
         tracing::info!("Embedding disabled via YOMU_EMBED=0");
