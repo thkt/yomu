@@ -122,7 +122,7 @@ $ yomu --json status
 {"files":42,"chunks":187,"embedded_chunks":187,"embeddable_chunks":187,"embed_percentage":100,"references":156,"last_indexed":"2025-03-29 01:23:45"}
 ```
 
-### `yomu search <query>` — Search by concept
+### `yomu search [query]` — Search by concept
 
 Returns ranked results with full context. Each result includes:
 
@@ -133,7 +133,21 @@ Returns ranked results with full context. Each result includes:
 | Sibling defs   | Other functions/types in the same file           |
 | Chunk type     | component / hook / type_def / css_rule / rust_fn |
 
-Options: `--limit` (default: 10, max: 100), `--offset` (default: 0, max: 500)
+Options:
+
+| Flag      | Default | Description                                                              |
+| --------- | ------- | ------------------------------------------------------------------------ |
+| `--limit` | 10      | Max results (max: 100)                                                   |
+| `--offset`| 0       | Pagination offset (max: 500)                                             |
+| `--from`  | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
+
+`--from` uses the stored embeddings of the target — no re-embedding needed:
+
+```sh
+yomu search --from src/query/mod.rs           # files similar to this file
+yomu search --from src/query/mod.rs:rerank    # files similar to this function
+yomu search --from src/query/mod.rs "filter"  # hybrid: similar to file + FTS on "filter"
+```
 
 ### `yomu impact <target>` — Blast radius of a change
 

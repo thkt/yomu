@@ -33,6 +33,9 @@ enum Command {
         /// Restrict search to files under this path prefix (repeatable)
         #[arg(long)]
         path: Vec<String>,
+        /// Search for code similar to the given file or symbol (e.g. "src/foo.rs" or "src/foo.rs:my_fn")
+        #[arg(long)]
+        from: Option<String>,
         /// Deprecated: use global --json instead
         #[arg(long, hide = true)]
         format: Option<String>,
@@ -81,6 +84,22 @@ Examples:
 enum ModelCommand {
     /// Download embedding model from Hugging Face Hub.
     Download,
+}
+
+#[derive(Debug)]
+enum QueryError {
+    /// No query available (terminal, empty stdin) — expected with --from
+    NoQuery(String),
+    /// I/O failure reading stdin — must propagate
+    Io(String),
+}
+
+impl std::fmt::Display for QueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoQuery(msg) | Self::Io(msg) => f.write_str(msg),
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -140,20 +159,46 @@ fn main() -> ExitCode {
             limit,
             offset,
             path,
+            from,
             format,
         } => {
             if format.is_some() {
                 eprintln!("warning: --format is deprecated, use --json instead");
             }
             let json = json || format.as_deref() == Some("json");
-            let query = match resolve_query(query) {
-                Ok(q) => q,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::from(2);
-                }
-            };
-            yomu.search(&query, limit, offset, &path, json)
+            if from.is_some() {
+                // Literal query: use as-is. "-" / None: try stdin (optional with --from).
+                let is_literal = query.as_deref().is_some_and(|q| q != "-");
+                let query = if is_literal {
+                    query
+                } else {
+                    match resolve_query(query) {
+                        Ok(q) => Some(q),
+                        Err(QueryError::NoQuery(_)) => None,
+                        Err(e @ QueryError::Io(_)) => {
+                            eprintln!("error: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                };
+                yomu.search(
+                    query.as_deref(),
+                    limit,
+                    offset,
+                    &path,
+                    json,
+                    from.as_deref(),
+                )
+            } else {
+                let query = match resolve_query(query) {
+                    Ok(q) => q,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(2);
+                    }
+                };
+                yomu.search(Some(&query), limit, offset, &path, json, None)
+            }
         }
         Command::Index { dry_run } => {
             if dry_run {
@@ -212,7 +257,7 @@ where
     Cli::try_parse_from(args)
 }
 
-fn resolve_query(arg: Option<String>) -> Result<String, String> {
+fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
     let stdin = std::io::stdin();
     let is_terminal = stdin.is_terminal();
     resolve_query_with(arg, &mut stdin.lock(), is_terminal)
@@ -222,20 +267,22 @@ fn resolve_query_with(
     arg: Option<String>,
     stdin: &mut impl Read,
     stdin_is_terminal: bool,
-) -> Result<String, String> {
+) -> Result<String, QueryError> {
     match arg {
         Some(q) if q != "-" => Ok(q),
         _ => {
             if stdin_is_terminal {
-                return Err("query required: pass as argument or pipe via stdin".into());
+                return Err(QueryError::NoQuery(
+                    "query required: pass as argument or pipe via stdin".into(),
+                ));
             }
             let mut buf = String::new();
             stdin
                 .read_to_string(&mut buf)
-                .map_err(|e| format!("failed to read from stdin: {e}"))?;
+                .map_err(|e| QueryError::Io(format!("failed to read from stdin: {e}")))?;
             let trimmed = buf.trim();
             if trimmed.is_empty() {
-                return Err("empty query from stdin".into());
+                return Err(QueryError::NoQuery("empty query from stdin".into()));
             }
             Ok(trimmed.to_string())
         }
@@ -327,17 +374,39 @@ mod tests {
     }
 
     #[test]
-    fn resolve_query_with_none_terminal_returns_error() {
+    fn resolve_query_with_none_terminal_returns_no_query() {
         let mut stdin = Cursor::new(b"");
         let result = resolve_query_with(None, &mut stdin, true);
-        assert!(result.unwrap_err().contains("query required"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, QueryError::NoQuery(_)));
+        assert!(err.to_string().contains("query required"));
     }
 
     #[test]
-    fn resolve_query_with_empty_stdin_returns_error() {
+    fn resolve_query_with_empty_stdin_returns_no_query() {
         let mut stdin = Cursor::new(b"   ");
         let result = resolve_query_with(None, &mut stdin, false);
-        assert!(result.unwrap_err().contains("empty query"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, QueryError::NoQuery(_)));
+        assert!(err.to_string().contains("empty query"));
+    }
+
+    // RC-005: I/O errors must not be swallowed as NoQuery
+    #[test]
+    fn resolve_query_with_io_error_returns_io_variant() {
+        struct FailingReader;
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "broken pipe",
+                ))
+            }
+        }
+        let result = resolve_query_with(None, &mut FailingReader, false);
+        let err = result.unwrap_err();
+        assert!(matches!(err, QueryError::Io(_)));
+        assert!(err.to_string().contains("failed to read from stdin"));
     }
 
     // T-030: explicit `yomu search "認証"` is not double-injected
@@ -433,6 +502,32 @@ mod tests {
                 ),
                 "[TC-014] subcommand '{cmd}' should not be rewritten as Search shorthand"
             );
+        }
+    }
+
+    // T-015: --from without query parses OK
+    #[test]
+    fn from_flag_without_query_parses_ok() {
+        let cli = parse_cli_args(["yomu", "search", "--from", "src/foo.rs"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { query, from, .. } => {
+                assert_eq!(query, None);
+                assert_eq!(from.as_deref(), Some("src/foo.rs"));
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    // T-016: no --from, no query → from defaults to None (error comes from resolve_query)
+    #[test]
+    fn no_from_no_query_has_from_none() {
+        let cli = parse_cli_args(["yomu", "search"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Search { query, from, .. } => {
+                assert_eq!(query, None);
+                assert_eq!(from, None);
+            }
+            other => panic!("expected Search, got {other:?}"),
         }
     }
 }

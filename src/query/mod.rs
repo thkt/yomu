@@ -303,6 +303,93 @@ pub fn rerank(
     results.sort_by(|a, b| b.score.total_cmp(&a.score));
 }
 
+const MAX_FROM_SUB_EMBEDDINGS: usize = 20;
+
+pub fn search_from_file(
+    conn: &Db,
+    embedding_bytes: &[Vec<u8>],
+    source_chunk_ids: &HashSet<i64>,
+    query: Option<&str>,
+    limit: u32,
+    path_filter: &[String],
+) -> Result<Vec<SearchResult>, StorageError> {
+    if embedding_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // FR-010 / BR-005
+    let capped = if embedding_bytes.len() > MAX_FROM_SUB_EMBEDDINGS {
+        tracing::warn!(
+            count = embedding_bytes.len(),
+            cap = MAX_FROM_SUB_EMBEDDINGS,
+            "Truncating sub-embeddings to cap"
+        );
+        &embedding_bytes[..MAX_FROM_SUB_EMBEDDINGS]
+    } else {
+        embedding_bytes
+    };
+
+    let f32_vecs: Vec<Vec<f32>> = capped
+        .iter()
+        .map(|bytes| {
+            bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect()
+        })
+        .collect();
+    let emb_refs: Vec<&[f32]> = f32_vecs.iter().map(|v| v.as_slice()).collect();
+
+    // FR-004 / BR-002: min-distance merge across sub-embeddings.
+    // Overfetch by (a) 3× when FTS will narrow candidates, and (b) source_ids.len() to survive
+    // the post-KNN source exclusion filter (P1: without this, limit=1 can return 0 results when
+    // the source chunk occupies the only KNN slot).
+    let source_buf = source_chunk_ids.len() as u32;
+    let fetch_limit = if query.is_some() {
+        limit.saturating_mul(3).saturating_add(source_buf)
+    } else {
+        limit.saturating_add(source_buf)
+    };
+    let mut results = storage::vec_search_multi(conn, &emb_refs, fetch_limit, path_filter)?;
+
+    // FR-005 / BR-001
+    results.retain(|r| !r.chunk_id.is_some_and(|id| source_chunk_ids.contains(&id)));
+
+    // FR-008 / BR-006: FTS intersection — only when keywords can be extracted.
+    // Skip when extract_keywords returns [] (stopwords-only input) to avoid silently clearing
+    // valid semantic results (P2).
+    if let Some(q) = query {
+        let keywords = extract_keywords(q);
+        if !keywords.is_empty() {
+            let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
+            let knn_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
+            let fts_hits = storage::search_by_fts(
+                conn,
+                &keyword_refs,
+                None,
+                &HashSet::new(),
+                Some(&knn_ids),
+                fetch_limit,
+                path_filter,
+            )?;
+            let fts_ids: HashSet<i64> = fts_hits.iter().filter_map(|r| r.chunk_id).collect();
+            results.retain(|r| r.chunk_id.is_some_and(|id| fts_ids.contains(&id)));
+        }
+    }
+
+    // BR-003 / BR-004: rerank with default context (no keyword/type hints)
+    let import_counts = if results.is_empty() {
+        HashMap::new()
+    } else {
+        let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
+        storage::get_import_counts(conn, &file_paths)?
+    };
+    rerank(&mut results, &RerankContext::default(), &import_counts);
+
+    results.truncate(limit as usize);
+    Ok(results)
+}
+
 fn search_pipeline(
     conn: &Db,
     query: &str,
@@ -345,6 +432,7 @@ fn search_pipeline(
             &keyword_refs,
             type_filter,
             &exclude_ids,
+            None,
             fallback_limit,
             path_filter,
         )?;

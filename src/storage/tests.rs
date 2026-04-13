@@ -408,6 +408,8 @@ fn chunk_type_roundtrip() {
         ChunkType::Other,
     ];
     for variant in &variants {
+        // Exhaustive match: compile-time guard — adding a ChunkType variant without
+        // updating `variants` above causes a compile error here.
         match variant {
             ChunkType::Component
             | ChunkType::Hook
@@ -1440,18 +1442,6 @@ fn get_import_counts_returns_empty_for_empty_input() {
 }
 
 #[test]
-fn fts5_available() {
-    let (conn, _dir) = test_db();
-    // Verify FTS5 extension is compiled in
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(content);
-         INSERT INTO _fts5_test(content) VALUES ('hello world');
-         DROP TABLE _fts5_test;",
-    )
-    .expect("FTS5 should be available");
-}
-
-#[test]
 fn fts_chunks_deleted_with_file() {
     let (conn, _dir) = test_db();
 
@@ -1466,14 +1456,14 @@ fn fts_chunks_deleted_with_file() {
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Should find it before delete
-    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(results.len(), 1);
 
     // Delete file chunks
     delete_file_chunks(&conn, "src/x.tsx").unwrap();
 
     // Should not find it after delete
-    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(&conn, &["state"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert!(results.is_empty());
 }
 
@@ -1503,7 +1493,7 @@ fn fts5_migration_from_v2() {
     .unwrap();
 
     // Verify FTS5 is empty
-    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert!(
         results.is_empty(),
         "fts_chunks should be empty before migration"
@@ -1514,7 +1504,7 @@ fn fts5_migration_from_v2() {
     let conn = open_db(&db_path).unwrap();
 
     // Migration should have populated fts_chunks from existing chunks
-    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(results.len(), 1, "migration should populate fts_chunks");
     assert_eq!(results[0].chunk.name.as_deref(), Some("useX"));
 }
@@ -1533,7 +1523,8 @@ fn fts5_handles_special_characters_in_content() {
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_by_fts(&conn, &["container"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["container"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
 }
@@ -1693,7 +1684,16 @@ fn migration_v3_to_v4_creates_vocab_table() {
     );
 
     // Verify data preserved: chunk should still be searchable
-    let results = search_by_fts(&conn, &["migrationTest"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["migrationTest"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
     assert!(
         !results.is_empty(),
         "seeded chunk should survive v3->v4 migration"
@@ -1832,7 +1832,8 @@ fn fts_automerge_guard_restores_on_drop() {
         None,
     )
     .unwrap();
-    let results = search_by_fts(&conn, &["function"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["function"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert!(
         results.len() >= 2,
         "FTS should work after guard drop, got {} results",
@@ -2213,7 +2214,16 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
         )
         .unwrap();
 
-    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handlesubmit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2271,7 +2281,16 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
         )
         .unwrap();
 
-    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handlesubmit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2313,7 +2332,8 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
     )
     .unwrap();
 
-    let results = search_by_fts(&conn, &["userform"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["userform"], None, &HashSet::new(), None, 10, &[]).unwrap();
 
     assert!(!results.is_empty(), "should find UserForm via name search");
     let component_result = &results[0];
@@ -2453,7 +2473,8 @@ fn t_014_migration_v6_to_v7_preserves_fts_search() {
         "[T-014] schema_version should be 8 after migration"
     );
 
-    let results = search_by_fts(&conn, &["transform"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["transform"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(
         results.len(),
         1,
@@ -2533,8 +2554,16 @@ fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
     replace_file_chunks_only(&conn, "src/form.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Search with split keywords ["handle", "submit"] should find handleSubmit
-    let results =
-        search_by_fts(&conn, &["handle", "submit"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handle", "submit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
     let names: Vec<_> = results
         .iter()
         .filter_map(|r| r.chunk.name.as_deref())
@@ -2580,7 +2609,7 @@ fn t_005_search_by_fts_finds_by_path_segment() {
     }];
     replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_by_fts(&conn, &["auth"], None, &HashSet::new(), 10, &[]).unwrap();
+    let results = search_by_fts(&conn, &["auth"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(
         results.len(),
         1,
@@ -2618,6 +2647,7 @@ fn t_007_search_by_fts_respects_type_filter() {
         &["auth"],
         Some(&[ChunkType::Hook]),
         &HashSet::new(),
+        None,
         10,
         &[],
     )
@@ -2654,17 +2684,417 @@ fn t_016_search_by_fts_excludes_ids() {
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
-    let all = search_by_fts(&conn, &["auth"], None, &HashSet::new(), 10, &[]).unwrap();
+    let all = search_by_fts(&conn, &["auth"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(all.len(), 2);
 
     let first_id = all[0].chunk_id.unwrap();
     let mut exclude = HashSet::new();
     exclude.insert(first_id);
-    let filtered = search_by_fts(&conn, &["auth"], None, &exclude, 10, &[]).unwrap();
+    let filtered = search_by_fts(&conn, &["auth"], None, &exclude, None, 10, &[]).unwrap();
     assert_eq!(
         filtered.len(),
         1,
         "[T-016] excluded id should be filtered out"
     );
     assert_ne!(filtered[0].chunk_id, Some(first_id));
+}
+
+#[test]
+fn vec_chunks_embedding_retrievable_by_rowid() {
+    let (conn, _dir) = test_db();
+    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32)
+        .map(|i| i as f32 / 768.0)
+        .collect();
+    let chunk_id = insert_chunk(
+        &conn,
+        "src/Foo.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("foo"),
+            content: "fn foo() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let vec_rowid: i64 = conn
+        .query_row(
+            "SELECT vec_rowid FROM embedded_chunk_ids WHERE chunk_id = ?1 AND sub_idx = 0",
+            [chunk_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let bytes: Vec<u8> = conn
+        .query_row(
+            "SELECT embedding FROM vec_chunks WHERE rowid = ?1",
+            [vec_rowid],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(bytes.len(), EMBEDDING_DIMS * 4);
+    let recovered: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    assert_eq!(recovered.len(), EMBEDDING_DIMS);
+    assert!((recovered[0] - emb[0]).abs() < 1e-6);
+    assert!((recovered[100] - emb[100]).abs() < 1e-6);
+}
+
+// --- T-001: get_chunks_for_from_target file-only returns non-inner_fn chunks ---
+#[test]
+fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    // 2 non-inner_fn chunks
+    insert_chunk(
+        &conn,
+        "src/foo.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("foo"),
+            content: "fn foo() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/foo.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustStruct,
+            name: Some("Bar"),
+            content: "struct Bar {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    // 1 inner_fn chunk (should be excluded)
+    insert_chunk_row(
+        &conn,
+        "src/foo.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::InnerFn,
+            name: Some("inner"),
+            content: "fn inner() {}",
+            start_line: 2,
+            end_line: 2,
+            parent_index: None,
+        },
+        "h1",
+        None,
+    )
+    .unwrap();
+
+    let ids = get_chunks_for_from_target(&conn, "src/foo.rs", None).unwrap();
+    assert_eq!(ids.len(), 2);
+}
+
+// --- T-002: get_chunks_for_from_target returns empty for unknown file ---
+#[test]
+fn get_chunks_for_from_target_unknown_file_returns_empty() {
+    let (conn, _dir) = test_db();
+    let rows = get_chunks_for_from_target(&conn, "src/bar.rs", None).unwrap();
+    assert!(rows.is_empty());
+}
+
+// --- T-003: get_chunks_for_from_target with symbol returns exact match ---
+#[test]
+fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    insert_chunk(
+        &conn,
+        "src/x.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("foo"),
+            content: "fn foo() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/x.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("bar"),
+            content: "fn bar() {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let foo_id = get_chunks_for_from_target(&conn, "src/x.rs", Some("foo")).unwrap();
+    assert_eq!(foo_id.len(), 1);
+    let bar_id = get_chunks_for_from_target(&conn, "src/x.rs", Some("bar")).unwrap();
+    assert_eq!(bar_id.len(), 1);
+    assert_ne!(
+        foo_id[0], bar_id[0],
+        "foo and bar should return different chunk IDs"
+    );
+}
+
+// --- T-004: get_chunks_for_from_target symbol not found returns empty ---
+#[test]
+fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    insert_chunk(
+        &conn,
+        "src/x.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("foo"),
+            content: "fn foo() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let rows = get_chunks_for_from_target(&conn, "src/x.rs", Some("baz")).unwrap();
+    assert!(rows.is_empty());
+}
+
+// --- T-005: get_sub_embeddings_for_chunks returns correct byte length ---
+#[test]
+fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
+    let (conn, _dir) = test_db();
+    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32)
+        .map(|i| i as f32 / 768.0)
+        .collect();
+
+    let chunk_id = insert_chunk(
+        &conn,
+        "src/a.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("a"),
+            content: "fn a() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let results = get_sub_embeddings_for_chunks(&conn, &[chunk_id]).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0, chunk_id);
+    assert_eq!(results[0].1.len(), EMBEDDING_DIMS * 4); // 768 * 4 = 3072 bytes
+}
+
+// --- T-006: get_sub_embeddings_for_chunks with missing chunk returns empty ---
+#[test]
+fn get_sub_embeddings_for_chunks_missing_chunk_returns_empty() {
+    let (conn, _dir) = test_db();
+    let results = get_sub_embeddings_for_chunks(&conn, &[99]).unwrap();
+    assert!(results.is_empty());
+}
+
+// --- T-007: vec_search_multi merges duplicate chunk_ids by min distance ---
+#[test]
+fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
+    let (conn, _dir) = test_db();
+    let mut emb_target = vec![0.0_f32; EMBEDDING_DIMS];
+    emb_target[0] = 1.0;
+    let mut emb_other = vec![0.0_f32; EMBEDDING_DIMS];
+    emb_other[1] = 1.0;
+
+    insert_chunk(
+        &conn,
+        "src/target.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("target"),
+            content: "fn target() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb_target.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/other.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("other"),
+            content: "fn other() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &ce(emb_other.clone()),
+        None,
+    )
+    .unwrap();
+
+    // query_a = exact match to target (distance ≈ 0)
+    // query_b = far from target (distance ≈ √2)
+    // min-distance merge should keep distance ≈ 0 for target
+    let results = vec_search_multi(&conn, &[&emb_target, &emb_other], 10, &[]).unwrap();
+    let target = results
+        .iter()
+        .find(|r| r.chunk.name.as_deref() == Some("target"))
+        .unwrap();
+    assert!(
+        target.distance < 0.01,
+        "min-distance merge should pick the closer query; got {}",
+        target.distance
+    );
+}
+
+// --- T-009: search_by_fts include_ids filters results to specified subset ---
+#[test]
+fn search_by_fts_with_include_ids_filters_to_subset() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    let id1 = insert_chunk(
+        &conn,
+        "src/a.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("handle_error"),
+            content: "fn handle_error() { error handling logic }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    let _id2 = insert_chunk(
+        &conn,
+        "src/b.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("handle_error2"),
+            content: "fn handle_error2() { more error stuff }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h2",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    // Without include_ids: both chunks match "error"
+    let all = search_by_fts(&conn, &["error"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    assert_eq!(all.len(), 2);
+
+    // With include_ids = {id1}: only id1 is returned
+    let include = HashSet::from([id1]);
+    let filtered = search_by_fts(
+        &conn,
+        &["error"],
+        None,
+        &HashSet::new(),
+        Some(&include),
+        10,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].chunk_id, Some(id1));
+}
+
+// --- T-008: vec_search_multi returns union of non-overlapping results ---
+#[test]
+fn vec_search_multi_returns_union() {
+    let (conn, _dir) = test_db();
+    let mut emb_a = vec![0.0_f32; EMBEDDING_DIMS];
+    emb_a[0] = 1.0;
+    let mut emb_b = vec![0.0_f32; EMBEDDING_DIMS];
+    emb_b[1] = 1.0;
+
+    insert_chunk(
+        &conn,
+        "src/a.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("fn_a"),
+            content: "fn a() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb_a.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/b.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("fn_b"),
+            content: "fn b() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &ce(emb_b.clone()),
+        None,
+    )
+    .unwrap();
+
+    let results = vec_search_multi(&conn, &[&emb_a, &emb_b], 10, &[]).unwrap();
+    assert_eq!(results.len(), 2);
+    let names: Vec<_> = results
+        .iter()
+        .filter_map(|r| r.chunk.name.as_deref())
+        .collect();
+    assert!(names.contains(&"fn_a"));
+    assert!(names.contains(&"fn_b"));
 }

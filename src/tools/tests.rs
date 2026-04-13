@@ -81,7 +81,7 @@ fn seed_index(conn: &storage::Db) {
 #[test]
 fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
-    let err = y.search("", 10, 0, &[], false).unwrap_err();
+    let err = y.search(Some(""), 10, 0, &[], false, None).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {}",
@@ -93,7 +93,9 @@ fn search_rejects_empty_query() {
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y.search(&long_query, 10, 0, &[], false).unwrap_err();
+    let err = y
+        .search(Some(&long_query), 10, 0, &[], false, None)
+        .unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -105,7 +107,7 @@ fn search_rejects_long_query() {
 fn search_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search("query", 10, 0, &["../etc".to_string()], false)
+        .search(Some("query"), 10, 0, &["../etc".to_string()], false, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -117,7 +119,7 @@ fn search_rejects_path_traversal() {
 fn search_rejects_absolute_path() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search("query", 10, 0, &["/etc".to_string()], false)
+        .search(Some("query"), 10, 0, &["/etc".to_string()], false, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -136,7 +138,14 @@ fn search_path_filter_excludes_other_dirs() {
     );
 
     let text = y
-        .search("open", 10, 0, &["src/storage/".to_string()], false)
+        .search(
+            Some("open"),
+            10,
+            0,
+            &["src/storage/".to_string()],
+            false,
+            None,
+        )
         .unwrap();
     assert!(
         text.contains("db.ts") || text.contains("openDb") || text.contains("No results"),
@@ -151,7 +160,9 @@ fn search_path_filter_excludes_other_dirs() {
 #[test]
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
-    let text = y.search("test query", 10, 0, &[], false).unwrap();
+    let text = y
+        .search(Some("test query"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -165,7 +176,9 @@ fn search_auto_indexes_empty_db() {
         Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
-    let text = y.search("button component", 10, 0, &[], false).unwrap();
+    let text = y
+        .search(Some("button component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -202,7 +215,9 @@ fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y.search("form component", 10, 0, &[], false).unwrap();
+    let text = y
+        .search(Some("form component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -279,7 +294,9 @@ fn search_degraded_empty_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y.search("zzzznonexistent", 10, 0, &[], false).unwrap();
+    let text = y
+        .search(Some("zzzznonexistent"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -317,7 +334,9 @@ fn search_degraded_with_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing.search("Button", 10, 0, &[], false).unwrap();
+    let result = y_failing
+        .search(Some("Button"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -1122,7 +1141,9 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y.search("App component", 10, 0, &[], false).unwrap();
+    let result = y
+        .search(Some("App component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1165,7 +1186,7 @@ fn ensure_indexed_fully_embedded_skips_embed() {
         "should be fully embedded"
     );
 
-    let result = y.search("Button", 10, 0, &[], false).unwrap();
+    let result = y.search(Some("Button"), 10, 0, &[], false, None).unwrap();
     assert!(result.contains("Button"), "should find Button: {result}");
 }
 
@@ -1193,7 +1214,9 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing.search("Card", 10, 0, &[], false).unwrap();
+    let result = y_failing
+        .search(Some("Card"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("Card"),
         "should find Card with existing embeddings: {result}"
@@ -1228,7 +1251,7 @@ fn search_without_embedder_skips_embed_attempt() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
     }
 
-    let text = y.search("card", 10, 0, &[], false).unwrap();
+    let text = y.search(Some("card"), 10, 0, &[], false, None).unwrap();
     assert!(
         !text.contains("embedding failed"),
         "should not attempt embed when embedder unavailable: {text}"
@@ -1243,7 +1266,7 @@ fn search_json_format_returns_valid_json() {
     )]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("button", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].is_array(),
@@ -1270,7 +1293,9 @@ fn search_json_format_empty_results() {
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("zzzznonexistent", 10, 0, &[], true).unwrap();
+    let json = y
+        .search(Some("zzzznonexistent"), 10, 0, &[], true, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].as_array().unwrap().is_empty(),
@@ -1337,7 +1362,7 @@ fn search_json_format_degraded_includes_flag() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(
         parsed["degraded"], true,
@@ -1506,7 +1531,9 @@ fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
 
     y.index(false).unwrap();
 
-    let result = y.search("handleSubmit", 10, 0, &[], false).unwrap();
+    let result = y
+        .search(Some("handleSubmit"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("handleSubmit"),
         "[AC-5] search should find handleSubmit: {result}"
@@ -1647,7 +1674,7 @@ fn t001_search_with_not_installed_shows_note() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, &[], false).unwrap();
+    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("not installed"),
         "[T-001] expected NotInstalled note in results: {text}"
@@ -1666,7 +1693,9 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
         Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y.search("button component", 10, 0, &[], false).unwrap();
+    let text = y
+        .search(Some("button component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-002] should have no 'not installed' note: {text}"
@@ -1690,7 +1719,7 @@ fn t003_search_with_backend_unavailable_shows_note() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, &[], false).unwrap();
+    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("unavailable"),
         "[T-003] expected BackendUnavailable note in results: {text}"
@@ -1710,7 +1739,7 @@ fn t004_search_with_probe_failed_shows_note() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, &[], false).unwrap();
+    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("unavailable"),
         "[T-004] expected ProbeFailed note in results: {text}"
@@ -1742,7 +1771,7 @@ fn t009_disabled_no_user_note_in_search() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let text = y.search("button", 10, 0, &[], false).unwrap();
+    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-009] should not show 'not installed' when disabled: {text}"
@@ -1793,7 +1822,7 @@ fn json_notes_present_when_degraded() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1819,7 +1848,7 @@ fn json_notes_empty_via_search_with_ok_embedder() {
         Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let json = y.search("nav", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("nav"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], false, "should not be degraded: {json}");
     let notes = parsed["notes"]
@@ -1839,7 +1868,7 @@ fn json_notes_outcome_degraded_fallback() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("card", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1868,7 +1897,7 @@ fn json_notes_backend_unavailable() {
     );
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search("button", 10, 0, &[], true).unwrap();
+    let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -2078,5 +2107,132 @@ fn impact_json_with_symbol_refs() {
     assert!(
         refs.iter().any(|r| r == "src/A.tsx"),
         "should reference A.tsx: {json}"
+    );
+}
+
+// T-013: --from target with no stored embeddings → Ok (exit code 0)
+#[test]
+fn search_from_no_embeddings_returns_ok() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        storage::replace_file_chunks_only(
+            &conn,
+            "src/foo.rs",
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::RustFn,
+                name: Some("my_fn"),
+                content: "fn my_fn() {}",
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+            }],
+            "hash1",
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+    let result = y.search(None, 10, 0, &[], false, Some("src/foo.rs"));
+    assert!(
+        result.is_ok(),
+        "expected Ok for no-embeddings case, got: {:?}",
+        result.unwrap_err()
+    );
+    let text = result.unwrap();
+    assert!(
+        text.contains("no stored embeddings"),
+        "expected no-stored-embeddings note, got: {text}"
+    );
+}
+
+// COV-1: search(query=None, from=None) → InvalidInput("query or --from is required")
+#[test]
+fn search_requires_query_or_from() {
+    let (y, _dir) = test_yomu();
+    let err = y.search(None, 10, 0, &[], false, None).unwrap_err();
+    assert!(
+        err.to_string().contains("query or --from"),
+        "expected invalid input, got: {err}"
+    );
+}
+
+// COV-2: --from rejects path traversal
+#[test]
+fn search_from_rejects_path_traversal() {
+    let (y, _dir) = test_yomu();
+    let err = y
+        .search(None, 10, 0, &[], false, Some("../../../etc/passwd"))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("must be a relative path"),
+        "expected traversal error, got: {err}"
+    );
+}
+
+// T-017: integration — from-file search excludes source, returns ≤ limit
+#[test]
+fn search_from_file_integration() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/a.rs", "pub fn alpha() { println!(\"hello\"); }"),
+            ("src/b.rs", "pub fn beta() { alpha(); }"),
+            ("src/c.rs", "pub fn gamma() { beta(); }"),
+        ],
+        Arc::new(rurico::embed::MockEmbedder::default()),
+    );
+
+    let text = y.search(None, 5, 0, &[], false, Some("src/a.rs")).unwrap();
+    // Source file should not appear in results
+    assert!(
+        !text.contains("No results found"),
+        "expected results from from-file search: {text}"
+    );
+    assert!(
+        !text.contains("src/a.rs"),
+        "source file should be excluded from results: {text}"
+    );
+}
+
+// COV-5: --from + --path combination excludes files outside path prefix
+#[test]
+fn search_from_with_path_filter_excludes_other_dirs() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/a.rs", "pub fn alpha() {}"),
+            ("src/b.rs", "pub fn beta() {}"),
+            ("lib/c.rs", "pub fn gamma() {}"),
+        ],
+        Arc::new(rurico::embed::MockEmbedder::default()),
+    );
+    let text = y
+        .search(None, 10, 0, &["src/".to_string()], false, Some("src/a.rs"))
+        .unwrap();
+    assert!(
+        !text.contains("lib/c.rs") && !text.contains("gamma"),
+        "lib/c.rs should be excluded by path filter: {text}"
+    );
+}
+
+// COV-8: --from with json=true returns valid JSON with "results" key
+#[test]
+fn search_from_json_output_has_results_key() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/a.rs", "pub fn alpha() {}"),
+            ("src/b.rs", "pub fn beta() {}"),
+        ],
+        Arc::new(rurico::embed::MockEmbedder::default()),
+    );
+    let json = y.search(None, 10, 0, &[], true, Some("src/a.rs")).unwrap();
+    let parsed = parse_json(&json);
+    assert!(
+        parsed.get("results").is_some(),
+        "expected 'results' key in JSON output, got: {json}"
+    );
+    assert!(
+        parsed["results"].is_array(),
+        "expected 'results' to be an array, got: {json}"
     );
 }
