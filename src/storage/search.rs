@@ -3,8 +3,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::Connection;
 
 use super::{
-    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, as_sql_params,
-    f32_as_bytes,
+    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, f32_as_bytes,
 };
 
 fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
@@ -74,9 +73,8 @@ pub fn vec_search(
     append_path_filter(&mut sql, &mut params, "file_path", path_filter);
 
     let mut stmt2 = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let meta: HashMap<i64, Chunk> = stmt2
-        .query_map(param_refs.as_slice(), |row| {
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 Chunk {
@@ -161,9 +159,7 @@ pub fn search_by_fts(
     params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
         let bm25_score: f64 = row.get(8)?;
         let abs = (bm25_score as f32).abs();
         let base_score = abs / (1.0 + abs);
@@ -204,7 +200,7 @@ pub fn get_chunks_by_ids(
          FROM chunks WHERE id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(as_sql_params(ids).as_slice(), |row| {
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
         let id: i64 = row.get(0)?;
         let chunk = chunk_from_row(row, 1)?;
         Ok((id, chunk))
@@ -310,12 +306,10 @@ pub fn get_sub_embeddings_for_chunks(
          WHERE chunk_id IN ({placeholders}) ORDER BY chunk_id, sub_idx"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = chunk_ids
-        .iter()
-        .map(|id| id as &dyn rusqlite::types::ToSql)
-        .collect();
     let mappings: Vec<(i64, i64)> = stmt
-        .query_map(params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     if mappings.is_empty() {
@@ -326,15 +320,12 @@ pub fn get_sub_embeddings_for_chunks(
     let emb_placeholders = anon_placeholders(mappings.len());
     let emb_sql =
         format!("SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({emb_placeholders})");
-    let rowid_params: Vec<&dyn rusqlite::types::ToSql> = mappings
-        .iter()
-        .map(|(_, vid)| vid as &dyn rusqlite::types::ToSql)
-        .collect();
     let mut by_rowid: HashMap<i64, Vec<u8>> = conn
         .prepare(&emb_sql)?
-        .query_map(rowid_params.as_slice(), |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+        .query_map(
+            rusqlite::params_from_iter(mappings.iter().map(|(_, vid)| vid)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
         .collect::<Result<_, _>>()?;
 
     let results: Vec<(i64, Vec<u8>)> = mappings
