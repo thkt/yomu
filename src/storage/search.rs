@@ -307,7 +307,9 @@ pub fn get_sub_embeddings_for_chunks(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mappings: Vec<(i64, i64)> = stmt
-        .query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     if mappings.is_empty() {
@@ -320,9 +322,10 @@ pub fn get_sub_embeddings_for_chunks(
         format!("SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({emb_placeholders})");
     let mut by_rowid: HashMap<i64, Vec<u8>> = conn
         .prepare(&emb_sql)?
-        .query_map(rusqlite::params_from_iter(mappings.iter().map(|(_, vid)| vid)), |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+        .query_map(
+            rusqlite::params_from_iter(mappings.iter().map(|(_, vid)| vid)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
         .collect::<Result<_, _>>()?;
 
     let results: Vec<(i64, Vec<u8>)> = mappings
