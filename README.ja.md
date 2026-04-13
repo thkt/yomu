@@ -123,7 +123,7 @@ $ yomu --json status
 {"files":42,"chunks":187,"embedded_chunks":187,"embeddable_chunks":187,"embed_percentage":100,"references":156,"last_indexed":"2025-03-29 01:23:45"}
 ```
 
-### `yomu search <query>` — 概念で検索
+### `yomu search [query]` — 概念で検索
 
 ランク付けされた結果をフルコンテキスト付きで返します。各結果には以下が含まれます。
 
@@ -134,7 +134,21 @@ $ yomu --json status
 | 隣接する定義      | 同一ファイル内の他の関数・型                     |
 | チャンクタイプ    | component / hook / type_def / css_rule / rust_fn |
 
-オプション: `--limit`（デフォルト: 10、最大: 100）、`--offset`（デフォルト: 0、最大: 500）
+オプション:
+
+| フラグ     | デフォルト | 説明                                                                          |
+| ---------- | ---------- | ----------------------------------------------------------------------------- |
+| `--limit`  | 10         | 最大件数（上限: 100）                                                         |
+| `--offset` | 0          | ページネーションオフセット（上限: 500）                                       |
+| `--from`   | —          | ファイルまたはシンボルに類似するコードを検索（`src/foo.rs` または `src/foo.rs:my_fn`）。query は省略可 |
+
+`--from` は保存済み埋め込みをそのまま検索クエリとして使うため、再埋め込みは不要です:
+
+```sh
+yomu search --from src/query/mod.rs           # このファイルに類似するファイルを検索
+yomu search --from src/query/mod.rs:rerank    # この関数に類似するシンボルを検索
+yomu search --from src/query/mod.rs "filter"  # ハイブリッド: ファイル類似 + FTS "filter"
+```
 
 ### `yomu impact <target>` — 変更の影響範囲
 
