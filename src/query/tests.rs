@@ -2132,6 +2132,9 @@ fn is_test_path_returns_false_for_source_files() {
         "src/query/mod.rs",
     ];
     for path in cases {
-        assert!(!is_test_path(path), "expected is_test_path false for: {path}");
+        assert!(
+            !is_test_path(path),
+            "expected is_test_path false for: {path}"
+        );
     }
 }
