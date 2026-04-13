@@ -24,6 +24,8 @@ use format::{
     format_status_json,
 };
 
+const SEMANTIC_THRESHOLD: f32 = 0.7;
+
 const INDEX_FRESHNESS_SECS: u32 = 60;
 const MAX_QUERY_LENGTH: usize = 2000;
 
@@ -338,6 +340,7 @@ impl Yomu {
         symbol: Option<&str>,
         depth: u32,
         json: bool,
+        semantic: bool,
     ) -> Result<String, YomuError> {
         if target.is_empty() {
             return Err(YomuError::InvalidInput("target must not be empty".into()));
@@ -357,6 +360,17 @@ impl Yomu {
 
         let symbol_filter = symbol.or(parsed_symbol);
         let max_depth = depth.min(MAX_IMPACT_DEPTH);
+        // Clone for semantic path before moving into first closure
+        let fp_sem = if semantic {
+            Some(file_path.to_string())
+        } else {
+            None
+        };
+        let sym_sem = if semantic {
+            symbol_filter.map(|s| s.to_string())
+        } else {
+            None
+        };
         let fp = file_path.to_string();
         let sym_owned = symbol_filter.map(|s| s.to_string());
 
@@ -370,16 +384,48 @@ impl Yomu {
             Ok((exists, dependents, refs))
         })?;
 
+        let semantic_related: Vec<storage::SearchResult> = if semantic {
+            let embedder = self.get_embedder();
+            let state = determine_index_state(&stats);
+            self.ensure_indexed(embedder, state, None)?;
+
+            let fp_for_emb = fp_sem.unwrap();
+            let sym_for_emb = sym_sem;
+            let (chunk_ids, embedding_bytes) = self.with_db(move |c| {
+                let ids =
+                    storage::get_chunks_for_from_target(c, &fp_for_emb, sym_for_emb.as_deref())?;
+                let raw = storage::get_sub_embeddings_for_chunks(c, &ids)?;
+                let bytes: Vec<Vec<u8>> = raw.into_iter().map(|(_, b)| b).collect();
+                Ok((ids, bytes))
+            })?;
+
+            if embedding_bytes.is_empty() {
+                vec![]
+            } else {
+                let source_ids: HashSet<i64> = chunk_ids.into_iter().collect();
+                let mut results = self.with_db(|conn| {
+                    query::search_from_file(conn, &embedding_bytes, &source_ids, None, 20, &[])
+                })?;
+                results.retain(|r| r.score >= SEMANTIC_THRESHOLD);
+                let mut seen: HashSet<String> = HashSet::new();
+                results.retain(|r| seen.insert(r.chunk.file_path.clone()));
+                results
+            }
+        } else {
+            vec![]
+        };
+
         if json {
             return Ok(format_impact_json(
                 target,
                 file_in_index,
                 &dependents,
                 &symbol_refs,
+                &semantic_related,
             ));
         }
 
-        if dependents.is_empty() {
+        if dependents.is_empty() && semantic_related.is_empty() {
             return Ok(if file_in_index {
                 format!("No dependents found for `{}`.", target)
             } else {
@@ -391,9 +437,9 @@ impl Yomu {
         }
 
         let text = if symbol_filter.is_some() {
-            format_impact_results(target, &symbol_refs, &dependents)
+            format_impact_results(target, &symbol_refs, &dependents, &semantic_related)
         } else {
-            format_impact_all(target, &dependents)
+            format_impact_all(target, &dependents, &semantic_related)
         };
 
         Ok(text)
