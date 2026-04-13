@@ -127,7 +127,10 @@ pub fn search_by_fts(
         .iter()
         .filter_map(|k| match rurico::storage::prepare_match_query(conn, k) {
             Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
-            Err(_) if !k.trim().is_empty() => Some(rurico::storage::fts_quote(k)),
+            Err(e) if !k.trim().is_empty() => {
+                tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
+                Some(rurico::storage::fts_quote(k))
+            }
             _ => None,
         })
         .collect();
