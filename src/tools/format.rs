@@ -58,9 +58,21 @@ pub(super) fn format_dependents_by_depth(
     }
 }
 
-pub(super) fn format_impact_all(target: &str, dependents: &[storage::Dependent]) -> String {
+pub(super) fn format_impact_all(
+    target: &str,
+    dependents: &[storage::Dependent],
+    semantic_related: &[storage::SearchResult],
+) -> String {
     let mut output = format!("## Impact analysis: `{}`\n\n", target);
-    format_dependents_by_depth(&mut output, dependents, "###");
+
+    if semantic_related.is_empty() {
+        format_dependents_by_depth(&mut output, dependents, "###");
+    } else {
+        output.push_str("### Structural dependents (import graph)\n");
+        format_dependents_by_depth(&mut output, dependents, "####");
+        format_semantic_section(&mut output, semantic_related);
+    }
+
     output.push_str(&format!(
         "\nTotal: {} dependent file(s)\n",
         dependents.len()
@@ -72,6 +84,7 @@ pub(super) fn format_impact_results(
     target: &str,
     symbol_refs: &[String],
     all_dependents: &[storage::Dependent],
+    semantic_related: &[storage::SearchResult],
 ) -> String {
     let mut output = format!("## Impact analysis: `{}`\n\n", target);
 
@@ -84,11 +97,26 @@ pub(super) fn format_impact_results(
 
     output.push_str("\n### All transitive dependents\n");
     format_dependents_by_depth(&mut output, all_dependents, "####");
+
+    if !semantic_related.is_empty() {
+        format_semantic_section(&mut output, semantic_related);
+    }
+
     output.push_str(&format!(
         "\nTotal: {} dependent file(s)\n",
         all_dependents.len()
     ));
     output
+}
+
+fn format_semantic_section(output: &mut String, semantic_related: &[storage::SearchResult]) {
+    output.push_str("\n### Semantic related (embedding search)\n");
+    for r in semantic_related {
+        output.push_str(&format!(
+            "- {} (similarity: {:.2})\n",
+            r.chunk.file_path, r.score
+        ));
+    }
 }
 
 pub(super) fn format_results_grouped(
@@ -303,11 +331,19 @@ struct JsonDependent<'a> {
 }
 
 #[derive(Serialize)]
+struct JsonSemanticRelated<'a> {
+    file_path: &'a str,
+    score: f32,
+}
+
+#[derive(Serialize)]
 struct JsonImpactResult<'a> {
     target: &'a str,
     in_index: bool,
     dependents: Vec<JsonDependent<'a>>,
     symbol_refs: &'a [String],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    semantic_related: Vec<JsonSemanticRelated<'a>>,
     total: usize,
 }
 
@@ -316,6 +352,7 @@ pub(super) fn format_impact_json(
     file_in_index: bool,
     dependents: &[storage::Dependent],
     symbol_refs: &[String],
+    semantic_related: &[storage::SearchResult],
 ) -> String {
     let deps: Vec<JsonDependent> = dependents
         .iter()
@@ -324,11 +361,19 @@ pub(super) fn format_impact_json(
             depth: d.depth,
         })
         .collect();
+    let sem: Vec<JsonSemanticRelated> = semantic_related
+        .iter()
+        .map(|r| JsonSemanticRelated {
+            file_path: &r.chunk.file_path,
+            score: r.score,
+        })
+        .collect();
     let resp = JsonImpactResult {
         target,
         in_index: file_in_index,
         dependents: deps,
         symbol_refs,
+        semantic_related: sem,
         total: dependents.len(),
     };
     serde_json::to_string(&resp).unwrap()

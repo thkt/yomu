@@ -813,7 +813,9 @@ fn impact_lists_dependents() {
         .unwrap();
     }
 
-    let text = y.impact("src/hooks/useAuth.ts", None, 3, false).unwrap();
+    let text = y
+        .impact("src/hooks/useAuth.ts", None, 3, false, false)
+        .unwrap();
     assert!(text.contains("src/A.tsx"), "expected A.tsx: {text}");
     assert!(text.contains("src/C.tsx"), "expected C.tsx: {text}");
     assert!(
@@ -857,7 +859,7 @@ fn impact_filters_by_symbol() {
     }
 
     let text = y
-        .impact("src/hooks/useAuth.ts:useAuth", None, 3, false)
+        .impact("src/hooks/useAuth.ts:useAuth", None, 3, false, false)
         .unwrap();
     assert!(
         text.contains("Direct symbol references"),
@@ -872,7 +874,7 @@ fn impact_filters_by_symbol() {
 #[test]
 fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("", None, 3, false).unwrap_err();
+    let err = y.impact("", None, 3, false, false).unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {err}"
@@ -882,7 +884,7 @@ fn impact_rejects_empty_target() {
 #[test]
 fn impact_errors_on_empty_index() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("src/A.tsx", None, 3, false).unwrap_err();
+    let err = y.impact("src/A.tsx", None, 3, false, false).unwrap_err();
     assert!(
         err.to_string().contains("index is empty"),
         "expected empty index error, got: {err}"
@@ -896,7 +898,9 @@ fn impact_distinguishes_missing_file() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let text = y.impact("src/nonexistent.tsx", None, 3, false).unwrap();
+    let text = y
+        .impact("src/nonexistent.tsx", None, 3, false, false)
+        .unwrap();
     assert!(
         text.contains("not found in index"),
         "expected file-not-found message: {text}"
@@ -910,7 +914,9 @@ fn impact_rejects_path_traversal() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("../etc/passwd", None, 3, false).unwrap_err();
+    let err = y
+        .impact("../etc/passwd", None, 3, false, false)
+        .unwrap_err();
     assert!(
         err.to_string().contains(".."),
         "expected path traversal error, got: {err}"
@@ -924,7 +930,7 @@ fn impact_rejects_absolute_path() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("/etc/passwd", None, 3, false).unwrap_err();
+    let err = y.impact("/etc/passwd", None, 3, false, false).unwrap_err();
     assert!(
         err.to_string().contains("relative"),
         "expected rejection of absolute path, got: {err}"
@@ -967,6 +973,7 @@ fn impact_symbol_flag_overrides_colon_syntax() {
             Some("AuthProvider"),
             3,
             false,
+            false,
         )
         .unwrap();
     assert!(
@@ -997,7 +1004,7 @@ fn integration_index_then_impact() {
     )
     .unwrap();
 
-    let text = y.impact("src/C.tsx", None, 3, false).unwrap();
+    let text = y.impact("src/C.tsx", None, 3, false, false).unwrap();
     assert!(
         text.contains("src/B.tsx"),
         "expected B.tsx as direct dependent: {text}"
@@ -2034,7 +2041,9 @@ fn impact_json_with_dependents() {
         .unwrap();
     }
 
-    let json = y.impact("src/hooks/useAuth.ts", None, 3, true).unwrap();
+    let json = y
+        .impact("src/hooks/useAuth.ts", None, 3, true, false)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["target"], "src/hooks/useAuth.ts");
     assert_eq!(
@@ -2057,7 +2066,9 @@ fn impact_json_not_in_index() {
         seed_index(&conn);
     }
 
-    let json = y.impact("src/nonexistent.tsx", None, 3, true).unwrap();
+    let json = y
+        .impact("src/nonexistent.tsx", None, 3, true, false)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["in_index"], false);
     assert_eq!(parsed["total"], 0);
@@ -2098,7 +2109,7 @@ fn impact_json_with_symbol_refs() {
     }
 
     let json = y
-        .impact("src/hooks/useAuth.ts:useAuth", None, 3, true)
+        .impact("src/hooks/useAuth.ts:useAuth", None, 3, true, false)
         .unwrap();
     let parsed = parse_json(&json);
     let refs = parsed["symbol_refs"]
@@ -2107,6 +2118,78 @@ fn impact_json_with_symbol_refs() {
     assert!(
         refs.iter().any(|r| r == "src/A.tsx"),
         "should reference A.tsx: {json}"
+    );
+}
+
+// T-078: --semantic with no stored embeddings returns empty semantic_related
+#[test]
+fn impact_semantic_no_embeddings_returns_empty() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+        storage::replace_file_references(
+            &conn,
+            "src/A.tsx",
+            &[storage::Reference {
+                source_file: "src/A.tsx".into(),
+                target_file: "src/hooks/useAuth.ts".into(),
+                symbol_name: Some("useAuth".into()),
+                ref_kind: storage::RefKind::Named,
+            }],
+        )
+        .unwrap();
+    }
+
+    // no stored embeddings for the target → semantic_related is empty, structural still works
+    let text = y
+        .impact("src/hooks/useAuth.ts", None, 3, false, true)
+        .unwrap();
+    assert!(
+        text.contains("src/A.tsx"),
+        "structural dependents should still appear: {text}"
+    );
+    assert!(
+        !text.contains("Semantic related"),
+        "no semantic section expected when embeddings are absent: {text}"
+    );
+}
+
+// T-079: --semantic JSON output omits semantic_related when empty
+#[test]
+fn impact_semantic_json_field_absent_when_empty() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+    }
+
+    let json = y
+        .impact("src/hooks/useAuth.ts", None, 3, true, true)
+        .unwrap();
+    let parsed = parse_json(&json);
+    assert!(
+        parsed.get("semantic_related").is_none(),
+        "semantic_related should be absent when empty: {json}"
+    );
+}
+
+// T-079b: --semantic=false JSON output never has semantic_related
+#[test]
+fn impact_no_semantic_json_field_absent() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+    }
+
+    let json = y
+        .impact("src/hooks/useAuth.ts", None, 3, true, false)
+        .unwrap();
+    let parsed = parse_json(&json);
+    assert!(
+        parsed.get("semantic_related").is_none(),
+        "semantic_related should be absent without --semantic: {json}"
     );
 }
 

@@ -62,6 +62,9 @@ enum Command {
         /// Max traversal depth (default: 3)
         #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(0..=MAX_IMPACT_DEPTH as i64))]
         depth: u32,
+        /// Include semantically related files via embedding search (in addition to import graph)
+        #[arg(long)]
+        semantic: bool,
     },
     /// Show index statistics.
     Status,
@@ -218,7 +221,8 @@ fn main() -> ExitCode {
             target,
             symbol,
             depth,
-        } => yomu.impact(&target, symbol.as_deref(), depth, json),
+            semantic,
+        } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
         Command::Model { .. } => unreachable!("handled before Yomu::new()"),
     };
@@ -515,6 +519,33 @@ mod tests {
                 assert_eq!(from.as_deref(), Some("src/foo.rs"));
             }
             other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    // T-078: --semantic flag on impact parses to semantic=true
+    #[test]
+    fn impact_semantic_flag_parses() {
+        let cli = parse_cli_args(["yomu", "impact", "src/foo.rs", "--semantic"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Impact {
+                target, semantic, ..
+            } => {
+                assert_eq!(target, "src/foo.rs");
+                assert!(semantic, "expected semantic=true");
+            }
+            other => panic!("expected Impact, got {other:?}"),
+        }
+    }
+
+    // T-079: impact without --semantic defaults to semantic=false
+    #[test]
+    fn impact_no_semantic_flag_defaults_false() {
+        let cli = parse_cli_args(["yomu", "impact", "src/foo.rs"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Impact { semantic, .. } => {
+                assert!(!semantic, "expected semantic=false by default");
+            }
+            other => panic!("expected Impact, got {other:?}"),
         }
     }
 

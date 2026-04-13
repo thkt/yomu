@@ -24,6 +24,8 @@ use format::{
     format_status_json,
 };
 
+const SEMANTIC_THRESHOLD: f32 = 0.7;
+
 const INDEX_FRESHNESS_SECS: u32 = 60;
 const MAX_QUERY_LENGTH: usize = 2000;
 
@@ -338,6 +340,7 @@ impl Yomu {
         symbol: Option<&str>,
         depth: u32,
         json: bool,
+        semantic: bool,
     ) -> Result<String, YomuError> {
         if target.is_empty() {
             return Err(YomuError::InvalidInput("target must not be empty".into()));
@@ -370,16 +373,24 @@ impl Yomu {
             Ok((exists, dependents, refs))
         })?;
 
+        let semantic_related = if semantic {
+            let state = determine_index_state(&stats);
+            self.semantic_search(file_path, symbol_filter, state)?
+        } else {
+            vec![]
+        };
+
         if json {
             return Ok(format_impact_json(
                 target,
                 file_in_index,
                 &dependents,
                 &symbol_refs,
+                &semantic_related,
             ));
         }
 
-        if dependents.is_empty() {
+        if dependents.is_empty() && semantic_related.is_empty() {
             return Ok(if file_in_index {
                 format!("No dependents found for `{}`.", target)
             } else {
@@ -391,9 +402,9 @@ impl Yomu {
         }
 
         let text = if symbol_filter.is_some() {
-            format_impact_results(target, &symbol_refs, &dependents)
+            format_impact_results(target, &symbol_refs, &dependents, &semantic_related)
         } else {
-            format_impact_all(target, &dependents)
+            format_impact_all(target, &dependents, &semantic_related)
         };
 
         Ok(text)
@@ -542,6 +553,35 @@ impl Yomu {
             return Ok(std::collections::HashMap::new());
         }
         self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids))
+    }
+
+    fn semantic_search(
+        &self,
+        file_path: &str,
+        symbol: Option<&str>,
+        state: IndexState,
+    ) -> Result<Vec<storage::SearchResult>, YomuError> {
+        let embedder = self.get_embedder();
+        self.ensure_indexed(embedder, state, None)?;
+
+        let fp = file_path.to_string();
+        let sym = symbol.map(|s| s.to_string());
+        let mut results = self.with_db(move |c| {
+            let ids = storage::get_chunks_for_from_target(c, &fp, sym.as_deref())?;
+            let bytes: Vec<Vec<u8>> = storage::get_sub_embeddings_for_chunks(c, &ids)?
+                .into_iter()
+                .map(|(_, b)| b)
+                .collect();
+            if bytes.is_empty() {
+                return Ok(vec![]);
+            }
+            let source_ids: HashSet<i64> = ids.into_iter().collect();
+            query::search_from_file(c, &bytes, &source_ids, None, 20, &[])
+        })?;
+        results.retain(|r| r.score >= SEMANTIC_THRESHOLD);
+        let mut seen: HashSet<String> = HashSet::new();
+        results.retain(|r| seen.insert(r.chunk.file_path.clone()));
+        Ok(results)
     }
 
     fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
