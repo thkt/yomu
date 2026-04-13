@@ -3098,3 +3098,39 @@ fn vec_search_multi_returns_union() {
     assert!(names.contains(&"fn_a"));
     assert!(names.contains(&"fn_b"));
 }
+
+// === SF-3: FTS prefix query fallback ===
+
+#[test]
+fn search_by_fts_fallback_to_quoted_literal_on_sanitize_error() {
+    let (conn, _dir) = test_db();
+
+    // Insert a chunk with "NOT" as a standalone word in content.
+    // FTS5 unicode61 tokenizer splits on whitespace → "not" token exists in the index.
+    replace_file_chunks_only(
+        &conn,
+        "src/guard.ts",
+        &[NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: Some("shouldNotCall"),
+            content: "do NOT call this function directly",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        }],
+        "h1",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    // "NOT" is an FTS5 operator → sanitize_fts_query returns NoSearchableTerms.
+    // search_by_fts must fall back to fts_quote("NOT") = "\"NOT\"" and still find the chunk.
+    let results = search_by_fts(&conn, &["NOT"], None, &HashSet::new(), None, 10, &[])
+        .expect("fts fallback should succeed without error");
+    assert!(
+        !results.is_empty(),
+        "[SF-3] fts_quote fallback should find content containing 'NOT', got empty"
+    );
+}

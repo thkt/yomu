@@ -2034,3 +2034,69 @@ fn search_from_file_stopword_query_falls_back_to_semantic() {
         "stopword-only query should return semantic results, not []"
     );
 }
+
+// === TC-1: keyword_hit_ratio IDF-weighted branch ===
+
+#[test]
+fn keyword_hit_ratio_uses_idf_weights() {
+    let result = storage::SearchResult {
+        chunk: storage::Chunk {
+            file_path: "src/auth.ts".to_string(),
+            chunk_type: storage::ChunkType::Other,
+            name: Some("authenticate".to_string()),
+            content: "function authenticate() {}".to_string(),
+            start_line: 1,
+            end_line: 1,
+            parent_chunk_id: None,
+        },
+        chunk_id: None,
+        distance: f32::INFINITY,
+        match_source: storage::MatchSource::Fts,
+        score: 0.0,
+    };
+    let keywords = vec!["auth".to_string(), "form".to_string()];
+    let idfs = [1.0_f32, 2.0_f32];
+    // "auth" matches name "authenticate" (contains "auth"); "form" does not match.
+    // total_idf = 3.0 >= 1e-6 → IDF-weighted branch executes.
+    // hit_idf = 1.0, total_idf = 3.0 → expected ratio = 1.0/3.0.
+    let ratio = keyword_hit_ratio(&result, &keywords, &idfs, false);
+    let expected = 1.0_f32 / 3.0;
+    assert!(
+        (ratio - expected).abs() < 1e-5,
+        "[TC-1] IDF-weighted branch: expected {expected:.6}, got {ratio:.6}"
+    );
+}
+
+// === TC-5: search_pipeline offset boundary ===
+
+#[test]
+fn search_pipeline_offset_beyond_results_returns_empty() {
+    let (conn, _dir) = from_test_db();
+
+    for (i, name) in ["WidgetA", "WidgetB"].iter().enumerate() {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/{name}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(name),
+                content: &format!("function {name}() {{ return <div/>; }}"),
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+            }],
+            &format!("h{i}"),
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+
+    // offset=10 exceeds the 2-result set → empty Vec expected.
+    let results = search_pipeline(&conn, "widget", None, 10, 10, None, &[]).unwrap();
+    assert!(
+        results.is_empty(),
+        "[TC-5] offset >= results.len() should return empty Vec, got: {results:?}"
+    );
+}
