@@ -61,7 +61,6 @@ pub fn vec_search(
             .or_insert(*distance);
     }
 
-    // Batch-fetch chunk metadata for deduplicated chunk_ids.
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
     let mut sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
@@ -116,6 +115,7 @@ pub fn search_by_fts(
     keywords: &[&str],
     type_filter: Option<&[ChunkType]>,
     exclude_ids: &HashSet<i64>,
+    include_ids: Option<&HashSet<i64>>,
     limit: u32,
     path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
@@ -152,6 +152,7 @@ pub fn search_by_fts(
 
     append_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
     append_exclude_ids(&mut sql, &mut params, "c.id", exclude_ids);
+    append_include_ids(&mut sql, &mut params, "c.id", include_ids);
     append_path_filter(&mut sql, &mut params, "c.file_path", path_filter);
     sql.push_str(&format!(" ORDER BY {BM25_EXPR} LIMIT ?"));
     params.push(Box::new(limit));
@@ -233,6 +234,108 @@ pub fn get_keyword_doc_frequencies(
     Ok(dfs)
 }
 
+pub fn vec_search_multi(
+    conn: &Connection,
+    query_embeddings: &[&[f32]],
+    limit: u32,
+    path_filter: &[String],
+) -> Result<Vec<SearchResult>, StorageError> {
+    if query_embeddings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut best: HashMap<i64, SearchResult> = HashMap::new();
+    for emb in query_embeddings {
+        for result in vec_search(conn, emb, limit, path_filter)? {
+            if let Some(chunk_id) = result.chunk_id {
+                best.entry(chunk_id)
+                    .and_modify(|existing| {
+                        if result.distance < existing.distance {
+                            existing.distance = result.distance;
+                            existing.score = result.score;
+                        }
+                    })
+                    .or_insert(result);
+            }
+        }
+    }
+
+    let mut merged: Vec<SearchResult> = best.into_values().collect();
+    merged.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    merged.truncate(limit as usize);
+    Ok(merged)
+}
+
+pub fn get_chunks_for_from_target(
+    conn: &Connection,
+    file_path: &str,
+    symbol: Option<&str>,
+) -> Result<Vec<i64>, StorageError> {
+    let mut sql = String::from(
+        "SELECT id FROM chunks \
+         WHERE file_path = ?1 AND chunk_type != 'inner_fn'",
+    );
+    if symbol.is_some() {
+        sql.push_str(" AND name = ?2");
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let ids = if let Some(sym) = symbol {
+        stmt.query_map(rusqlite::params![file_path, sym], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map([file_path], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    Ok(ids)
+}
+
+pub fn get_sub_embeddings_for_chunks(
+    conn: &Connection,
+    chunk_ids: &[i64],
+) -> Result<Vec<(i64, Vec<u8>)>, StorageError> {
+    if chunk_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Step 1: Get (chunk_id, vec_rowid) from embedded_chunk_ids, ordered by sub_idx.
+    let placeholders = anon_placeholders(chunk_ids.len());
+    let sql = format!(
+        "SELECT chunk_id, vec_rowid FROM embedded_chunk_ids \
+         WHERE chunk_id IN ({placeholders}) ORDER BY chunk_id, sub_idx"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = chunk_ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::types::ToSql)
+        .collect();
+    let mappings: Vec<(i64, i64)> = stmt
+        .query_map(params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if mappings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Step 2: Batch-fetch embedding bytes (vec0 supports WHERE rowid IN (...)).
+    let emb_placeholders = anon_placeholders(mappings.len());
+    let emb_sql = format!(
+        "SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({emb_placeholders})"
+    );
+    let rowid_params: Vec<&dyn rusqlite::types::ToSql> =
+        mappings.iter().map(|(_, vid)| vid as &dyn rusqlite::types::ToSql).collect();
+    let mut by_rowid: HashMap<i64, Vec<u8>> = conn
+        .prepare(&emb_sql)?
+        .query_map(rowid_params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+
+    let results: Vec<(i64, Vec<u8>)> = mappings
+        .iter()
+        .filter_map(|(chunk_id, vec_rowid)| by_rowid.remove(vec_rowid).map(|b| (*chunk_id, b)))
+        .collect();
+    Ok(results)
+}
+
 fn append_type_filter(
     sql: &mut String,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
@@ -265,6 +368,27 @@ fn append_exclude_ids(
         ));
         for id in exclude_ids {
             params.push(Box::new(*id));
+        }
+    }
+}
+
+fn append_include_ids(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    column: &str,
+    include_ids: Option<&HashSet<i64>>,
+) {
+    if let Some(ids) = include_ids {
+        if ids.is_empty() {
+            sql.push_str(" AND 1 = 0");
+        } else {
+            sql.push_str(&format!(
+                " AND {column} IN ({})",
+                anon_placeholders(ids.len())
+            ));
+            for id in ids {
+                params.push(Box::new(*id));
+            }
         }
     }
 }

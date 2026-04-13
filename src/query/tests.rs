@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder};
@@ -969,7 +969,6 @@ fn t001_reranker_reorders_results_by_cross_encoder_score() {
     )
     .unwrap();
 
-    // Reranker scores useAuth higher than AuthForm
     let reranker = ScriptedReranker::new(vec![("useAuth", 0.9), ("AuthForm", 0.1)]);
 
     let conn = Arc::new(Mutex::new(conn));
@@ -1025,7 +1024,6 @@ fn t002_no_reranker_produces_rrf_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    // No reranker: None
     let outcome = search(
         Arc::clone(&conn),
         &MockEmbedder::default(),
@@ -1037,7 +1035,6 @@ fn t002_no_reranker_produces_rrf_results() {
     )
     .unwrap();
 
-    // Also call the existing (no reranker param) signature for reference
     let outcome_existing = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
 
     assert_eq!(
@@ -1187,7 +1184,6 @@ fn t007_reranker_scores_applied_before_cap_per_file() {
     )
     .unwrap();
 
-    // Reranker: chunk3 (middleware) > chunk1 (handler) > chunk2 (validator)
     let reranker = ScriptedReranker::new(vec![
         ("middleware", 0.9),
         ("handler", 0.5),
@@ -1458,4 +1454,578 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
         "should return text/name fallback results even with zero embeddings"
     );
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
+}
+
+fn from_test_db() -> (storage::Db, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = storage::open_db(&dir.path().join("test.db")).unwrap();
+    (conn, dir)
+}
+
+// RC-002: measure N KNN round-trips latency (N=1 vs N=20) with 500 indexed chunks
+// Run with: cargo test --lib bench_knn_round_trips -- --nocapture --ignored
+#[test]
+#[ignore]
+fn bench_knn_round_trips() {
+    use std::time::Instant;
+
+    let (conn, _dir) = from_test_db();
+
+    // Seed 500 chunks with random-ish embeddings across 32 axes
+    for i in 0u32..500 {
+        let axis = (i % 32) as usize;
+        let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
+        emb[axis] = 1.0;
+        emb[(axis + 1) % storage::EMBEDDING_DIMS] = 0.3;
+        storage::insert_chunk(
+            &conn,
+            &format!("src/file_{i}.rs"),
+            &storage::NewChunk {
+                chunk_type: &storage::ChunkType::RustFn,
+                name: Some("fn_name"),
+                content: &format!("fn fn_{i}() {{}}"),
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+            },
+            &format!("h{i}"),
+            &storage::ce(emb),
+            None,
+        )
+        .unwrap();
+    }
+
+    let source_ids = std::collections::HashSet::new();
+
+    let run = |n: usize, label: &str| {
+        let emb_bytes: Vec<Vec<u8>> = (0..n)
+            .map(|i| storage::f32_as_bytes(&emb_axis(i % 32)).to_vec())
+            .collect();
+        let iters = 50;
+        let t = Instant::now();
+        for _ in 0..iters {
+            let _ = search_from_file(&conn, &emb_bytes, &source_ids, None, 10, &[]).unwrap();
+        }
+        let avg_us = t.elapsed().as_micros() / iters;
+        println!("N={n:2} ({label}): {avg_us} µs/call");
+    };
+
+    run(1, "single fn");
+    run(5, "small file");
+    run(10, "medium file");
+    run(20, "cap");
+}
+
+fn emb_axis(axis: usize) -> Vec<f32> {
+    let mut v = vec![0.0_f32; storage::EMBEDDING_DIMS];
+    v[axis] = 1.0;
+    v
+}
+
+// --- T-009: search_from_file excludes source chunk_ids ---
+#[test]
+fn search_from_file_excludes_source_chunks() {
+    let (conn, _dir) = from_test_db();
+
+    let id_src1 = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("src_fn1"),
+            content: "fn src_fn1() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+    let id_src2 = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("src_fn2"),
+            content: "fn src_fn2() {}",
+            start_line: 3,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(1)),
+        None,
+    )
+    .unwrap();
+    let id_other = storage::insert_chunk(
+        &conn,
+        "src/other.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("other_fn"),
+            content: "fn other_fn() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce(emb_axis(2)),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_src1, id_src2]);
+
+    let results = search_from_file(&conn, &emb_bytes, &source_ids, None, 10, &[]).unwrap();
+    let result_ids: Vec<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
+    assert!(!result_ids.contains(&id_src1));
+    assert!(!result_ids.contains(&id_src2));
+    assert!(result_ids.contains(&id_other));
+}
+
+// --- T-010: search_from_file with query applies FTS filter ---
+#[test]
+fn search_from_file_with_query_applies_fts_filter() {
+    let (conn, _dir) = from_test_db();
+
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("source"),
+            content: "fn source() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+    let id_error = storage::insert_chunk(
+        &conn,
+        "src/error.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("handle_error"),
+            content: "fn handle_error() { error handling logic }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce(emb_axis(1)),
+        None,
+    )
+    .unwrap();
+    let _id_unrelated = storage::insert_chunk(
+        &conn,
+        "src/unrelated.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("unrelated"),
+            content: "fn unrelated() { nothing here }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h3",
+        &storage::ce(emb_axis(2)),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    let results =
+        search_from_file(&conn, &emb_bytes, &source_ids, Some("error"), 10, &[]).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].chunk_id, Some(id_error));
+}
+
+// --- T-011: search_from_file FTS zero matches returns empty ---
+#[test]
+fn search_from_file_fts_zero_matches_returns_empty() {
+    let (conn, _dir) = from_test_db();
+
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("source"),
+            content: "fn source() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+    storage::insert_chunk(
+        &conn,
+        "src/other.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("other"),
+            content: "fn other() { some logic }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce(emb_axis(1)),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    let results =
+        search_from_file(&conn, &emb_bytes, &source_ids, Some("xyzzyx"), 10, &[]).unwrap();
+    assert!(results.is_empty());
+}
+
+// --- T-012: search_from_file with no stored embeddings returns empty ---
+#[test]
+fn search_from_file_no_embeddings_returns_empty() {
+    let (conn, _dir) = from_test_db();
+    let source_ids = HashSet::from([1]);
+    let results = search_from_file(&conn, &[], &source_ids, None, 10, &[]).unwrap();
+    assert!(results.is_empty());
+}
+
+// --- T-014: search_from_file caps at 20 sub-embeddings ---
+#[test]
+fn search_from_file_caps_sub_embeddings_at_20() {
+    let (conn, _dir) = from_test_db();
+
+    storage::insert_chunk(
+        &conn,
+        "src/target.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("target"),
+            content: "fn target() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+
+    // Generate 25 sub-embeddings (all same vector for simplicity)
+    let emb_bytes = storage::f32_as_bytes(&emb_axis(0)).to_vec();
+    let entries: Vec<Vec<u8>> = (0..25).map(|_| emb_bytes.clone()).collect();
+    let source_ids = HashSet::new();
+
+    // Should not error; internally caps at 20
+    let results = search_from_file(&conn, &entries, &source_ids, None, 10, &[]).unwrap();
+    assert!(!results.is_empty());
+}
+
+// --- T-015: FTS filter uses fetch_limit (not limit) so rerank picks best semantic match ---
+#[test]
+fn search_from_file_fts_uses_fetch_limit_not_limit() {
+    let (conn, _dir) = from_test_db();
+
+    // Source chunk — we search "from" this
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("source"),
+            content: "fn source() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+
+    // A: closest to source (same axis), low keyword frequency → low BM25
+    let id_a = storage::insert_chunk(
+        &conn,
+        "src/a.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("close_handler"),
+            content: "fn close_handler() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+
+    // B: far from source, high keyword frequency → high BM25
+    let _id_b = storage::insert_chunk(
+        &conn,
+        "src/b.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("far_handler"),
+            content: "fn far_handler() { handler handler handler handler handler }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h3",
+        &storage::ce(emb_axis(1)),
+        None,
+    )
+    .unwrap();
+
+    // C: far from source, medium keyword frequency
+    let _id_c = storage::insert_chunk(
+        &conn,
+        "src/c.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("mid_handler"),
+            content: "fn mid_handler() { handler handler handler }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h4",
+        &storage::ce(emb_axis(2)),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    // limit=1: with bug, FTS picks top BM25 (far_handler); with fix, all pass through to rerank
+    let results =
+        search_from_file(&conn, &emb_bytes, &source_ids, Some("handler"), 1, &[]).unwrap();
+    assert_eq!(results.len(), 1, "should return exactly 1 result");
+    // Semantically closest FTS match should win after rerank, not highest BM25
+    assert_eq!(
+        results[0].chunk_id,
+        Some(id_a),
+        "closest semantic match (close_handler) should beat high-BM25 (far_handler)"
+    );
+}
+
+// COV-4: fetch_limit = limit * 3 (3× overfetch) — the 3rd-closest candidate must reach FTS pool
+#[test]
+fn search_from_file_3x_overfetch_reaches_third_candidate() {
+    let (conn, _dir) = from_test_db();
+
+    // KNN distances from emb_axis(0): A=0, B=0.1, C=0.5, source≈1.41 (won't appear in top 3)
+    let emb_b = {
+        let mut v = vec![0.0_f32; storage::EMBEDDING_DIMS];
+        v[0] = 1.0;
+        v[1] = 0.1;
+        v
+    };
+    let emb_c = {
+        let mut v = vec![0.0_f32; storage::EMBEDDING_DIMS];
+        v[0] = 1.0;
+        v[1] = 0.5;
+        v
+    };
+
+    // Source stored far from query (emb_axis(5)), so it won't consume a top-3 KNN slot
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("src_fn"),
+            content: "fn src_fn() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "hsource",
+        &storage::ce(emb_axis(5)),
+        None,
+    )
+    .unwrap();
+
+    // A: KNN rank 1 (closest), NO keyword
+    storage::insert_chunk(
+        &conn,
+        "src/a.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("a_fn"),
+            content: "fn a_fn() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "ha",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+
+    // B: KNN rank 2, NO keyword
+    storage::insert_chunk(
+        &conn,
+        "src/b.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("b_fn"),
+            content: "fn b_fn() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "hb",
+        &storage::ce(emb_b),
+        None,
+    )
+    .unwrap();
+
+    // C: KNN rank 3, HAS keyword "magic"
+    let id_c = storage::insert_chunk(
+        &conn,
+        "src/c.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("c_fn"),
+            content: "fn c_fn() { magic magic magic }",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "hc",
+        &storage::ce(emb_c),
+        None,
+    )
+    .unwrap();
+
+    // Search from emb_axis(0) with query "magic", limit=1 → fetch_limit=3
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    let results =
+        search_from_file(&conn, &emb_bytes, &source_ids, Some("magic"), 1, &[]).unwrap();
+    assert_eq!(results.len(), 1, "should return exactly 1 result");
+    assert_eq!(
+        results[0].chunk_id,
+        Some(id_c),
+        "3rd-closest candidate (c_fn, only keyword match) should be reached by 3× overfetch"
+    );
+}
+
+// P1: source exclusion must not deplete results when limit=1 and source is nearest neighbour
+#[test]
+fn search_from_file_source_exclusion_does_not_empty_results_at_limit_1() {
+    let (conn, _dir) = from_test_db();
+
+    // Source at emb_axis(0); other is a close neighbour (slightly off-axis)
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("source"),
+            content: "fn source() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+    let id_other = storage::insert_chunk(
+        &conn,
+        "src/other.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("other"),
+            content: "fn other() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce({
+            let mut v = emb_axis(0);
+            v[1] = 0.1;
+            v
+        }),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    let results = search_from_file(&conn, &emb_bytes, &source_ids, None, 1, &[]).unwrap();
+    assert_eq!(results.len(), 1, "should return 1 result even when source fills KNN slot");
+    assert_eq!(results[0].chunk_id, Some(id_other));
+}
+
+// P2: stopword-only query must not empty semantic results
+#[test]
+fn search_from_file_stopword_query_falls_back_to_semantic() {
+    let (conn, _dir) = from_test_db();
+
+    let id_source = storage::insert_chunk(
+        &conn,
+        "src/source.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("source"),
+            content: "fn source() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h1",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+    storage::insert_chunk(
+        &conn,
+        "src/other.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("other"),
+            content: "fn other() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        },
+        "h2",
+        &storage::ce(emb_axis(0)),
+        None,
+    )
+    .unwrap();
+
+    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let source_ids = HashSet::from([id_source]);
+
+    // "a" is a stopword → extract_keywords returns [] → must behave like query=None
+    let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("a"), 10, &[]).unwrap();
+    assert!(!results.is_empty(), "stopword-only query should return semantic results, not []");
 }

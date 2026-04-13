@@ -123,27 +123,40 @@ impl Yomu {
 
     pub fn search(
         &self,
-        query: &str,
+        query: Option<&str>,
         limit: u32,
         offset: u32,
         paths: &[String],
         json: bool,
+        from_target: Option<&str>,
     ) -> Result<String, YomuError> {
-        if query.is_empty() {
-            return Err(YomuError::InvalidInput("query must not be empty".into()));
-        }
-        if query.len() > MAX_QUERY_LENGTH {
-            return Err(YomuError::InvalidInput(format!(
-                "query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
-            )));
+        if let Some(q) = query {
+            if q.is_empty() {
+                return Err(YomuError::InvalidInput("query must not be empty".into()));
+            }
+            if q.len() > MAX_QUERY_LENGTH {
+                return Err(YomuError::InvalidInput(format!(
+                    "query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
+                )));
+            }
         }
 
         for path in paths {
             validate_path(path)?;
         }
 
-        let embedder = self.get_embedder();
         let limit = limit.min(MAX_SEARCH_LIMIT);
+
+        if let Some(from) = from_target {
+            // FR-006: --offset is intentionally ignored in from-file mode
+            return self.search_from(from, query, limit, paths, json);
+        }
+
+        let query = query.ok_or_else(|| {
+            YomuError::InvalidInput("query or --from is required".into())
+        })?;
+
+        let embedder = self.get_embedder();
         let offset = offset.min(MAX_SEARCH_OFFSET);
 
         tracing::debug!(query, limit, offset, ?paths, "search request");
@@ -184,25 +197,72 @@ impl Yomu {
             notes.push("embedding model not loaded; results from text search only".into());
         }
 
-        if json {
-            return Ok(format_results_json(
-                &outcome.results,
-                outcome.degraded,
-                notes,
-            ));
+        self.format_search_results(&outcome.results, &stats, notes, json, outcome.degraded)
+    }
+
+    fn search_from(
+        &self,
+        from: &str,
+        query: Option<&str>,
+        limit: u32,
+        paths: &[String],
+        json: bool,
+    ) -> Result<String, YomuError> {
+        let (file, symbol) = parse_impact_target(from);
+        validate_path(file)?;
+
+        let embedder = self.get_embedder();
+        let stats = self.with_db(storage::get_stats)?;
+        let state = determine_index_state(&stats);
+        let index_notes = self.ensure_indexed(embedder, state, None)?;
+
+        let (chunk_ids, embedding_bytes) = self.with_db(|c| {
+            let chunk_ids = storage::get_chunks_for_from_target(c, file, symbol)?;
+            let raw = storage::get_sub_embeddings_for_chunks(c, &chunk_ids)?;
+            let embedding_bytes: Vec<Vec<u8>> = raw.into_iter().map(|(_, b)| b).collect();
+            Ok((chunk_ids, embedding_bytes))
+        })?;
+
+        let mut notes: Vec<String> = Vec::new();
+        if let Some(msg) = index_notes {
+            notes.push(msg);
         }
 
-        if outcome.results.is_empty() {
-            let mut msg = format_no_results_message(&stats);
+        let results = if embedding_bytes.is_empty() {
+            tracing::warn!(from, "no stored embeddings for from-target");
+            notes.push(format!("no stored embeddings for '{from}'; try running `yomu index`"));
+            Vec::new()
+        } else {
+            let source_ids: HashSet<i64> = chunk_ids.into_iter().collect();
+            self.with_db(|conn| {
+                query::search_from_file(conn, &embedding_bytes, &source_ids, query, limit, paths)
+            })?
+        };
+
+        self.format_search_results(&results, &stats, notes, json, false)
+    }
+
+    fn format_search_results(
+        &self,
+        results: &[storage::SearchResult],
+        stats: &storage::IndexStatus,
+        notes: Vec<String>,
+        json: bool,
+        degraded: bool,
+    ) -> Result<String, YomuError> {
+        if json {
+            return Ok(format_results_json(results, degraded, notes));
+        }
+        if results.is_empty() {
+            let mut msg = format_no_results_message(stats);
             for note in &notes {
                 msg.push_str(&format!("\n\nNote: {note}"));
             }
             return Ok(msg);
         }
-
-        let ctx = self.fetch_enrichment_context(&outcome.results)?;
-        let parent_chunks = self.fetch_parent_chunks(&outcome.results)?;
-        let mut text = format_results_grouped(&outcome.results, &ctx, &parent_chunks);
+        let ctx = self.fetch_enrichment_context(results)?;
+        let parent_chunks = self.fetch_parent_chunks(results)?;
+        let mut text = format_results_grouped(results, &ctx, &parent_chunks);
         for note in &notes {
             text.push_str(&format!("\n---\nNote: {note}\n"));
         }
@@ -501,7 +561,7 @@ fn validate_path(path: &str) -> Result<(), YomuError> {
     Ok(())
 }
 
-fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
+pub(crate) fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
     if let Some(colon_pos) = target.rfind(':')
         && colon_pos > 0
         && colon_pos < target.len() - 1
