@@ -152,9 +152,8 @@ impl Yomu {
             return self.search_from(from, query, limit, paths, json);
         }
 
-        let query = query.ok_or_else(|| {
-            YomuError::InvalidInput("query or --from is required".into())
-        })?;
+        let query =
+            query.ok_or_else(|| YomuError::InvalidInput("query or --from is required".into()))?;
 
         let embedder = self.get_embedder();
         let offset = offset.min(MAX_SEARCH_OFFSET);
@@ -230,7 +229,9 @@ impl Yomu {
 
         let results = if embedding_bytes.is_empty() {
             tracing::warn!(from, "no stored embeddings for from-target");
-            notes.push(format!("no stored embeddings for '{from}'; try running `yomu index`"));
+            notes.push(format!(
+                "no stored embeddings for '{from}'; try running `yomu index`"
+            ));
             Vec::new()
         } else {
             let source_ids: HashSet<i64> = chunk_ids.into_iter().collect();

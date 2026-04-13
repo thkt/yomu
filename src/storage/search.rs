@@ -281,8 +281,10 @@ pub fn get_chunks_for_from_target(
 
     let mut stmt = conn.prepare(&sql)?;
     let ids = if let Some(sym) = symbol {
-        stmt.query_map(rusqlite::params![file_path, sym], |row| row.get::<_, i64>(0))?
-            .collect::<Result<Vec<_>, _>>()?
+        stmt.query_map(rusqlite::params![file_path, sym], |row| {
+            row.get::<_, i64>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?
     } else {
         stmt.query_map([file_path], |row| row.get::<_, i64>(0))?
             .collect::<Result<Vec<_>, _>>()?
@@ -319,14 +321,17 @@ pub fn get_sub_embeddings_for_chunks(
 
     // Step 2: Batch-fetch embedding bytes (vec0 supports WHERE rowid IN (...)).
     let emb_placeholders = anon_placeholders(mappings.len());
-    let emb_sql = format!(
-        "SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({emb_placeholders})"
-    );
-    let rowid_params: Vec<&dyn rusqlite::types::ToSql> =
-        mappings.iter().map(|(_, vid)| vid as &dyn rusqlite::types::ToSql).collect();
+    let emb_sql =
+        format!("SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({emb_placeholders})");
+    let rowid_params: Vec<&dyn rusqlite::types::ToSql> = mappings
+        .iter()
+        .map(|(_, vid)| vid as &dyn rusqlite::types::ToSql)
+        .collect();
     let mut by_rowid: HashMap<i64, Vec<u8>> = conn
         .prepare(&emb_sql)?
-        .query_map(rowid_params.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(rowid_params.as_slice(), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<Result<_, _>>()?;
 
     let results: Vec<(i64, Vec<u8>)> = mappings

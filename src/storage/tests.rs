@@ -1441,7 +1441,6 @@ fn get_import_counts_returns_empty_for_empty_input() {
     assert!(counts.is_empty());
 }
 
-
 #[test]
 fn fts_chunks_deleted_with_file() {
     let (conn, _dir) = test_db();
@@ -1524,7 +1523,8 @@ fn fts5_handles_special_characters_in_content() {
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_by_fts(&conn, &["container"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["container"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
 }
@@ -1684,7 +1684,16 @@ fn migration_v3_to_v4_creates_vocab_table() {
     );
 
     // Verify data preserved: chunk should still be searchable
-    let results = search_by_fts(&conn, &["migrationTest"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["migrationTest"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
     assert!(
         !results.is_empty(),
         "seeded chunk should survive v3->v4 migration"
@@ -1823,7 +1832,8 @@ fn fts_automerge_guard_restores_on_drop() {
         None,
     )
     .unwrap();
-    let results = search_by_fts(&conn, &["function"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["function"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert!(
         results.len() >= 2,
         "FTS should work after guard drop, got {} results",
@@ -2204,7 +2214,16 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
         )
         .unwrap();
 
-    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handlesubmit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2262,7 +2281,16 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
         )
         .unwrap();
 
-    let results = search_by_fts(&conn, &["handlesubmit"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handlesubmit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
 
     assert!(
         !results.is_empty(),
@@ -2304,7 +2332,8 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
     )
     .unwrap();
 
-    let results = search_by_fts(&conn, &["userform"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["userform"], None, &HashSet::new(), None, 10, &[]).unwrap();
 
     assert!(!results.is_empty(), "should find UserForm via name search");
     let component_result = &results[0];
@@ -2444,7 +2473,8 @@ fn t_014_migration_v6_to_v7_preserves_fts_search() {
         "[T-014] schema_version should be 8 after migration"
     );
 
-    let results = search_by_fts(&conn, &["transform"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results =
+        search_by_fts(&conn, &["transform"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(
         results.len(),
         1,
@@ -2524,8 +2554,16 @@ fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
     replace_file_chunks_only(&conn, "src/form.tsx", &chunks, "h1", "", &[], None).unwrap();
 
     // Search with split keywords ["handle", "submit"] should find handleSubmit
-    let results =
-        search_by_fts(&conn, &["handle", "submit"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    let results = search_by_fts(
+        &conn,
+        &["handle", "submit"],
+        None,
+        &HashSet::new(),
+        None,
+        10,
+        &[],
+    )
+    .unwrap();
     let names: Vec<_> = results
         .iter()
         .filter_map(|r| r.chunk.name.as_deref())
@@ -2664,7 +2702,9 @@ fn t_016_search_by_fts_excludes_ids() {
 #[test]
 fn vec_chunks_embedding_retrievable_by_rowid() {
     let (conn, _dir) = test_db();
-    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32).map(|i| i as f32 / 768.0).collect();
+    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32)
+        .map(|i| i as f32 / 768.0)
+        .collect();
     let chunk_id = insert_chunk(
         &conn,
         "src/Foo.rs",
@@ -2819,7 +2859,10 @@ fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
     assert_eq!(foo_id.len(), 1);
     let bar_id = get_chunks_for_from_target(&conn, "src/x.rs", Some("bar")).unwrap();
     assert_eq!(bar_id.len(), 1);
-    assert_ne!(foo_id[0], bar_id[0], "foo and bar should return different chunk IDs");
+    assert_ne!(
+        foo_id[0], bar_id[0],
+        "foo and bar should return different chunk IDs"
+    );
 }
 
 // --- T-004: get_chunks_for_from_target symbol not found returns empty ---
@@ -2853,7 +2896,9 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
 #[test]
 fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
     let (conn, _dir) = test_db();
-    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32).map(|i| i as f32 / 768.0).collect();
+    let emb: Vec<f32> = (0..EMBEDDING_DIMS as u32)
+        .map(|i| i as f32 / 768.0)
+        .collect();
 
     let chunk_id = insert_chunk(
         &conn,
@@ -2988,8 +3033,16 @@ fn search_by_fts_with_include_ids_filters_to_subset() {
 
     // With include_ids = {id1}: only id1 is returned
     let include = HashSet::from([id1]);
-    let filtered =
-        search_by_fts(&conn, &["error"], None, &HashSet::new(), Some(&include), 10, &[]).unwrap();
+    let filtered = search_by_fts(
+        &conn,
+        &["error"],
+        None,
+        &HashSet::new(),
+        Some(&include),
+        10,
+        &[],
+    )
+    .unwrap();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].chunk_id, Some(id1));
 }

@@ -1643,8 +1643,7 @@ fn search_from_file_with_query_applies_fts_filter() {
     let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
-    let results =
-        search_from_file(&conn, &emb_bytes, &source_ids, Some("error"), 10, &[]).unwrap();
+    let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("error"), 10, &[]).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].chunk_id, Some(id_error));
 }
@@ -1923,8 +1922,7 @@ fn search_from_file_3x_overfetch_reaches_third_candidate() {
     let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
-    let results =
-        search_from_file(&conn, &emb_bytes, &source_ids, Some("magic"), 1, &[]).unwrap();
+    let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("magic"), 1, &[]).unwrap();
     assert_eq!(results.len(), 1, "should return exactly 1 result");
     assert_eq!(
         results[0].chunk_id,
@@ -1980,7 +1978,11 @@ fn search_from_file_source_exclusion_does_not_empty_results_at_limit_1() {
     let source_ids = HashSet::from([id_source]);
 
     let results = search_from_file(&conn, &emb_bytes, &source_ids, None, 1, &[]).unwrap();
-    assert_eq!(results.len(), 1, "should return 1 result even when source fills KNN slot");
+    assert_eq!(
+        results.len(),
+        1,
+        "should return 1 result even when source fills KNN slot"
+    );
     assert_eq!(results[0].chunk_id, Some(id_other));
 }
 
@@ -2027,5 +2029,8 @@ fn search_from_file_stopword_query_falls_back_to_semantic() {
 
     // "a" is a stopword → extract_keywords returns [] → must behave like query=None
     let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("a"), 10, &[]).unwrap();
-    assert!(!results.is_empty(), "stopword-only query should return semantic results, not []");
+    assert!(
+        !results.is_empty(),
+        "stopword-only query should return semantic results, not []"
+    );
 }

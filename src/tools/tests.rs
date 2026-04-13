@@ -93,7 +93,9 @@ fn search_rejects_empty_query() {
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-    let err = y.search(Some(&long_query), 10, 0, &[], false, None).unwrap_err();
+    let err = y
+        .search(Some(&long_query), 10, 0, &[], false, None)
+        .unwrap_err();
     assert!(
         err.to_string().contains("maximum length"),
         "expected max length error, got: {}",
@@ -136,7 +138,14 @@ fn search_path_filter_excludes_other_dirs() {
     );
 
     let text = y
-        .search(Some("open"), 10, 0, &["src/storage/".to_string()], false, None)
+        .search(
+            Some("open"),
+            10,
+            0,
+            &["src/storage/".to_string()],
+            false,
+            None,
+        )
         .unwrap();
     assert!(
         text.contains("db.ts") || text.contains("openDb") || text.contains("No results"),
@@ -151,7 +160,9 @@ fn search_path_filter_excludes_other_dirs() {
 #[test]
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
-    let text = y.search(Some("test query"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("test query"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -165,7 +176,9 @@ fn search_auto_indexes_empty_db() {
         Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
-    let text = y.search(Some("button component"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         !text.contains("No results found"),
         "expected results after auto-index, got: {text}"
@@ -202,7 +215,9 @@ fn search_incremental_embeds_chunked_only() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
     }
 
-    let text = y.search(Some("form component"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("form component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(text.contains("Form"), "expected Form in results: {text}");
 
     {
@@ -279,7 +294,9 @@ fn search_degraded_empty_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y.search(Some("zzzznonexistent"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("zzzznonexistent"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         text.contains("No results found"),
         "expected no results: {text}"
@@ -317,7 +334,9 @@ fn search_degraded_with_results_shows_note() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing.search(Some("Button"), 10, 0, &[], false, None).unwrap();
+    let result = y_failing
+        .search(Some("Button"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
         result.contains("embedding model not loaded"),
@@ -1122,7 +1141,9 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         "should have no embeddings yet"
     );
 
-    let result = y.search(Some("App component"), 10, 0, &[], false, None).unwrap();
+    let result = y
+        .search(Some("App component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("App"),
         "should find App after embedding: {result}"
@@ -1193,7 +1214,9 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
             as Arc<dyn rurico::embed::Embed>),
     );
 
-    let result = y_failing.search(Some("Card"), 10, 0, &[], false, None).unwrap();
+    let result = y_failing
+        .search(Some("Card"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("Card"),
         "should find Card with existing embeddings: {result}"
@@ -1270,7 +1293,9 @@ fn search_json_format_empty_results() {
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
     indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
 
-    let json = y.search(Some("zzzznonexistent"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("zzzznonexistent"), 10, 0, &[], true, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].as_array().unwrap().is_empty(),
@@ -1506,7 +1531,9 @@ fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
 
     y.index(false).unwrap();
 
-    let result = y.search(Some("handleSubmit"), 10, 0, &[], false, None).unwrap();
+    let result = y
+        .search(Some("handleSubmit"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         result.contains("handleSubmit"),
         "[AC-5] search should find handleSubmit: {result}"
@@ -1666,7 +1693,9 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
         Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
     );
 
-    let text = y.search(Some("button component"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button component"), 10, 0, &[], false, None)
+        .unwrap();
     assert!(
         !text.contains("not installed"),
         "[T-002] should have no 'not installed' note: {text}"
@@ -2154,9 +2183,7 @@ fn search_from_file_integration() {
         Arc::new(rurico::embed::MockEmbedder::default()),
     );
 
-    let text = y
-        .search(None, 5, 0, &[], false, Some("src/a.rs"))
-        .unwrap();
+    let text = y.search(None, 5, 0, &[], false, Some("src/a.rs")).unwrap();
     // Source file should not appear in results
     assert!(
         !text.contains("No results found"),
@@ -2198,9 +2225,7 @@ fn search_from_json_output_has_results_key() {
         ],
         Arc::new(rurico::embed::MockEmbedder::default()),
     );
-    let json = y
-        .search(None, 10, 0, &[], true, Some("src/a.rs"))
-        .unwrap();
+    let json = y.search(None, 10, 0, &[], true, Some("src/a.rs")).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed.get("results").is_some(),

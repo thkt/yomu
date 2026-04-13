@@ -168,7 +168,7 @@ fn main() -> ExitCode {
             let json = json || format.as_deref() == Some("json");
             if from.is_some() {
                 // Literal query: use as-is. "-" / None: try stdin (optional with --from).
-                let is_literal = query.as_deref().map_or(false, |q| q != "-");
+                let is_literal = query.as_deref().is_some_and(|q| q != "-");
                 let query = if is_literal {
                     query
                 } else {
@@ -181,7 +181,14 @@ fn main() -> ExitCode {
                         }
                     }
                 };
-                yomu.search(query.as_deref(), limit, offset, &path, json, from.as_deref())
+                yomu.search(
+                    query.as_deref(),
+                    limit,
+                    offset,
+                    &path,
+                    json,
+                    from.as_deref(),
+                )
             } else {
                 let query = match resolve_query(query) {
                     Ok(q) => q,
