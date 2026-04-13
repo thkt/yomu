@@ -48,7 +48,7 @@ const S_DENY: &[&str] = &[
     "express", "progress",
 ];
 
-fn stem_keyword(kw: &str, seen: &HashSet<String>) -> Option<String> {
+fn stem_keyword(kw: &str) -> Option<&str> {
     let stem = if kw.len() > 5 && kw.ends_with("ing") && !ING_DENY.contains(&kw) {
         Some(&kw[..kw.len() - 3])
     } else if kw.len() > 3 && kw.ends_with('s') && !kw.ends_with("ss") && !S_DENY.contains(&kw) {
@@ -56,8 +56,7 @@ fn stem_keyword(kw: &str, seen: &HashSet<String>) -> Option<String> {
     } else {
         None
     };
-    stem.filter(|s| s.len() >= 2 && !seen.contains(*s))
-        .map(|s| s.to_string())
+    stem.filter(|s| s.len() >= 2)
 }
 
 pub fn extract_keywords(query: &str) -> Vec<String> {
@@ -84,7 +83,9 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
 
     let stems: Vec<String> = base
         .iter()
-        .filter_map(|kw| stem_keyword(kw, &seen))
+        .filter_map(|kw| stem_keyword(kw))
+        .filter(|s| !seen.contains(*s))
+        .map(|s| s.to_string())
         .collect();
     let mut all = base;
     for s in stems {
