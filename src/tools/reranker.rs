@@ -6,9 +6,10 @@ use amici::model::reranker::try_load_reranker_with;
 use super::Yomu;
 
 pub(crate) fn try_load_reranker() -> ModelLoad<Box<dyn Rerank>> {
-    try_load_reranker_with(|| {
-        rurico::reranker::cached_artifacts(rurico::reranker::RerankerModelId::default())
-    })
+    try_load_reranker_with(
+        || rurico::reranker::cached_artifacts(rurico::reranker::RerankerModelId::default()),
+        |e| tracing::warn!(error = %e, "failed to delete corrupt reranker model files"),
+    )
 }
 
 impl Yomu {

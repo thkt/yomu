@@ -85,6 +85,7 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     let result = amici::model::embedder::try_load_embedder_with(
         || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
         |e| tracing::warn!(error = %e, "failed to delete corrupt model files"),
+        |e| tracing::warn!(error = %e, "embedder probe failed"),
     );
     if let Err(reason) = result.as_ref() {
         let detail = match reason {
