@@ -13,6 +13,7 @@ fn test_embedding() -> Vec<f32> {
     emb
 }
 
+// T-252: search_with_mock_embedder
 #[test]
 fn search_with_mock_embedder() {
     let dir = tempfile::tempdir().unwrap();
@@ -44,30 +45,35 @@ fn search_with_mock_embedder() {
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
 }
 
+// T-253: extract_keywords_basic
 #[test]
 fn extract_keywords_basic() {
     let kw = extract_keywords("streaming chat hooks");
     assert_eq!(kw, vec!["streaming", "chat", "hooks", "stream", "hook"]);
 }
 
+// T-254: extract_keywords_filters_stopwords
 #[test]
 fn extract_keywords_filters_stopwords() {
     let kw = extract_keywords("the form for validation");
     assert_eq!(kw, vec!["form", "validation"]);
 }
 
+// T-255: extract_keywords_filters_short_tokens
 #[test]
 fn extract_keywords_filters_short_tokens() {
     let kw = extract_keywords("a UI in React");
     assert_eq!(kw, vec!["ui", "react"]);
 }
 
+// T-256: extract_keywords_lowercases
 #[test]
 fn extract_keywords_lowercases() {
     let kw = extract_keywords("UseAuth Component");
     assert_eq!(kw, vec!["useauth", "use", "auth", "component"]);
 }
 
+// T-257: extract_keywords_no_stem_for_non_gerunds
 #[test]
 fn extract_keywords_no_stem_for_non_gerunds() {
     let kw = extract_keywords("string parsing");
@@ -75,6 +81,7 @@ fn extract_keywords_no_stem_for_non_gerunds() {
     assert!(!kw.contains(&"str".to_string()), "str should not appear");
 }
 
+// T-258: extract_keywords_no_stem_for_non_plurals
 #[test]
 fn extract_keywords_no_stem_for_non_plurals() {
     let kw = extract_keywords("class definition");
@@ -82,12 +89,14 @@ fn extract_keywords_no_stem_for_non_plurals() {
     assert!(!kw.contains(&"clas".to_string()), "clas should not appear");
 }
 
+// T-259: extract_keywords_short_ing_not_stemmed
 #[test]
 fn extract_keywords_short_ing_not_stemmed() {
     let kw = extract_keywords("thing setup");
     assert_eq!(kw, vec!["thing", "setup"]);
 }
 
+// T-260: extract_keywords_expands_camel_case
 #[test]
 fn extract_keywords_expands_camel_case() {
     let kw = extract_keywords("useChat");
@@ -96,6 +105,7 @@ fn extract_keywords_expands_camel_case() {
     assert!(kw.contains(&"chat".to_string()), "part 'chat': {kw:?}");
 }
 
+// T-261: extract_keywords_expands_kebab_case
 #[test]
 fn extract_keywords_expands_kebab_case() {
     let kw = extract_keywords("data-table component");
@@ -105,6 +115,7 @@ fn extract_keywords_expands_kebab_case() {
     assert!(kw.contains(&"component".to_string()));
 }
 
+// T-262: extract_keywords_no_duplicate_parts
 #[test]
 fn extract_keywords_no_duplicate_parts() {
     let kw = extract_keywords("DataTable");
@@ -112,6 +123,7 @@ fn extract_keywords_no_duplicate_parts() {
     assert_eq!(data_count, 1, "no duplicates: {kw:?}");
 }
 
+// T-263: extract_keywords_cjk_chars_counted_not_bytes
 #[test]
 fn extract_keywords_cjk_chars_counted_not_bytes() {
     let kw = extract_keywords("認証");
@@ -132,12 +144,14 @@ fn extract_keywords_cjk_chars_counted_not_bytes() {
     );
 }
 
+// T-264: extract_type_hints_hooks
 #[test]
 fn extract_type_hints_hooks() {
     let hints = extract_type_hints("streaming hooks");
     assert_eq!(hints, vec![storage::ChunkType::Hook]);
 }
 
+// T-265: extract_type_hints_multiple
 #[test]
 fn extract_type_hints_multiple() {
     let hints = extract_type_hints("component styles");
@@ -146,12 +160,14 @@ fn extract_type_hints_multiple() {
     assert_eq!(hints.len(), 2);
 }
 
+// T-266: extract_type_hints_no_match
 #[test]
 fn extract_type_hints_no_match() {
     let hints = extract_type_hints("streaming chat completion");
     assert!(hints.is_empty());
 }
 
+// T-267: extract_type_hints_singular_and_plural
 #[test]
 fn extract_type_hints_singular_and_plural() {
     assert_eq!(extract_type_hints("hook"), vec![storage::ChunkType::Hook]);
@@ -166,6 +182,7 @@ fn extract_type_hints_singular_and_plural() {
     );
 }
 
+// T-268: search_fallback_merges_vector_and_name_results
 #[test]
 fn search_fallback_merges_vector_and_name_results() {
     let dir = tempfile::tempdir().unwrap();
@@ -238,6 +255,7 @@ fn search_fallback_merges_vector_and_name_results() {
     );
 }
 
+// T-269: search_deduplicates_vector_and_name_results
 #[test]
 fn search_deduplicates_vector_and_name_results() {
     let dir = tempfile::tempdir().unwrap();
@@ -303,6 +321,7 @@ fn make_result(
     }
 }
 
+// T-270: rerank_semantic_base_score
 #[test]
 fn rerank_semantic_base_score() {
     let mut results = vec![make_result(
@@ -321,6 +340,7 @@ fn rerank_semantic_base_score() {
     );
 }
 
+// T-271: rerank_fts_base_score_passthrough
 #[test]
 fn rerank_fts_base_score_passthrough() {
     let kw = vec!["auth".to_string()];
@@ -346,6 +366,7 @@ fn rerank_fts_base_score_passthrough() {
     );
 }
 
+// T-272: rerank_sorts_by_score_descending
 #[test]
 fn rerank_sorts_by_score_descending() {
     let mut results = vec![
@@ -374,6 +395,7 @@ fn rerank_sorts_by_score_descending() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("A"));
 }
 
+// T-273: rerank_type_hint_bonus
 #[test]
 fn rerank_type_hint_bonus() {
     let mut with_hint = vec![make_result(
@@ -406,6 +428,7 @@ fn rerank_type_hint_bonus() {
     );
 }
 
+// T-274: rerank_import_rank_bonus
 #[test]
 fn rerank_import_rank_bonus() {
     let mut results = vec![
@@ -446,6 +469,7 @@ fn rerank_import_rank_bonus() {
     );
 }
 
+// T-275: rerank_test_path_penalty
 #[test]
 fn rerank_test_path_penalty() {
     let mut test_result = vec![make_result(
@@ -473,6 +497,7 @@ fn rerank_test_path_penalty() {
     );
 }
 
+// T-276: rerank_test_query_exempts_penalty
 #[test]
 fn rerank_test_query_exempts_penalty() {
     let mut results = vec![make_result(
@@ -498,6 +523,7 @@ fn rerank_test_query_exempts_penalty() {
     );
 }
 
+// T-277: rerank_fts_all_bonuses
 #[test]
 fn rerank_fts_all_bonuses() {
     let kw = vec!["auth".to_string()];
@@ -525,6 +551,7 @@ fn rerank_fts_all_bonuses() {
     );
 }
 
+// T-278: rerank_combined_bonuses_semantic
 #[test]
 fn rerank_combined_bonuses_semantic() {
     let mut results = vec![make_result(
@@ -553,6 +580,7 @@ fn rerank_combined_bonuses_semantic() {
     );
 }
 
+// T-279: rerank_combined_score_can_exceed_one
 #[test]
 fn rerank_combined_score_can_exceed_one() {
     let mut results = vec![make_result(
@@ -585,6 +613,7 @@ fn rerank_combined_score_can_exceed_one() {
     );
 }
 
+// T-280: search_returns_results_sorted_by_score
 #[test]
 fn search_returns_results_sorted_by_score() {
     let dir = tempfile::tempdir().unwrap();
@@ -642,18 +671,21 @@ fn search_returns_results_sorted_by_score() {
     }
 }
 
+// T-281: semantic_confidence_at_full_coverage
 #[test]
 fn semantic_confidence_at_full_coverage() {
     let c = semantic_confidence(1.0);
     assert!((c - 1.0).abs() < 1e-6, "full coverage → 1.0, got {c}");
 }
 
+// T-282: semantic_confidence_at_zero_coverage
 #[test]
 fn semantic_confidence_at_zero_coverage() {
     let c = semantic_confidence(0.0);
     assert!((c - 0.4).abs() < 1e-6, "zero coverage → 0.4, got {c}");
 }
 
+// T-283: semantic_confidence_at_low_coverage
 #[test]
 fn semantic_confidence_at_low_coverage() {
     // 2% coverage: sqrt(0.02) * 2.0 + 0.4 ≈ 0.683
@@ -661,6 +693,7 @@ fn semantic_confidence_at_low_coverage() {
     assert!(c > 0.6 && c < 0.75, "2% coverage → ~0.68, got {c}");
 }
 
+// T-284: semantic_confidence_reaches_one_by_9_percent
 #[test]
 fn semantic_confidence_reaches_one_by_9_percent() {
     // sqrt(0.09) * 2.0 + 0.4 = 1.0
@@ -668,6 +701,7 @@ fn semantic_confidence_reaches_one_by_9_percent() {
     assert!((c - 1.0).abs() < 0.01, "9% coverage → ~1.0, got {c}");
 }
 
+// T-285: rerank_low_coverage_dampens_semantic
 #[test]
 fn rerank_low_coverage_dampens_semantic() {
     let mut results = vec![make_result(
@@ -694,6 +728,7 @@ fn rerank_low_coverage_dampens_semantic() {
     );
 }
 
+// T-286: rerank_low_coverage_fts_beats_semantic
 #[test]
 fn rerank_low_coverage_fts_beats_semantic() {
     let kw = vec!["chat".to_string()];
@@ -737,6 +772,7 @@ fn rerank_low_coverage_fts_beats_semantic() {
     );
 }
 
+// T-287: content_match_scores_from_content_body
 #[test]
 fn content_match_scores_from_content_body() {
     let kw = vec!["validation".to_string(), "form".to_string()];
@@ -769,6 +805,7 @@ fn content_match_scores_from_content_body() {
     );
 }
 
+// T-288: rerank_semantic_keyword_overlap_bonus
 #[test]
 fn rerank_semantic_keyword_overlap_bonus() {
     let kw = vec!["chat".to_string()];
@@ -807,6 +844,7 @@ fn rerank_semantic_keyword_overlap_bonus() {
     );
 }
 
+// T-289: search_degrades_on_embed_failure
 #[test]
 fn search_degrades_on_embed_failure() {
     let dir = tempfile::tempdir().unwrap();
@@ -854,6 +892,7 @@ fn search_degrades_on_embed_failure() {
     );
 }
 
+// T-290: search_degrades_on_model_not_available
 #[test]
 fn search_degrades_on_model_not_available() {
     let embedder = FailingEmbedder::all_fail("embedder not available");
@@ -919,14 +958,9 @@ impl Rerank for ScriptedReranker {
     }
 }
 
-/// [T-001] YOMU_RERANK=1 + MockReranker -> results reordered by reranker score.
-///
-/// Setup: chunk A (AuthForm) has high RRF score (semantic match via embedding),
-/// chunk B (useAuth) has lower RRF score (FTS only, no embedding).
-/// The scripted reranker scores B higher than A.
-/// Expected: after reranking, B appears before A.
+// T-001: YOMU_RERANK=1 + MockReranker -> results reordered by reranker score.
 #[test]
-fn t001_reranker_reorders_results_by_cross_encoder_score() {
+fn reranker_reorders_results_by_cross_encoder_score() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -985,22 +1019,20 @@ fn t001_reranker_reorders_results_by_cross_encoder_score() {
 
     assert!(
         outcome.results.len() >= 2,
-        "[T-001] expected at least 2 results, got {}",
+        "expected at least 2 results, got {}",
         outcome.results.len()
     );
     assert_eq!(
         outcome.results[0].chunk.name.as_deref(),
         Some("useAuth"),
-        "[T-001] reranker should place useAuth first, got: {:?}",
+        "reranker should place useAuth first, got: {:?}",
         outcome.results[0].chunk.name
     );
 }
 
-/// [T-002] YOMU_RERANK unset -> identical to existing RRF results.
-///
-/// When reranker is None, results must match the pre-reranker behavior.
+// T-002: YOMU_RERANK unset -> identical to existing RRF results.
 #[test]
-fn t002_no_reranker_produces_rrf_results() {
+fn no_reranker_produces_rrf_results() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -1040,30 +1072,25 @@ fn t002_no_reranker_produces_rrf_results() {
     assert_eq!(
         outcome.results.len(),
         outcome_existing.results.len(),
-        "[T-002] result count should match existing behavior"
+        "result count should match existing behavior"
     );
     for (a, b) in outcome.results.iter().zip(outcome_existing.results.iter()) {
         assert_eq!(
             a.chunk.name, b.chunk.name,
-            "[T-002] result order should match existing behavior"
+            "result order should match existing behavior"
         );
         assert!(
             (a.score - b.score).abs() < 1e-6,
-            "[T-002] scores should match: {} vs {}",
+            "scores should match: {} vs {}",
             a.score,
             b.score
         );
     }
 }
 
-/// [T-006] YOMU_RERANK=1, limit=10, offset=5 -> fetch_limit = 10 * 4 + 5 = 45.
-///
-/// When reranker is present, search_pipeline should fetch 4x candidates
-/// to give the cross-encoder enough material to reorder.
-/// We verify this by inserting many chunks and confirming the pipeline
-/// considers more candidates than limit+offset.
+// T-006: YOMU_RERANK=1, limit=10, offset=5 -> fetch_limit = 10 * 4 + 5 = 45.
 #[test]
-fn t006_reranker_increases_fetch_limit() {
+fn reranker_increases_fetch_limit() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -1114,25 +1141,20 @@ fn t006_reranker_increases_fetch_limit() {
     // The final result count should be at most `limit` (10).
     assert!(
         outcome.results.len() <= limit as usize,
-        "[T-006] results should be capped at limit={limit}, got {}",
+        "results should be capped at limit={limit}, got {}",
         outcome.results.len()
     );
     // With 50 chunks and fetch_limit=45, we should get the full `limit` results
     assert_eq!(
         outcome.results.len(),
         limit as usize,
-        "[T-006] with 50 chunks and fetch_limit=45, should return {limit} results"
+        "with 50 chunks and fetch_limit=45, should return {limit} results"
     );
 }
 
-/// [T-007] YOMU_RERANK=1, cap_per_file=2, file A has 3 candidates
-/// -> top 2 by cross-encoder score survive.
-///
-/// Cross-encoder reranking happens before cap_per_file filtering,
-/// so the 2 chunks with the highest reranker scores are kept,
-/// not the 2 with the highest RRF scores.
+// T-007: YOMU_RERANK=1, cap_per_file=2, file A has 3 candidates
 #[test]
-fn t007_reranker_scores_applied_before_cap_per_file() {
+fn reranker_scores_applied_before_cap_per_file() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
@@ -1211,7 +1233,7 @@ fn t007_reranker_scores_applied_before_cap_per_file() {
 
     assert!(
         auth_results.len() <= MAX_RESULTS_PER_FILE,
-        "[T-007] cap_per_file should limit auth.tsx results to {MAX_RESULTS_PER_FILE}, got {}",
+        "cap_per_file should limit auth.tsx results to {MAX_RESULTS_PER_FILE}, got {}",
         auth_results.len()
     );
 
@@ -1224,18 +1246,19 @@ fn t007_reranker_scores_applied_before_cap_per_file() {
 
     assert!(
         surviving_names.contains(&"Chunk3"),
-        "[T-007] Chunk3 (highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
+        "Chunk3 (highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
     );
     assert!(
         surviving_names.contains(&"Chunk1"),
-        "[T-007] Chunk1 (second highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
+        "Chunk1 (second highest reranker score) should survive cap_per_file, got: {surviving_names:?}"
     );
     assert!(
         !surviving_names.contains(&"Chunk2"),
-        "[T-007] Chunk2 (lowest reranker score) should be capped, got: {surviving_names:?}"
+        "Chunk2 (lowest reranker score) should be capped, got: {surviving_names:?}"
     );
 }
 
+// T-291: search_returns_results
 #[test]
 #[ignore = "requires model download"]
 fn search_returns_results() {
@@ -1269,6 +1292,7 @@ fn search_returns_results() {
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
+// T-292: search_pipeline_text_only_returns_name_matches
 #[test]
 fn search_pipeline_text_only_returns_name_matches() {
     let dir = tempfile::tempdir().unwrap();
@@ -1302,6 +1326,7 @@ fn search_pipeline_text_only_returns_name_matches() {
     assert_ne!(results[0].match_source, storage::MatchSource::Semantic);
 }
 
+// T-293: search_pipeline_with_embedding_returns_semantic
 #[test]
 fn search_pipeline_with_embedding_returns_semantic() {
     let dir = tempfile::tempdir().unwrap();
@@ -1331,6 +1356,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
     assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
 }
 
+// T-294: search_pipeline_caps_per_file
 #[test]
 fn search_pipeline_caps_per_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -1360,6 +1386,7 @@ fn search_pipeline_caps_per_file() {
     );
 }
 
+// T-295: text_only_search_with_offset_returns_results
 #[test]
 fn text_only_search_with_offset_returns_results() {
     let dir = tempfile::tempdir().unwrap();
@@ -1420,6 +1447,7 @@ fn text_only_search_with_offset_returns_results() {
     );
 }
 
+// T-296: search_chunk_only_index_with_embedder_falls_back_to_text
 #[test]
 fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     let dir = tempfile::tempdir().unwrap();
@@ -1464,6 +1492,7 @@ fn from_test_db() -> (storage::Db, tempfile::TempDir) {
 
 // RC-002: measure N KNN round-trips latency (N=1 vs N=20) with 500 indexed chunks
 // Run with: cargo test --lib bench_knn_round_trips -- --nocapture --ignored
+// T-297: bench_knn_round_trips
 #[test]
 #[ignore]
 fn bench_knn_round_trips() {
@@ -1522,7 +1551,7 @@ fn emb_axis(axis: usize) -> Vec<f32> {
     v
 }
 
-// --- T-009: search_from_file excludes source chunk_ids ---
+// T-009: search_from_file excludes source chunk_ids
 #[test]
 fn search_from_file_excludes_source_chunks() {
     let (conn, _dir) = from_test_db();
@@ -1586,7 +1615,7 @@ fn search_from_file_excludes_source_chunks() {
     assert!(result_ids.contains(&id_other));
 }
 
-// --- T-010: search_from_file with query applies FTS filter ---
+// T-010: search_from_file with query applies FTS filter
 #[test]
 fn search_from_file_with_query_applies_fts_filter() {
     let (conn, _dir) = from_test_db();
@@ -1648,7 +1677,7 @@ fn search_from_file_with_query_applies_fts_filter() {
     assert_eq!(results[0].chunk_id, Some(id_error));
 }
 
-// --- T-011: search_from_file FTS zero matches returns empty ---
+// T-011: search_from_file FTS zero matches returns empty
 #[test]
 fn search_from_file_fts_zero_matches_returns_empty() {
     let (conn, _dir) = from_test_db();
@@ -1694,7 +1723,7 @@ fn search_from_file_fts_zero_matches_returns_empty() {
     assert!(results.is_empty());
 }
 
-// --- T-012: search_from_file with no stored embeddings returns empty ---
+// T-012: search_from_file with no stored embeddings returns empty
 #[test]
 fn search_from_file_no_embeddings_returns_empty() {
     let (conn, _dir) = from_test_db();
@@ -1703,7 +1732,7 @@ fn search_from_file_no_embeddings_returns_empty() {
     assert!(results.is_empty());
 }
 
-// --- T-014: search_from_file caps at 20 sub-embeddings ---
+// T-014: search_from_file caps at 20 sub-embeddings
 #[test]
 fn search_from_file_caps_sub_embeddings_at_20() {
     let (conn, _dir) = from_test_db();
@@ -1735,7 +1764,7 @@ fn search_from_file_caps_sub_embeddings_at_20() {
     assert!(!results.is_empty());
 }
 
-// --- T-015: FTS filter uses fetch_limit (not limit) so rerank picks best semantic match ---
+// T-015: FTS filter uses fetch_limit (not limit) so rerank picks best semantic match
 #[test]
 fn search_from_file_fts_uses_fetch_limit_not_limit() {
     let (conn, _dir) = from_test_db();
@@ -1828,6 +1857,7 @@ fn search_from_file_fts_uses_fetch_limit_not_limit() {
 }
 
 // COV-4: fetch_limit = limit * 3 (3× overfetch) — the 3rd-closest candidate must reach FTS pool
+// T-298: search_from_file_3x_overfetch_reaches_third_candidate
 #[test]
 fn search_from_file_3x_overfetch_reaches_third_candidate() {
     let (conn, _dir) = from_test_db();
@@ -1932,6 +1962,7 @@ fn search_from_file_3x_overfetch_reaches_third_candidate() {
 }
 
 // P1: source exclusion must not deplete results when limit=1 and source is nearest neighbour
+// T-299: search_from_file_source_exclusion_does_not_empty_results_at_limit_1
 #[test]
 fn search_from_file_source_exclusion_does_not_empty_results_at_limit_1() {
     let (conn, _dir) = from_test_db();
@@ -1987,6 +2018,7 @@ fn search_from_file_source_exclusion_does_not_empty_results_at_limit_1() {
 }
 
 // P2: stopword-only query must not empty semantic results
+// T-300: search_from_file_stopword_query_falls_back_to_semantic
 #[test]
 fn search_from_file_stopword_query_falls_back_to_semantic() {
     let (conn, _dir) = from_test_db();
@@ -2037,6 +2069,7 @@ fn search_from_file_stopword_query_falls_back_to_semantic() {
 
 // === TC-1: keyword_hit_ratio IDF-weighted branch ===
 
+// T-301: keyword_hit_ratio_uses_idf_weights
 #[test]
 fn keyword_hit_ratio_uses_idf_weights() {
     let result = storage::SearchResult {
@@ -2063,12 +2096,13 @@ fn keyword_hit_ratio_uses_idf_weights() {
     let expected = 1.0_f32 / 3.0;
     assert!(
         (ratio - expected).abs() < 1e-5,
-        "[TC-1] IDF-weighted branch: expected {expected:.6}, got {ratio:.6}"
+        "IDF-weighted branch: expected {expected:.6}, got {ratio:.6}"
     );
 }
 
 // === TC-5: search_pipeline offset boundary ===
 
+// T-302: search_pipeline_offset_beyond_results_returns_empty
 #[test]
 fn search_pipeline_offset_beyond_results_returns_empty() {
     let (conn, _dir) = from_test_db();
@@ -2097,12 +2131,13 @@ fn search_pipeline_offset_beyond_results_returns_empty() {
     let results = search_pipeline(&conn, "widget", None, 10, 10, None, &[]).unwrap();
     assert!(
         results.is_empty(),
-        "[TC-5] offset >= results.len() should return empty Vec, got: {results:?}"
+        "offset >= results.len() should return empty Vec, got: {results:?}"
     );
 }
 
 // === is_test_path pattern coverage ===
 
+// T-303: is_test_path_returns_true_for_all_patterns
 #[test]
 fn is_test_path_returns_true_for_all_patterns() {
     let cases = [
@@ -2124,6 +2159,7 @@ fn is_test_path_returns_true_for_all_patterns() {
     }
 }
 
+// T-304: is_test_path_returns_false_for_source_files
 #[test]
 fn is_test_path_returns_false_for_source_files() {
     let cases = [

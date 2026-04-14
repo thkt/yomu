@@ -7,6 +7,7 @@ fn test_db() -> (Connection, tempfile::TempDir) {
     (conn, dir)
 }
 
+// T-121: init_db_creates_tables
 #[test]
 fn init_db_creates_tables() {
     let (conn, _dir) = test_db();
@@ -22,6 +23,7 @@ fn init_db_creates_tables() {
     assert_eq!(count, 0);
 }
 
+// T-122: insert_and_read_chunk
 #[test]
 fn insert_and_read_chunk() {
     let (conn, _dir) = test_db();
@@ -59,6 +61,7 @@ fn insert_and_read_chunk() {
     assert_eq!(chunk.2, "Button");
 }
 
+// T-123: should_reindex_returns_false_for_same_hash
 #[test]
 fn should_reindex_returns_false_for_same_hash() {
     let (conn, _dir) = test_db();
@@ -84,6 +87,7 @@ fn should_reindex_returns_false_for_same_hash() {
     assert!(!should_reindex(&conn, "src/App.tsx", "hash_abc").unwrap());
 }
 
+// T-124: should_reindex_returns_true_for_different_hash
 #[test]
 fn should_reindex_returns_true_for_different_hash() {
     let (conn, _dir) = test_db();
@@ -109,12 +113,14 @@ fn should_reindex_returns_true_for_different_hash() {
     assert!(should_reindex(&conn, "src/App.tsx", "hash_xyz").unwrap());
 }
 
+// T-125: should_reindex_returns_true_for_new_file
 #[test]
 fn should_reindex_returns_true_for_new_file() {
     let (conn, _dir) = test_db();
     assert!(should_reindex(&conn, "src/New.tsx", "any_hash").unwrap());
 }
 
+// T-126: get_stats_returns_counts
 #[test]
 fn get_stats_returns_counts() {
     let (conn, _dir) = test_db();
@@ -174,6 +180,7 @@ fn get_stats_returns_counts() {
     assert_eq!(stats.total_files, 2);
 }
 
+// T-127: get_all_file_paths_returns_distinct_paths
 #[test]
 fn get_all_file_paths_returns_distinct_paths() {
     let (conn, _dir) = test_db();
@@ -234,6 +241,7 @@ fn get_all_file_paths_returns_distinct_paths() {
     assert!(paths.contains("src/B.tsx"));
 }
 
+// T-128: delete_file_chunks_removes_all_chunks_for_file
 #[test]
 fn delete_file_chunks_removes_all_chunks_for_file() {
     let (conn, _dir) = test_db();
@@ -283,6 +291,7 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
     assert!(paths.contains("src/B.tsx"));
 }
 
+// T-129: replace_file_chunks_replaces_existing
 #[test]
 fn replace_file_chunks_replaces_existing() {
     let (conn, _dir) = test_db();
@@ -342,6 +351,7 @@ fn replace_file_chunks_replaces_existing() {
     assert!(stats.last_indexed_at.is_some());
 }
 
+// T-130: vec_search_returns_ordered_results
 #[test]
 fn vec_search_returns_ordered_results() {
     let (conn, _dir) = test_db();
@@ -389,6 +399,7 @@ fn vec_search_returns_ordered_results() {
     assert!(results[0].distance <= results[1].distance);
 }
 
+// T-131: chunk_type_roundtrip
 #[test]
 fn chunk_type_roundtrip() {
     let variants = [
@@ -432,11 +443,13 @@ fn chunk_type_roundtrip() {
     }
 }
 
+// T-132: chunk_type_from_db_unknown_defaults_to_other
 #[test]
 fn chunk_type_from_db_unknown_defaults_to_other() {
     assert_eq!(ChunkType::from_db("nonexistent"), ChunkType::Other);
 }
 
+// T-133: delete_file_chunks_also_removes_file_context
 #[test]
 fn delete_file_chunks_also_removes_file_context() {
     let (conn, _dir) = test_db();
@@ -477,6 +490,7 @@ fn delete_file_chunks_also_removes_file_context() {
     );
 }
 
+// T-134: replace_file_chunks_stores_file_context
 #[test]
 fn replace_file_chunks_stores_file_context() {
     let (conn, _dir) = test_db();
@@ -506,6 +520,7 @@ fn replace_file_chunks_stores_file_context() {
     assert_eq!(contexts["src/App.tsx"], "import { useState } from 'react'");
 }
 
+// T-135: get_file_contexts_returns_empty_for_missing_files
 #[test]
 fn get_file_contexts_returns_empty_for_missing_files() {
     let (conn, _dir) = test_db();
@@ -513,6 +528,7 @@ fn get_file_contexts_returns_empty_for_missing_files() {
     assert!(contexts.is_empty());
 }
 
+// T-136: get_file_contexts_returns_empty_for_empty_input
 #[test]
 fn get_file_contexts_returns_empty_for_empty_input() {
     let (conn, _dir) = test_db();
@@ -520,6 +536,7 @@ fn get_file_contexts_returns_empty_for_empty_input() {
     assert!(contexts.is_empty());
 }
 
+// T-137: get_file_siblings_returns_all_chunks_for_file
 #[test]
 fn get_file_siblings_returns_all_chunks_for_file() {
     let (conn, _dir) = test_db();
@@ -581,6 +598,7 @@ fn get_file_siblings_returns_all_chunks_for_file() {
     assert_eq!(a_siblings[1].name.as_deref(), Some("useAuth"));
 }
 
+// T-138: get_file_siblings_returns_empty_for_empty_input
 #[test]
 fn get_file_siblings_returns_empty_for_empty_input() {
     let (conn, _dir) = test_db();
@@ -588,6 +606,7 @@ fn get_file_siblings_returns_empty_for_empty_input() {
     assert!(siblings.is_empty());
 }
 
+// T-139: replace_file_references_stores_refs
 #[test]
 fn replace_file_references_stores_refs() {
     let (conn, _dir) = test_db();
@@ -617,6 +636,7 @@ fn replace_file_references_stores_refs() {
     assert_eq!(count, 3);
 }
 
+// T-140: replace_file_references_replaces_existing
 #[test]
 fn replace_file_references_replaces_existing() {
     let (conn, _dir) = test_db();
@@ -666,6 +686,7 @@ fn replace_file_references_replaces_existing() {
     assert_eq!(dependents[0].file_path, "src/A.tsx");
 }
 
+// T-141: delete_file_chunks_also_removes_references
 #[test]
 fn delete_file_chunks_also_removes_references() {
     let (conn, _dir) = test_db();
@@ -695,6 +716,7 @@ fn delete_file_chunks_also_removes_references() {
     assert_eq!(count, 0);
 }
 
+// T-142: get_transitive_dependents_chain
 #[test]
 fn get_transitive_dependents_chain() {
     let (conn, _dir) = test_db();
@@ -739,6 +761,7 @@ fn get_transitive_dependents_chain() {
     );
 }
 
+// T-143: get_transitive_dependents_circular
 #[test]
 fn get_transitive_dependents_circular() {
     let (conn, _dir) = test_db();
@@ -791,6 +814,7 @@ fn vec_chunks_count(conn: &Connection) -> u32 {
         .unwrap()
 }
 
+// T-144: replace_file_chunks_only_inserts_chunks_without_embeddings
 #[test]
 fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
     let (conn, _dir) = test_db();
@@ -850,6 +874,7 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
     assert!(!last.is_empty());
 }
 
+// T-145: replace_file_chunks_only_deletes_old_embeddings
 #[test]
 fn replace_file_chunks_only_deletes_old_embeddings() {
     let (conn, _dir) = test_db();
@@ -904,6 +929,7 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
     assert_eq!(name, "AppV2");
 }
 
+// T-146: add_embeddings_inserts_into_vec_chunks
 #[test]
 fn add_embeddings_inserts_into_vec_chunks() {
     let (conn, _dir) = test_db();
@@ -944,6 +970,7 @@ fn add_embeddings_inserts_into_vec_chunks() {
     assert_eq!(vec_chunks_count(&conn), 2);
 }
 
+// T-147: add_embeddings_skips_already_embedded
 #[test]
 fn add_embeddings_skips_already_embedded() {
     let (conn, _dir) = test_db();
@@ -972,6 +999,7 @@ fn add_embeddings_skips_already_embedded() {
     assert_eq!(vec_chunks_count(&conn), 1);
 }
 
+// T-148: get_unembedded_file_paths_returns_only_unembedded
 #[test]
 fn get_unembedded_file_paths_returns_only_unembedded() {
     let (conn, _dir) = test_db();
@@ -1038,6 +1066,7 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
     assert_eq!(c_count, 1);
 }
 
+// T-149: needs_embedding_returns_true_for_chunk_only_file
 #[test]
 fn needs_embedding_returns_true_for_chunk_only_file() {
     let (conn, _dir) = test_db();
@@ -1055,6 +1084,7 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
     assert!(needs_embedding(&conn, "src/Nav.tsx", "hash_nav").unwrap());
 }
 
+// T-150: needs_embedding_returns_false_for_fully_embedded
 #[test]
 fn needs_embedding_returns_false_for_fully_embedded() {
     let (conn, _dir) = test_db();
@@ -1080,6 +1110,7 @@ fn needs_embedding_returns_false_for_fully_embedded() {
     assert!(!needs_embedding(&conn, "src/Footer.tsx", "hash_footer").unwrap());
 }
 
+// T-151: needs_embedding_returns_true_when_hash_changed
 #[test]
 fn needs_embedding_returns_true_when_hash_changed() {
     let (conn, _dir) = test_db();
@@ -1105,6 +1136,7 @@ fn needs_embedding_returns_true_when_hash_changed() {
     assert!(needs_embedding(&conn, "src/Header.tsx", "hash_v2").unwrap());
 }
 
+// T-152: get_stats_reports_embedded_vs_total_chunks
 #[test]
 fn get_stats_reports_embedded_vs_total_chunks() {
     let (conn, _dir) = test_db();
@@ -1160,6 +1192,7 @@ fn get_stats_reports_embedded_vs_total_chunks() {
     assert!(stats.embedded_chunks < stats.total_chunks);
 }
 
+// T-153: get_files_by_import_count_returns_most_imported_first
 #[test]
 fn get_files_by_import_count_returns_most_imported_first() {
     let (conn, _dir) = test_db();
@@ -1231,6 +1264,7 @@ fn get_files_by_import_count_returns_most_imported_first() {
     assert_eq!(ordered[2], "src/App.tsx");
 }
 
+// T-154: get_files_by_import_count_boosts_hook_component_files
 #[test]
 fn get_files_by_import_count_boosts_hook_component_files() {
     let (conn, _dir) = test_db();
@@ -1298,6 +1332,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
     );
 }
 
+// T-155: vec_search_sets_semantic_match_source
 #[test]
 fn vec_search_sets_semantic_match_source() {
     let (conn, _dir) = test_db();
@@ -1326,6 +1361,7 @@ fn vec_search_sets_semantic_match_source() {
     assert_eq!(results[0].match_source, MatchSource::Semantic);
 }
 
+// T-156: vec_search_sets_initial_score
 #[test]
 fn vec_search_sets_initial_score() {
     let (conn, _dir) = test_db();
@@ -1361,6 +1397,7 @@ fn vec_search_sets_initial_score() {
     );
 }
 
+// T-157: get_import_counts_returns_correct_counts
 #[test]
 fn get_import_counts_returns_correct_counts() {
     let (conn, _dir) = test_db();
@@ -1434,6 +1471,7 @@ fn get_import_counts_returns_correct_counts() {
     assert_eq!(counts["src/App.tsx"], 0);
 }
 
+// T-158: get_import_counts_returns_empty_for_empty_input
 #[test]
 fn get_import_counts_returns_empty_for_empty_input() {
     let (conn, _dir) = test_db();
@@ -1441,6 +1479,7 @@ fn get_import_counts_returns_empty_for_empty_input() {
     assert!(counts.is_empty());
 }
 
+// T-159: fts_chunks_deleted_with_file
 #[test]
 fn fts_chunks_deleted_with_file() {
     let (conn, _dir) = test_db();
@@ -1467,6 +1506,7 @@ fn fts_chunks_deleted_with_file() {
     assert!(results.is_empty());
 }
 
+// T-160: fts5_migration_from_v2
 #[test]
 fn fts5_migration_from_v2() {
     let dir = tempfile::tempdir().unwrap();
@@ -1509,6 +1549,7 @@ fn fts5_migration_from_v2() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("useX"));
 }
 
+// T-161: fts5_handles_special_characters_in_content
 #[test]
 fn fts5_handles_special_characters_in_content() {
     let (conn, _dir) = test_db();
@@ -1529,6 +1570,7 @@ fn fts5_handles_special_characters_in_content() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("App"));
 }
 
+// T-162: get_unembedded_chunks_for_file_returns_rows
 #[test]
 fn get_unembedded_chunks_for_file_returns_rows() {
     let (conn, _dir) = test_db();
@@ -1565,6 +1607,7 @@ fn get_unembedded_chunks_for_file_returns_rows() {
     assert!(contents.contains(&"function useCard() {}"));
 }
 
+// T-163: get_unembedded_chunks_for_file_excludes_embedded
 #[test]
 fn get_unembedded_chunks_for_file_excludes_embedded() {
     let (conn, _dir) = test_db();
@@ -1591,6 +1634,7 @@ fn get_unembedded_chunks_for_file_excludes_embedded() {
     assert!(rows.is_empty());
 }
 
+// T-164: get_imports_for_file_returns_stored_imports
 #[test]
 fn get_imports_for_file_returns_stored_imports() {
     let (conn, _dir) = test_db();
@@ -1610,6 +1654,7 @@ fn get_imports_for_file_returns_stored_imports() {
     assert_eq!(result, imports);
 }
 
+// T-165: get_imports_for_file_returns_empty_for_missing
 #[test]
 fn get_imports_for_file_returns_empty_for_missing() {
     let (conn, _dir) = test_db();
@@ -1619,6 +1664,7 @@ fn get_imports_for_file_returns_empty_for_missing() {
 
 // --- FTS5 short term expansion ---
 
+// T-166: fts_chunks_vocab_exists_on_new_db
 #[test]
 fn fts_chunks_vocab_exists_on_new_db() {
     let (conn, _dir) = test_db();
@@ -1633,6 +1679,7 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
+// T-167: migration_v3_to_v4_creates_vocab_table
 #[test]
 fn migration_v3_to_v4_creates_vocab_table() {
     let dir = tempfile::tempdir().unwrap();
@@ -1705,6 +1752,7 @@ fn migration_v3_to_v4_creates_vocab_table() {
     );
 }
 
+// T-168: get_file_mtimes_returns_stored_mtime
 #[test]
 fn get_file_mtimes_returns_stored_mtime() {
     let (conn, _dir) = test_db();
@@ -1725,6 +1773,7 @@ fn get_file_mtimes_returns_stored_mtime() {
     assert_eq!(mtimes["src/A.tsx"], now);
 }
 
+// T-169: get_file_mtimes_empty_input_returns_empty
 #[test]
 fn get_file_mtimes_empty_input_returns_empty() {
     let (conn, _dir) = test_db();
@@ -1732,6 +1781,7 @@ fn get_file_mtimes_empty_input_returns_empty() {
     assert!(mtimes.is_empty());
 }
 
+// T-170: replace_file_chunks_rejects_length_mismatch
 #[test]
 fn replace_file_chunks_rejects_length_mismatch() {
     let (conn, _dir) = test_db();
@@ -1764,6 +1814,7 @@ fn replace_file_chunks_rejects_length_mismatch() {
     );
 }
 
+// T-171: insert_chunk_rejects_wrong_embedding_dims
 #[test]
 fn insert_chunk_rejects_wrong_embedding_dims() {
     let (conn, _dir) = test_db();
@@ -1787,6 +1838,7 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
     assert!(result.is_err(), "should reject wrong embedding dimensions");
 }
 
+// T-172: fts_automerge_guard_restores_on_drop
 #[test]
 fn fts_automerge_guard_restores_on_drop() {
     let (conn, _dir) = test_db();
@@ -1841,8 +1893,9 @@ fn fts_automerge_guard_restores_on_drop() {
     );
 }
 
+// T-007: new_chunk_with_parent_index_stores_parent_chunk_id
 #[test]
-fn t_007_new_chunk_with_parent_index_stores_parent_chunk_id() {
+fn new_chunk_with_parent_index_stores_parent_chunk_id() {
     let (conn, _dir) = test_db();
 
     let parent = NewChunk {
@@ -1894,8 +1947,9 @@ fn t_007_new_chunk_with_parent_index_stores_parent_chunk_id() {
     assert_eq!(rows[1].2, Some(parent_id));
 }
 
+// T-009: out_of_order_chunks_resolves_to_null
 #[test]
-fn t_009_out_of_order_chunks_resolves_to_null() {
+fn out_of_order_chunks_resolves_to_null() {
     let (conn, _dir) = test_db();
 
     let child = NewChunk {
@@ -1939,8 +1993,9 @@ fn t_009_out_of_order_chunks_resolves_to_null() {
     );
 }
 
+// T-010: innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts
 #[test]
-fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
+fn innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
@@ -1987,8 +2042,9 @@ fn t_010_innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
     assert_eq!(fts_count, 2);
 }
 
+// T-016: get_stats_returns_embeddable_and_total_chunks
 #[test]
-fn t_016_get_stats_returns_embeddable_and_total_chunks() {
+fn get_stats_returns_embeddable_and_total_chunks() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -2025,8 +2081,9 @@ fn t_016_get_stats_returns_embeddable_and_total_chunks() {
     assert_eq!(stats.embeddable_chunks, 2);
 }
 
+// T-017: embed_percentage_uses_embeddable_chunks
 #[test]
-fn t_017_embed_percentage_uses_embeddable_chunks() {
+fn embed_percentage_uses_embeddable_chunks() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
@@ -2075,8 +2132,9 @@ fn t_017_embed_percentage_uses_embeddable_chunks() {
     assert_eq!(pct_after, 100);
 }
 
+// T-018: embed_path_with_innerfn_no_length_mismatch
 #[test]
-fn t_018_embed_path_with_innerfn_no_length_mismatch() {
+fn embed_path_with_innerfn_no_length_mismatch() {
     let (conn, _dir) = test_db();
     let embedding = vec![0.0_f32; EMBEDDING_DIMS];
 
@@ -2128,8 +2186,9 @@ fn t_018_embed_path_with_innerfn_no_length_mismatch() {
     assert_eq!(vec_chunks_count(&conn), 1);
 }
 
+// T-019: idf_uses_total_chunks_innerfn_included_non_negative
 #[test]
-fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
+fn idf_uses_total_chunks_innerfn_included_non_negative() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -2174,8 +2233,9 @@ fn t_019_idf_uses_total_chunks_innerfn_included_non_negative() {
     }
 }
 
+// T-011: chunk_from_row_reads_parent_chunk_id
 #[test]
-fn t_011_chunk_from_row_reads_parent_chunk_id() {
+fn chunk_from_row_reads_parent_chunk_id() {
     let (conn, _dir) = test_db();
 
     let parent = NewChunk {
@@ -2237,12 +2297,13 @@ fn t_011_chunk_from_row_reads_parent_chunk_id() {
     assert_eq!(
         innerfn_result.chunk.parent_chunk_id,
         Some(parent_id),
-        "[T-011] chunk_from_row should read parent_chunk_id from DB, not hardcode None"
+        "chunk_from_row should read parent_chunk_id from DB, not hardcode None"
     );
 }
 
+// T-011: chunk_from_row_reads_parent_chunk_id_name_search
 #[test]
-fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
+fn chunk_from_row_reads_parent_chunk_id_name_search() {
     let (conn, _dir) = test_db();
 
     let parent = NewChunk {
@@ -2304,12 +2365,13 @@ fn t_011_chunk_from_row_reads_parent_chunk_id_name_search() {
     assert_eq!(
         innerfn_result.chunk.parent_chunk_id,
         Some(parent_id),
-        "[T-011] chunk_from_row should read parent_chunk_id for name search results"
+        "chunk_from_row should read parent_chunk_id for name search results"
     );
 }
 
+// T-012: parent_chunk_search_result_has_no_parent_chunk_id
 #[test]
-fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
+fn parent_chunk_search_result_has_no_parent_chunk_id() {
     let (conn, _dir) = test_db();
 
     let parent = NewChunk {
@@ -2340,14 +2402,15 @@ fn t_012_parent_chunk_search_result_has_no_parent_chunk_id() {
 
     assert_eq!(
         component_result.chunk.parent_chunk_id, None,
-        "[T-012] parent chunk should have parent_chunk_id = None in search results"
+        "parent chunk should have parent_chunk_id = None in search results"
     );
 }
 
 // ── Phase 1: FTS 3-column unification (FR-001, FR-002, FR-010, FR-011) ──
 
+// T-001: fts_stores_split_identifier_name
 #[test]
-fn t_001_fts_stores_split_identifier_name() {
+fn fts_stores_split_identifier_name() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![NewChunk {
@@ -2370,12 +2433,13 @@ fn t_001_fts_stores_split_identifier_name() {
 
     assert_eq!(
         fts_name, "use Auth Provider",
-        "[T-001] FTS name column should contain split-identifier output"
+        "FTS name column should contain split-identifier output"
     );
 }
 
+// T-002: fts_stores_empty_name_for_none
 #[test]
-fn t_002_fts_stores_empty_name_for_none() {
+fn fts_stores_empty_name_for_none() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![NewChunk {
@@ -2398,12 +2462,13 @@ fn t_002_fts_stores_empty_name_for_none() {
 
     assert_eq!(
         fts_name, "",
-        "[T-002] FTS name column should be empty string when chunk name is None"
+        "FTS name column should be empty string when chunk name is None"
     );
 }
 
+// T-003: fts_stores_file_path
 #[test]
-fn t_003_fts_stores_file_path() {
+fn fts_stores_file_path() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![NewChunk {
@@ -2426,12 +2491,13 @@ fn t_003_fts_stores_file_path() {
 
     assert_eq!(
         fts_path, "src/auth/login.ts",
-        "[T-003] FTS file_path column should store the raw file path"
+        "FTS file_path column should store the raw file path"
     );
 }
 
+// T-014: migration_v6_to_v7_preserves_fts_search
 #[test]
-fn t_014_migration_v6_to_v7_preserves_fts_search() {
+fn migration_v6_to_v7_preserves_fts_search() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2468,23 +2534,21 @@ fn t_014_migration_v6_to_v7_preserves_fts_search() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(
-        version, "8",
-        "[T-014] schema_version should be 8 after migration"
-    );
+    assert_eq!(version, "8", "schema_version should be 8 after migration");
 
     let results =
         search_by_fts(&conn, &["transform"], None, &HashSet::new(), None, 10, &[]).unwrap();
     assert_eq!(
         results.len(),
         1,
-        "[T-014] FTS search should return results after v6->v7 migration"
+        "FTS search should return results after v6->v7 migration"
     );
     assert_eq!(results[0].chunk.name.as_deref(), Some("processData"));
 }
 
+// T-015: migration_populates_fts_name_with_split_identifier
 #[test]
-fn t_015_migration_populates_fts_name_with_split_identifier() {
+fn migration_populates_fts_name_with_split_identifier() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2523,14 +2587,15 @@ fn t_015_migration_populates_fts_name_with_split_identifier() {
         .unwrap();
     assert_eq!(
         fts_name, "get User Name",
-        "[T-015] migration should populate FTS name with split_identifier output"
+        "migration should populate FTS name with split_identifier output"
     );
 }
 
 // === Phase 2: search_by_fts tests (T-004, T-005, T-007, T-016) ===
 
+// T-004: search_by_fts_finds_camelcase_by_split_keywords
 #[test]
-fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
+fn search_by_fts_finds_camelcase_by_split_keywords() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -2570,11 +2635,11 @@ fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
         .collect();
     assert!(
         names.contains(&"handleSubmit"),
-        "[T-004] should find handleSubmit via split keywords, got: {names:?}"
+        "should find handleSubmit via split keywords, got: {names:?}"
     );
     assert!(
         !names.contains(&"submitForm"),
-        "[T-004] AND semantics: submitForm should NOT match [handle, submit], got: {names:?}"
+        "AND semantics: submitForm should NOT match [handle, submit], got: {names:?}"
     );
 
     // TC-7: verify FTS result fields
@@ -2582,21 +2647,22 @@ fn t_004_search_by_fts_finds_camelcase_by_split_keywords() {
     assert_eq!(
         fts_result.match_source,
         MatchSource::Fts,
-        "[TC-7] search_by_fts should set match_source to Fts"
+        "search_by_fts should set match_source to Fts"
     );
     assert!(
         fts_result.distance.is_infinite(),
-        "[TC-7] search_by_fts should set distance to INFINITY"
+        "search_by_fts should set distance to INFINITY"
     );
     assert!(
         fts_result.score > 0.0,
-        "[TC-7] search_by_fts bm25 score should be positive, got {}",
+        "search_by_fts bm25 score should be positive, got {}",
         fts_result.score
     );
 }
 
+// T-005: search_by_fts_finds_by_path_segment
 #[test]
-fn t_005_search_by_fts_finds_by_path_segment() {
+fn search_by_fts_finds_by_path_segment() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![NewChunk {
@@ -2610,16 +2676,13 @@ fn t_005_search_by_fts_finds_by_path_segment() {
     replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
 
     let results = search_by_fts(&conn, &["auth"], None, &HashSet::new(), None, 10, &[]).unwrap();
-    assert_eq!(
-        results.len(),
-        1,
-        "[T-005] should find chunk by path segment 'auth'"
-    );
+    assert_eq!(results.len(), 1, "should find chunk by path segment 'auth'");
     assert_eq!(results[0].chunk.file_path, "src/auth/login.ts");
 }
 
+// T-007: search_by_fts_respects_type_filter
 #[test]
-fn t_007_search_by_fts_respects_type_filter() {
+fn search_by_fts_respects_type_filter() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -2652,16 +2715,13 @@ fn t_007_search_by_fts_respects_type_filter() {
         &[],
     )
     .unwrap();
-    assert_eq!(
-        results.len(),
-        1,
-        "[T-007] type_filter should limit to hooks"
-    );
+    assert_eq!(results.len(), 1, "type_filter should limit to hooks");
     assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
 }
 
+// T-016: search_by_fts_excludes_ids
 #[test]
-fn t_016_search_by_fts_excludes_ids() {
+fn search_by_fts_excludes_ids() {
     let (conn, _dir) = test_db();
 
     let chunks = vec![
@@ -2691,14 +2751,11 @@ fn t_016_search_by_fts_excludes_ids() {
     let mut exclude = HashSet::new();
     exclude.insert(first_id);
     let filtered = search_by_fts(&conn, &["auth"], None, &exclude, None, 10, &[]).unwrap();
-    assert_eq!(
-        filtered.len(),
-        1,
-        "[T-016] excluded id should be filtered out"
-    );
+    assert_eq!(filtered.len(), 1, "excluded id should be filtered out");
     assert_ne!(filtered[0].chunk_id, Some(first_id));
 }
 
+// T-173: vec_chunks_embedding_retrievable_by_rowid
 #[test]
 fn vec_chunks_embedding_retrievable_by_rowid() {
     let (conn, _dir) = test_db();
@@ -2748,7 +2805,7 @@ fn vec_chunks_embedding_retrievable_by_rowid() {
     assert!((recovered[100] - emb[100]).abs() < 1e-6);
 }
 
-// --- T-001: get_chunks_for_from_target file-only returns non-inner_fn chunks ---
+// T-001: get_chunks_for_from_target file-only returns non-inner_fn chunks
 #[test]
 fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
     let (conn, _dir) = test_db();
@@ -2808,7 +2865,7 @@ fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
     assert_eq!(ids.len(), 2);
 }
 
-// --- T-002: get_chunks_for_from_target returns empty for unknown file ---
+// T-002: get_chunks_for_from_target returns empty for unknown file
 #[test]
 fn get_chunks_for_from_target_unknown_file_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2816,7 +2873,7 @@ fn get_chunks_for_from_target_unknown_file_returns_empty() {
     assert!(rows.is_empty());
 }
 
-// --- T-003: get_chunks_for_from_target with symbol returns exact match ---
+// T-003: get_chunks_for_from_target with symbol returns exact match
 #[test]
 fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
     let (conn, _dir) = test_db();
@@ -2865,7 +2922,7 @@ fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
     );
 }
 
-// --- T-004: get_chunks_for_from_target symbol not found returns empty ---
+// T-004: get_chunks_for_from_target symbol not found returns empty
 #[test]
 fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2892,7 +2949,7 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
     assert!(rows.is_empty());
 }
 
-// --- T-005: get_sub_embeddings_for_chunks returns correct byte length ---
+// T-005: get_sub_embeddings_for_chunks returns correct byte length
 #[test]
 fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
     let (conn, _dir) = test_db();
@@ -2923,7 +2980,7 @@ fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
     assert_eq!(results[0].1.len(), EMBEDDING_DIMS * 4); // 768 * 4 = 3072 bytes
 }
 
-// --- T-006: get_sub_embeddings_for_chunks with missing chunk returns empty ---
+// T-006: get_sub_embeddings_for_chunks with missing chunk returns empty
 #[test]
 fn get_sub_embeddings_for_chunks_missing_chunk_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2931,7 +2988,7 @@ fn get_sub_embeddings_for_chunks_missing_chunk_returns_empty() {
     assert!(results.is_empty());
 }
 
-// --- T-007: vec_search_multi merges duplicate chunk_ids by min distance ---
+// T-007: vec_search_multi merges duplicate chunk_ids by min distance
 #[test]
 fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
     let (conn, _dir) = test_db();
@@ -2988,7 +3045,7 @@ fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
     );
 }
 
-// --- T-009: search_by_fts include_ids filters results to specified subset ---
+// T-009: search_by_fts include_ids filters results to specified subset
 #[test]
 fn search_by_fts_with_include_ids_filters_to_subset() {
     let (conn, _dir) = test_db();
@@ -3047,7 +3104,7 @@ fn search_by_fts_with_include_ids_filters_to_subset() {
     assert_eq!(filtered[0].chunk_id, Some(id1));
 }
 
-// --- T-008: vec_search_multi returns union of non-overlapping results ---
+// T-008: vec_search_multi returns union of non-overlapping results
 #[test]
 fn vec_search_multi_returns_union() {
     let (conn, _dir) = test_db();
@@ -3101,6 +3158,7 @@ fn vec_search_multi_returns_union() {
 
 // === SF-3: FTS prefix query fallback ===
 
+// T-174: search_by_fts_fallback_to_quoted_literal_on_sanitize_error
 #[test]
 fn search_by_fts_fallback_to_quoted_literal_on_sanitize_error() {
     let (conn, _dir) = test_db();
@@ -3131,6 +3189,6 @@ fn search_by_fts_fallback_to_quoted_literal_on_sanitize_error() {
         .expect("fts fallback should succeed without error");
     assert!(
         !results.is_empty(),
-        "[SF-3] fts_quote fallback should find content containing 'NOT', got empty"
+        "fts_quote fallback should find content containing 'NOT', got empty"
     );
 }

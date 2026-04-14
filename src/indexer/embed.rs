@@ -375,12 +375,14 @@ pub fn run_incremental_embed(
 mod tests {
     use super::*;
 
+    // T-360: validate_rejects_empty_chunks
     #[test]
     fn validate_rejects_empty_chunks() {
         let embs = vec![ChunkedEmbedding { chunks: vec![] }];
         assert!(validate_chunked_embeddings(embs).is_err());
     }
 
+    // T-361: validate_passes_non_empty_chunks
     #[test]
     fn validate_passes_non_empty_chunks() {
         let embs = vec![

@@ -83,6 +83,7 @@ mod tests {
         fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
     }
 
+    // T-357: walk_collects_source_files
     #[test]
     fn walk_collects_source_files() {
         let tmp = tempfile::tempdir().unwrap();
@@ -112,6 +113,7 @@ mod tests {
         );
     }
 
+    // T-358: walk_excludes_hidden_and_gitignored_dirs
     #[test]
     fn walk_excludes_hidden_and_gitignored_dirs() {
         let tmp = tempfile::tempdir().unwrap();
@@ -127,6 +129,7 @@ mod tests {
         }
     }
 
+    // T-359: walk_respects_custom_gitignore_patterns
     #[test]
     fn walk_respects_custom_gitignore_patterns() {
         let tmp = tempfile::tempdir().unwrap();

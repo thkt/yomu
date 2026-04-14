@@ -2,5 +2,6 @@
 .yomu/
 .claude/
 .analysis/
-workspace/
 .playwright-cli/
+docs/
+workspace/

@@ -32,6 +32,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "amici"
+version = "0.1.0"
+source = "git+https://github.com/thkt/amici?rev=3dec559#3dec55928069f6a268abac4c49945f421ae11fc6"
+dependencies = [
+ "rurico",
+ "rusqlite",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1868,9 +1877,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha",
  "rand_core",
@@ -1897,9 +1906,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
 dependencies = [
  "either",
  "rayon-core",
@@ -2045,7 +2054,7 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=03275f7#03275f78ec1c1b677566a9c04d3cdad03e29b3d9"
+source = "git+https://github.com/thkt/rurico?rev=216f25f#216f25fe8821d5eb44401cb87deea62dae556144"
 dependencies = [
  "bytemuck",
  "hf-hub",
@@ -3430,6 +3439,7 @@ dependencies = [
 name = "yomu"
 version = "0.13.0"
 dependencies = [
+ "amici",
  "clap",
  "ignore",
  "rurico",

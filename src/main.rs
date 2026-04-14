@@ -1,12 +1,11 @@
-mod shorthand;
-
-use yomu::progress;
-
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
+use yomu::tools::{
+    MAX_EMBED_BUDGET, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, MIN_EMBED_BUDGET,
+    Yomu, YomuError,
+};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
@@ -68,14 +67,19 @@ enum Command {
     },
     /// Show index statistics.
     Status,
+    /// Embed pending chunks for semantic search.
+    Embed {
+        /// Max chunks to embed in this run (default: YOMU_EMBED_BUDGET or 50)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(MIN_EMBED_BUDGET as i64..=MAX_EMBED_BUDGET as i64))]
+        budget: Option<u32>,
+    },
     /// Manage the embedding model.
     #[command(
         subcommand_required = true,
         arg_required_else_help = true,
         after_help = "\
 Examples:
-  yomu model download
-  YOMU_AUTO_DOWNLOAD_MODEL=1 yomu search \"auth hooks\""
+  yomu model download"
     )]
     Model {
         #[command(subcommand)]
@@ -224,6 +228,7 @@ fn main() -> ExitCode {
             semantic,
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
+        Command::Embed { budget } => yomu.embed(budget, json),
         Command::Model { .. } => unreachable!("handled before Yomu::new()"),
     };
 
@@ -239,7 +244,9 @@ fn main() -> ExitCode {
     }
 }
 
-const KNOWN_SUBCOMMANDS: &[&str] = &["search", "index", "rebuild", "impact", "status", "model"];
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "search", "index", "rebuild", "impact", "status", "embed", "model",
+];
 const GLOBAL_FLAGS: &[&str] = &["--json"];
 
 fn parse_cli_args<I, T>(args: I) -> Result<Cli, clap::Error>
@@ -248,7 +255,7 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-    let expanded = shorthand::try_expand_shorthand(&args, KNOWN_SUBCOMMANDS, GLOBAL_FLAGS);
+    let expanded = amici::cli::try_expand_shorthand(&args, KNOWN_SUBCOMMANDS, GLOBAL_FLAGS);
     if let Some(expanded) = expanded
         && let Ok(cli) = Cli::try_parse_from(&expanded)
     {
@@ -296,7 +303,7 @@ fn resolve_query_with(
 fn run_model_download(json: bool) -> Result<String, YomuError> {
     use rurico::embed::{EmbedInitError, Embedder, ModelId, ProbeStatus};
 
-    let spinner = progress::Spinner::new("Downloading model...");
+    let spinner = amici::cli::Spinner::new("Downloading model...");
     let paths = match rurico::embed::download_model(ModelId::default()) {
         Ok(p) => p,
         Err(e) => {
@@ -345,9 +352,11 @@ fn exit_code_for(e: &YomuError) -> ExitCode {
     match e {
         YomuError::InvalidInput(_) => ExitCode::from(2),
         YomuError::Internal(_) => ExitCode::from(4),
-        YomuError::Storage(_) | YomuError::Io(_) | YomuError::Index(_) | YomuError::Query(_) => {
-            ExitCode::FAILURE
-        }
+        YomuError::Storage(_)
+        | YomuError::Io(_)
+        | YomuError::Index(_)
+        | YomuError::Query(_)
+        | YomuError::EmbedderUnavailable(_) => ExitCode::FAILURE,
     }
 }
 
@@ -356,6 +365,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    // T-305: resolve_query_with_direct_arg
     #[test]
     fn resolve_query_with_direct_arg() {
         let mut stdin = Cursor::new(b"");
@@ -363,6 +373,7 @@ mod tests {
         assert_eq!(result.unwrap(), "auth hooks");
     }
 
+    // T-306: resolve_query_with_dash_reads_stdin
     #[test]
     fn resolve_query_with_dash_reads_stdin() {
         let mut stdin = Cursor::new(b"piped query");
@@ -370,6 +381,7 @@ mod tests {
         assert_eq!(result.unwrap(), "piped query");
     }
 
+    // T-307: resolve_query_with_none_reads_stdin
     #[test]
     fn resolve_query_with_none_reads_stdin() {
         let mut stdin = Cursor::new(b"  streaming hooks  ");
@@ -377,6 +389,7 @@ mod tests {
         assert_eq!(result.unwrap(), "streaming hooks");
     }
 
+    // T-308: resolve_query_with_none_terminal_returns_no_query
     #[test]
     fn resolve_query_with_none_terminal_returns_no_query() {
         let mut stdin = Cursor::new(b"");
@@ -386,6 +399,7 @@ mod tests {
         assert!(err.to_string().contains("query required"));
     }
 
+    // T-309: resolve_query_with_empty_stdin_returns_no_query
     #[test]
     fn resolve_query_with_empty_stdin_returns_no_query() {
         let mut stdin = Cursor::new(b"   ");
@@ -396,6 +410,7 @@ mod tests {
     }
 
     // RC-005: I/O errors must not be swallowed as NoQuery
+    // T-310: resolve_query_with_io_error_returns_io_variant
     #[test]
     fn resolve_query_with_io_error_returns_io_variant() {
         struct FailingReader;
@@ -437,10 +452,10 @@ mod tests {
     #[test]
     fn shorthand_without_flags_has_json_false() {
         let cli = parse_cli_args(["yomu", "query"]).unwrap();
-        assert!(!cli.json, "[T-049] json should default to false");
+        assert!(!cli.json, "json should default to false");
         match cli.command.unwrap() {
             Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
-            other => panic!("[T-049] expected Search, got {other:?}"),
+            other => panic!("expected Search, got {other:?}"),
         }
     }
 
@@ -494,7 +509,7 @@ mod tests {
         assert!(result.is_err(), "typo 'serach' should be clap error");
     }
 
-    // TC-014: non-search subcommand names are not rewritten as search shorthand
+    // T-014: non-search subcommand names are not rewritten as search shorthand
     #[test]
     fn all_subcommands_not_shorthand() {
         for cmd in ["index", "rebuild", "impact", "status"] {
@@ -504,7 +519,7 @@ mod tests {
                     result.as_ref().map(|c| c.command.as_ref()),
                     Ok(Some(Command::Search { .. }))
                 ),
-                "[TC-014] subcommand '{cmd}' should not be rewritten as Search shorthand"
+                "subcommand '{cmd}' should not be rewritten as Search shorthand"
             );
         }
     }
@@ -560,5 +575,33 @@ mod tests {
             }
             other => panic!("expected Search, got {other:?}"),
         }
+    }
+
+    // T-117: embed --budget <valid> parses
+    #[test]
+    fn embed_budget_valid_parses() {
+        let cli = parse_cli_args(["yomu", "embed", "--budget", "50"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Embed { budget } => assert_eq!(budget, Some(50)),
+            other => panic!("expected Embed, got {other:?}"),
+        }
+    }
+
+    // T-118: embed --budget 0 rejected (below MIN_EMBED_BUDGET=1)
+    #[test]
+    fn embed_budget_zero_is_rejected() {
+        assert!(
+            parse_cli_args(["yomu", "embed", "--budget", "0"]).is_err(),
+            "budget=0 should be rejected (below MIN_EMBED_BUDGET=1)"
+        );
+    }
+
+    // T-119: embed --budget 501 rejected (above MAX_EMBED_BUDGET=500)
+    #[test]
+    fn embed_budget_above_max_is_rejected() {
+        assert!(
+            parse_cli_args(["yomu", "embed", "--budget", "501"]).is_err(),
+            "budget=501 should be rejected (above MAX_EMBED_BUDGET=500)"
+        );
     }
 }

@@ -1,10 +1,11 @@
 use super::embedder::{
-    RECORDED_WARNINGS, get_recorded_warnings, parse_budget_value, record_embedder_warning,
+    RECORDED_WARNINGS, degraded_reason_user_note, get_recorded_warnings, parse_budget_value,
+    record_embedder_warning,
 };
 use super::*;
 use std::collections::HashMap;
 
-use rurico::embed::FailingEmbedder;
+use rurico::embed::{FailingEmbedder, MockEmbedder};
 
 fn parse_json(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
@@ -78,6 +79,7 @@ fn seed_index(conn: &storage::Db) {
     .unwrap();
 }
 
+// T-175: search_rejects_empty_query
 #[test]
 fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
@@ -89,6 +91,7 @@ fn search_rejects_empty_query() {
     );
 }
 
+// T-176: search_rejects_long_query
 #[test]
 fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
@@ -103,6 +106,7 @@ fn search_rejects_long_query() {
     );
 }
 
+// T-177: search_rejects_path_traversal
 #[test]
 fn search_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
@@ -115,6 +119,7 @@ fn search_rejects_path_traversal() {
     );
 }
 
+// T-178: search_rejects_absolute_path
 #[test]
 fn search_rejects_absolute_path() {
     let (y, _dir) = test_yomu();
@@ -127,6 +132,7 @@ fn search_rejects_absolute_path() {
     );
 }
 
+// T-179: search_path_filter_excludes_other_dirs
 #[test]
 fn search_path_filter_excludes_other_dirs() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -157,6 +163,7 @@ fn search_path_filter_excludes_other_dirs() {
     );
 }
 
+// T-180: search_without_embedder_degrades_gracefully
 #[test]
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
@@ -169,6 +176,7 @@ fn search_without_embedder_degrades_gracefully() {
     );
 }
 
+// T-181: search_auto_indexes_empty_db
 #[test]
 fn search_auto_indexes_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -199,6 +207,7 @@ fn search_auto_indexes_empty_db() {
     );
 }
 
+// T-182: search_incremental_embeds_chunked_only
 #[test]
 fn search_incremental_embeds_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -230,6 +239,7 @@ fn search_incremental_embeds_chunked_only() {
     }
 }
 
+// T-183: search_shows_coverage_on_no_results
 #[test]
 fn search_shows_coverage_on_no_results() {
     let dir = tempfile::tempdir().unwrap();
@@ -263,6 +273,7 @@ fn search_shows_coverage_on_no_results() {
     assert!(msg.contains("0/"), "expected 0 embedded: {msg}");
 }
 
+// T-184: search_degraded_empty_results_shows_note
 #[test]
 fn search_degraded_empty_results_shows_note() {
     let dir = tempfile::tempdir().unwrap();
@@ -307,6 +318,7 @@ fn search_degraded_empty_results_shows_note() {
     );
 }
 
+// T-185: search_degraded_with_results_shows_note
 #[test]
 fn search_degraded_with_results_shows_note() {
     let (y, dir) = test_yomu_with_files_and_embedder(
@@ -344,6 +356,7 @@ fn search_degraded_with_results_shows_note() {
     );
 }
 
+// T-186: format_results_grouped_renders_file_header_and_context
 #[test]
 fn format_results_grouped_renders_file_header_and_context() {
     let results = vec![storage::SearchResult {
@@ -395,6 +408,7 @@ fn format_results_grouped_renders_file_header_and_context() {
     assert!(text.contains("0.87"), "missing similarity: {text}");
 }
 
+// T-187: format_results_grouped_groups_same_file_chunks
 #[test]
 fn format_results_grouped_groups_same_file_chunks() {
     let results = vec![
@@ -443,6 +457,7 @@ fn format_results_grouped_groups_same_file_chunks() {
     assert!(text.contains("useForm"), "missing useForm: {text}");
 }
 
+// T-188: format_results_grouped_deduplicates_siblings
 #[test]
 fn format_results_grouped_deduplicates_siblings() {
     let results = vec![storage::SearchResult {
@@ -493,6 +508,7 @@ fn format_results_grouped_deduplicates_siblings() {
     );
 }
 
+// T-189: format_results_grouped_omits_empty_imports
 #[test]
 fn format_results_grouped_omits_empty_imports() {
     let results = vec![storage::SearchResult {
@@ -522,6 +538,7 @@ fn format_results_grouped_omits_empty_imports() {
     );
 }
 
+// T-190: format_results_grouped_omits_empty_siblings
 #[test]
 fn format_results_grouped_omits_empty_siblings() {
     let results = vec![storage::SearchResult {
@@ -551,6 +568,7 @@ fn format_results_grouped_omits_empty_siblings() {
     );
 }
 
+// T-191: format_results_grouped_sorts_files_by_best_similarity
 #[test]
 fn format_results_grouped_sorts_files_by_best_similarity() {
     let results = vec![
@@ -598,6 +616,7 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
     );
 }
 
+// T-192: format_results_grouped_shows_score_for_all
 #[test]
 fn format_results_grouped_shows_score_for_all() {
     let results = vec![
@@ -651,6 +670,7 @@ fn format_results_grouped_shows_score_for_all() {
     );
 }
 
+// T-193: index_works_without_api_key
 #[test]
 fn index_works_without_api_key() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
@@ -658,6 +678,7 @@ fn index_works_without_api_key() {
     assert!(text.contains("complete"), "expected success: {text}");
 }
 
+// T-194: index_chunks_without_embedding
 #[test]
 fn index_chunks_without_embedding() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -686,6 +707,7 @@ fn index_chunks_without_embedding() {
     assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
 }
 
+// T-195: rebuild_re_parses_all_files
 #[test]
 fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
@@ -716,6 +738,7 @@ fn rebuild_re_parses_all_files() {
     );
 }
 
+// T-196: status_returns_empty_stats
 #[test]
 fn status_returns_empty_stats() {
     let (y, _dir) = test_yomu();
@@ -729,6 +752,7 @@ fn status_returns_empty_stats() {
     assert!(text.contains("never"), "expected 'never', got: {text}");
 }
 
+// T-197: status_returns_counts_after_insert
 #[test]
 fn status_returns_counts_after_insert() {
     let (conn, _dir) = test_db();
@@ -756,6 +780,7 @@ fn status_returns_counts_after_insert() {
     assert!(text.contains("Chunks: 1"), "expected 1 chunk, got: {text}");
 }
 
+// T-198: status_shows_embedded_total
 #[test]
 fn status_shows_embedded_total() {
     let (conn, _dir) = test_db();
@@ -783,6 +808,7 @@ fn status_shows_embedded_total() {
     assert!(text.contains("0/1"), "expected 0/1 in status: {text}");
 }
 
+// T-199: impact_lists_dependents
 #[test]
 fn impact_lists_dependents() {
     let (y, _dir) = test_yomu();
@@ -828,6 +854,7 @@ fn impact_lists_dependents() {
     );
 }
 
+// T-200: impact_filters_by_symbol
 #[test]
 fn impact_filters_by_symbol() {
     let (y, _dir) = test_yomu();
@@ -871,6 +898,7 @@ fn impact_filters_by_symbol() {
     );
 }
 
+// T-201: impact_rejects_empty_target
 #[test]
 fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
@@ -881,6 +909,7 @@ fn impact_rejects_empty_target() {
     );
 }
 
+// T-202: impact_errors_on_empty_index
 #[test]
 fn impact_errors_on_empty_index() {
     let (y, _dir) = test_yomu();
@@ -891,6 +920,7 @@ fn impact_errors_on_empty_index() {
     );
 }
 
+// T-203: impact_distinguishes_missing_file
 #[test]
 fn impact_distinguishes_missing_file() {
     let (y, _dir) = test_yomu();
@@ -907,6 +937,7 @@ fn impact_distinguishes_missing_file() {
     );
 }
 
+// T-204: impact_rejects_path_traversal
 #[test]
 fn impact_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
@@ -923,6 +954,7 @@ fn impact_rejects_path_traversal() {
     );
 }
 
+// T-205: impact_rejects_absolute_path
 #[test]
 fn impact_rejects_absolute_path() {
     let (y, _dir) = test_yomu();
@@ -937,6 +969,7 @@ fn impact_rejects_absolute_path() {
     );
 }
 
+// T-206: impact_symbol_flag_overrides_colon_syntax
 #[test]
 fn impact_symbol_flag_overrides_colon_syntax() {
     let (y, _dir) = test_yomu();
@@ -982,6 +1015,7 @@ fn impact_symbol_flag_overrides_colon_syntax() {
     );
 }
 
+// T-207: integration_index_then_impact
 #[test]
 fn integration_index_then_impact() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -1015,6 +1049,7 @@ fn integration_index_then_impact() {
     );
 }
 
+// T-208: parse_impact_target_file_only
 #[test]
 fn parse_impact_target_file_only() {
     let (file, symbol) = parse_impact_target("src/hooks/useAuth.ts");
@@ -1022,6 +1057,7 @@ fn parse_impact_target_file_only() {
     assert_eq!(symbol, None);
 }
 
+// T-209: parse_impact_target_with_symbol
 #[test]
 fn parse_impact_target_with_symbol() {
     let (file, symbol) = parse_impact_target("src/hooks/useAuth.ts:useAuth");
@@ -1029,6 +1065,7 @@ fn parse_impact_target_with_symbol() {
     assert_eq!(symbol, Some("useAuth"));
 }
 
+// T-210: parse_impact_target_trailing_colon
 #[test]
 fn parse_impact_target_trailing_colon() {
     let (file, symbol) = parse_impact_target("src/A.tsx:");
@@ -1036,6 +1073,7 @@ fn parse_impact_target_trailing_colon() {
     assert_eq!(symbol, None);
 }
 
+// T-211: parse_impact_target_leading_colon
 #[test]
 fn parse_impact_target_leading_colon() {
     let (file, symbol) = parse_impact_target(":symbol");
@@ -1043,6 +1081,7 @@ fn parse_impact_target_leading_colon() {
     assert_eq!(symbol, None);
 }
 
+// T-212: parse_impact_target_symbol_with_slash_treated_as_file
 #[test]
 fn parse_impact_target_symbol_with_slash_treated_as_file() {
     let (file, symbol) = parse_impact_target("src/A.tsx:path/like");
@@ -1050,6 +1089,7 @@ fn parse_impact_target_symbol_with_slash_treated_as_file() {
     assert_eq!(symbol, None);
 }
 
+// T-213: parse_impact_target_multiple_colons
 #[test]
 fn parse_impact_target_multiple_colons() {
     let (file, symbol) = parse_impact_target("src/A.tsx:B:C");
@@ -1057,6 +1097,7 @@ fn parse_impact_target_multiple_colons() {
     assert_eq!(symbol, Some("C"));
 }
 
+// T-214: parse_budget_value_valid
 #[test]
 fn parse_budget_value_valid() {
     assert_eq!(parse_budget_value(Some("100")), 100);
@@ -1064,23 +1105,27 @@ fn parse_budget_value_valid() {
     assert_eq!(parse_budget_value(Some("500")), 500);
 }
 
+// T-215: parse_budget_value_out_of_range
 #[test]
 fn parse_budget_value_out_of_range() {
     assert_eq!(parse_budget_value(Some("0")), DEFAULT_EMBED_BUDGET);
     assert_eq!(parse_budget_value(Some("501")), DEFAULT_EMBED_BUDGET);
 }
 
+// T-216: parse_budget_value_invalid
 #[test]
 fn parse_budget_value_invalid() {
     assert_eq!(parse_budget_value(Some("abc")), DEFAULT_EMBED_BUDGET);
     assert_eq!(parse_budget_value(Some("")), DEFAULT_EMBED_BUDGET);
 }
 
+// T-217: parse_budget_value_missing
 #[test]
 fn parse_budget_value_missing() {
     assert_eq!(parse_budget_value(None), DEFAULT_EMBED_BUDGET);
 }
 
+// T-218: determine_index_state_variants
 #[test]
 fn determine_index_state_variants() {
     let empty = storage::IndexStatus {
@@ -1129,6 +1174,7 @@ fn determine_index_state_variants() {
     ));
 }
 
+// T-219: ensure_indexed_partially_embedded_triggers_embed
 #[test]
 fn ensure_indexed_partially_embedded_triggers_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -1166,6 +1212,7 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
     );
 }
 
+// T-220: ensure_indexed_fully_embedded_skips_embed
 #[test]
 fn ensure_indexed_fully_embedded_skips_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -1197,6 +1244,7 @@ fn ensure_indexed_fully_embedded_skips_embed() {
     assert!(result.contains("Button"), "should find Button: {result}");
 }
 
+// T-221: ensure_indexed_fully_embedded_with_failing_embedder
 #[test]
 fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let (y, dir) = test_yomu_with_files_and_embedder(
@@ -1230,6 +1278,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
     );
 }
 
+// T-222: with_root_creates_db_and_returns_yomu
 #[test]
 fn with_root_creates_db_and_returns_yomu() {
     let dir = tempfile::tempdir().unwrap();
@@ -1244,6 +1293,7 @@ fn with_root_creates_db_and_returns_yomu() {
     assert!(dir.path().join(".yomu").join("index.db").exists());
 }
 
+// T-223: search_without_embedder_skips_embed_attempt
 #[test]
 fn search_without_embedder_skips_embed_attempt() {
     let (y, _dir) =
@@ -1265,6 +1315,7 @@ fn search_without_embedder_skips_embed_attempt() {
     );
 }
 
+// T-224: search_json_format_returns_valid_json
 #[test]
 fn search_json_format_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[(
@@ -1294,6 +1345,7 @@ fn search_json_format_returns_valid_json() {
     assert!(json.contains("\"score\":"), "should contain score: {json}");
 }
 
+// T-225: search_json_format_empty_results
 #[test]
 fn search_json_format_empty_results() {
     let (y, _dir) =
@@ -1318,6 +1370,7 @@ fn search_json_format_empty_results() {
     );
 }
 
+// T-226: dry_run_index_does_not_write_to_db
 #[test]
 fn dry_run_index_does_not_write_to_db() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -1341,6 +1394,7 @@ fn dry_run_index_does_not_write_to_db() {
     );
 }
 
+// T-227: dry_run_index_shows_skip_for_unchanged
 #[test]
 fn dry_run_index_shows_skip_for_unchanged() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -1361,6 +1415,7 @@ fn dry_run_index_shows_skip_for_unchanged() {
     );
 }
 
+// T-228: search_json_format_degraded_includes_flag
 #[test]
 fn search_json_format_degraded_includes_flag() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -1381,8 +1436,9 @@ fn search_json_format_degraded_includes_flag() {
     );
 }
 
+// T-011: innerfn_hit_shows_parent_context_in_text_output
 #[test]
-fn t011_innerfn_hit_shows_parent_context_in_text_output() {
+fn innerfn_hit_shows_parent_context_in_text_output() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
             file_path: "src/UserForm.tsx".to_string(),
@@ -1419,12 +1475,13 @@ fn t011_innerfn_hit_shows_parent_context_in_text_output() {
     let text = format_results_grouped(&results, &ctx, &parent_chunks);
     assert!(
         text.contains("Parent context:"),
-        "[T-011] InnerFn hit should display parent context section: {text}"
+        "InnerFn hit should display parent context section: {text}"
     );
 }
 
+// T-012: parent_hit_no_duplicate_parent_display
 #[test]
-fn t012_parent_hit_no_duplicate_parent_display() {
+fn parent_hit_no_duplicate_parent_display() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
             file_path: "src/UserForm.tsx".to_string(),
@@ -1448,16 +1505,17 @@ fn t012_parent_hit_no_duplicate_parent_display() {
 
     assert!(
         !text.contains("Parent context:"),
-        "[T-012] parent chunk hit should NOT show 'Parent context:' section: {text}"
+        "parent chunk hit should NOT show 'Parent context:' section: {text}"
     );
     assert!(
         text.contains("UserForm"),
-        "[T-012] parent chunk content should still appear normally: {text}"
+        "parent chunk content should still appear normally: {text}"
     );
 }
 
+// T-229: json_output_includes_parent_chunk_id
 #[test]
-fn t015_json_output_includes_parent_chunk_id() {
+fn json_output_includes_parent_chunk_id() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
@@ -1500,22 +1558,23 @@ fn t015_json_output_includes_parent_chunk_id() {
     let innerfn_item = &items[0];
     assert_eq!(
         innerfn_item["parent_chunk_id"], 42,
-        "[T-015] InnerFn result should have parent_chunk_id: {json}"
+        "InnerFn result should have parent_chunk_id: {json}"
     );
 
     let component_item = &items[1];
     assert!(
         component_item.get("parent_chunk_id").is_some(),
-        "[T-015] Component result should have parent_chunk_id field: {json}"
+        "Component result should have parent_chunk_id field: {json}"
     );
     assert!(
         component_item["parent_chunk_id"].is_null(),
-        "[T-015] Component result parent_chunk_id should be null: {json}"
+        "Component result parent_chunk_id should be null: {json}"
     );
 }
 
+// T-230: subchunk_innerfn_is_hit_at_1_for_inner_function_query
 #[test]
-fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
+fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
     let mut lines = vec![
         "export function UserForm() {".to_string(),
         "  const [name, setName] = useState('');".to_string(),
@@ -1543,16 +1602,17 @@ fn t_ac5_subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
         .unwrap();
     assert!(
         result.contains("handleSubmit"),
-        "[AC-5] search should find handleSubmit: {result}"
+        "search should find handleSubmit: {result}"
     );
     assert!(
         result.contains("inner_fn"),
-        "[AC-5] handleSubmit should be typed as inner_fn: {result}"
+        "handleSubmit should be typed as inner_fn: {result}"
     );
 }
 
+// T-231: below_threshold_no_subchunks_in_index
 #[test]
-fn t_ac5_below_threshold_no_subchunks_in_index() {
+fn below_threshold_no_subchunks_in_index() {
     let fixture = r#"export function SmallCard() {
   const [count, setCount] = useState(0);
   const handleClick = () => { setCount(count + 1); };
@@ -1564,12 +1624,13 @@ fn t_ac5_below_threshold_no_subchunks_in_index() {
     let stats = y.status(false).unwrap();
     assert!(
         !stats.contains("inner_fn"),
-        "[AC-5] below-threshold component should not produce InnerFn: {stats}"
+        "below-threshold component should not produce InnerFn: {stats}"
     );
 }
 
+// T-003: parent_and_child_both_in_results_no_duplicate
 #[test]
-fn tc_003_parent_and_child_both_in_results_no_duplicate() {
+fn parent_and_child_both_in_results_no_duplicate() {
     let parent_id = 42i64;
     let results = vec![
         storage::SearchResult {
@@ -1624,14 +1685,15 @@ fn tc_003_parent_and_child_both_in_results_no_duplicate() {
 
     assert!(
         !text.contains("Parent context:"),
-        "[TC-003] when parent is in results, 'Parent context:' should be suppressed: {text}"
+        "when parent is in results, 'Parent context:' should be suppressed: {text}"
     );
     assert!(text.contains("UserForm"), "parent should appear: {text}");
     assert!(text.contains("handleSubmit"), "child should appear: {text}");
 }
 
+// T-004: get_chunk_by_id_returns_parent_chunk_id
 #[test]
-fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
+fn get_chunk_by_id_returns_parent_chunk_id() {
     let (conn, _dir) = test_db();
 
     let parent = storage::NewChunk {
@@ -1672,8 +1734,9 @@ fn tc_004_get_chunk_by_id_returns_parent_chunk_id() {
     assert!(missing.is_none(), "nonexistent ID should return None");
 }
 
+// T-001: search_with_not_installed_shows_note
 #[test]
-fn t001_search_with_not_installed_shows_note() {
+fn search_with_not_installed_shows_note() {
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1684,12 +1747,13 @@ fn t001_search_with_not_installed_shows_note() {
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("not installed"),
-        "[T-001] expected NotInstalled note in results: {text}"
+        "expected NotInstalled note in results: {text}"
     );
 }
 
+// T-002: search_with_ok_embedder_no_degraded_note
 #[test]
-fn t002_search_with_ok_embedder_no_degraded_note() {
+fn search_with_ok_embedder_no_degraded_note() {
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1705,16 +1769,17 @@ fn t002_search_with_ok_embedder_no_degraded_note() {
         .unwrap();
     assert!(
         !text.contains("not installed"),
-        "[T-002] should have no 'not installed' note: {text}"
+        "should have no 'not installed' note: {text}"
     );
     assert!(
         !text.contains("unavailable"),
-        "[T-002] should have no 'unavailable' note: {text}"
+        "should have no 'unavailable' note: {text}"
     );
 }
 
+// T-003: search_with_backend_unavailable_shows_note
 #[test]
-fn t003_search_with_backend_unavailable_shows_note() {
+fn search_with_backend_unavailable_shows_note() {
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1729,12 +1794,13 @@ fn t003_search_with_backend_unavailable_shows_note() {
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("unavailable"),
-        "[T-003] expected BackendUnavailable note in results: {text}"
+        "expected BackendUnavailable note in results: {text}"
     );
 }
 
+// T-004: search_with_probe_failed_shows_note
 #[test]
-fn t004_search_with_probe_failed_shows_note() {
+fn search_with_probe_failed_shows_note() {
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1749,12 +1815,13 @@ fn t004_search_with_probe_failed_shows_note() {
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         text.contains("unavailable"),
-        "[T-004] expected ProbeFailed note in results: {text}"
+        "expected ProbeFailed note in results: {text}"
     );
 }
 
+// T-004: record_embedder_warning_observation_seam
 #[test]
-fn t004_record_embedder_warning_observation_seam() {
+fn record_embedder_warning_observation_seam() {
     RECORDED_WARNINGS.with(|w| w.borrow_mut().clear());
 
     record_embedder_warning(DegradedReason::ProbeFailed, "model load failed");
@@ -1765,8 +1832,9 @@ fn t004_record_embedder_warning_observation_seam() {
     assert_eq!(warnings[0].1, "model load failed");
 }
 
+// T-009: disabled_no_user_note_in_search
 #[test]
-fn t009_disabled_no_user_note_in_search() {
+fn disabled_no_user_note_in_search() {
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div/>; }",
@@ -1781,35 +1849,48 @@ fn t009_disabled_no_user_note_in_search() {
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
         !text.contains("not installed"),
-        "[T-009] should not show 'not installed' when disabled: {text}"
+        "should not show 'not installed' when disabled: {text}"
     );
     assert!(
         !text.contains("unavailable"),
-        "[T-009] should not show 'unavailable' when disabled: {text}"
+        "should not show 'unavailable' when disabled: {text}"
     );
 }
 
+// T-232: user_note_exact_values_for_all_variants
 #[test]
 fn user_note_exact_values_for_all_variants() {
-    assert_eq!(DegradedReason::Disabled.user_note(), None);
+    assert_eq!(degraded_reason_user_note(DegradedReason::Disabled), None);
     assert_eq!(
-        DegradedReason::NotInstalled.user_note(),
+        degraded_reason_user_note(DegradedReason::NotInstalled),
         Some("embedding model not installed; results from text search only")
     );
     assert_eq!(
-        DegradedReason::BackendUnavailable.user_note(),
+        degraded_reason_user_note(DegradedReason::BackendUnavailable),
         Some("embedding model unavailable; results from text search only")
     );
     assert_eq!(
-        DegradedReason::ProbeFailed.user_note(),
+        degraded_reason_user_note(DegradedReason::ProbeFailed),
         Some("embedding model unavailable; results from text search only")
-    );
-    assert_eq!(
-        DegradedReason::DownloadFailed.user_note(),
-        Some("embedding model download failed; results from text search only")
     );
 }
 
+// T-116: degraded_reason() returns the amici-provided DegradedReason type
+#[test]
+fn degraded_reason_returns_amici_type() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
+    assert_eq!(
+        y.degraded_reason(),
+        Some(&amici::model::embedder::DegradedReason::NotInstalled)
+    );
+}
+
+// T-233: embed_disabled_yields_degraded_disabled
 #[test]
 fn embed_disabled_yields_degraded_disabled() {
     let (conn, dir) = setup_test_files(&[(
@@ -1822,6 +1903,7 @@ fn embed_disabled_yields_degraded_disabled() {
     assert_eq!(y.degraded_reason(), Some(&DegradedReason::Disabled));
 }
 
+// T-234: json_notes_present_when_degraded
 #[test]
 fn json_notes_present_when_degraded() {
     let (conn, dir) =
@@ -1845,6 +1927,101 @@ fn json_notes_present_when_degraded() {
     );
 }
 
+// T-109: un-embedded chunks are embedded, result reports count
+#[test]
+fn embed_pending_chunks_returns_count() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div>button</div>; }",
+    )]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.embed(None, false).unwrap();
+    assert!(
+        text.starts_with("Embedded"),
+        "expected result starting with 'Embedded': {text}"
+    );
+    assert!(
+        text.contains("chunks"),
+        "expected 'chunks' in result: {text}"
+    );
+}
+
+// T-110: no pending chunks → "nothing to embed"
+#[test]
+fn embed_nothing_to_embed() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    // No index run — no chunks to embed.
+
+    let text = y.embed(None, false).unwrap();
+    assert_eq!(
+        text, "nothing to embed",
+        "expected 'nothing to embed': {text}"
+    );
+}
+
+// T-111: json=true produces {"embedded": N, "budget_exhausted": bool}
+#[test]
+fn embed_json_format() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div>button</div>; }",
+    )]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.embed(None, true).unwrap();
+    let parsed = parse_json(&json);
+    assert!(
+        parsed.get("embedded").is_some(),
+        "expected 'embedded' key in JSON: {json}"
+    );
+    assert!(
+        parsed.get("budget_exhausted").is_some(),
+        "expected 'budget_exhausted' key in JSON: {json}"
+    );
+}
+
+// T-112: embedder not installed → YomuError::EmbedderUnavailable
+#[test]
+fn embed_embedder_unavailable_returns_error() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
+
+    let result = y.embed(None, false);
+    assert!(
+        matches!(result, Err(YomuError::EmbedderUnavailable(_))),
+        "expected EmbedderUnavailable error: {result:?}"
+    );
+}
+
+// T-120: embed() with Disabled reason → YomuError::EmbedderUnavailable
+#[test]
+fn embed_disabled_returns_embedder_unavailable() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::Disabled),
+    );
+
+    let result = y.embed(None, false);
+    assert!(
+        matches!(result, Err(YomuError::EmbedderUnavailable(_))),
+        "expected EmbedderUnavailable for Disabled reason: {result:?}"
+    );
+}
+
+// T-235: json_notes_empty_via_search_with_ok_embedder
 #[test]
 fn json_notes_empty_via_search_with_ok_embedder() {
     let (conn, dir) =
@@ -1867,6 +2044,7 @@ fn json_notes_empty_via_search_with_ok_embedder() {
     );
 }
 
+// T-236: json_notes_outcome_degraded_fallback
 #[test]
 fn json_notes_outcome_degraded_fallback() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -1891,6 +2069,7 @@ fn json_notes_outcome_degraded_fallback() {
     );
 }
 
+// T-237: json_notes_backend_unavailable
 #[test]
 fn json_notes_backend_unavailable() {
     let (conn, dir) = setup_test_files(&[(
@@ -1918,6 +2097,7 @@ fn json_notes_backend_unavailable() {
 
 // --- JSON output tests for non-search commands ---
 
+// T-238: index_json_returns_valid_json
 #[test]
 fn index_json_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -1936,6 +2116,7 @@ fn index_json_returns_valid_json() {
     );
 }
 
+// T-239: rebuild_json_returns_valid_json
 #[test]
 fn rebuild_json_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
@@ -1952,6 +2133,7 @@ fn rebuild_json_returns_valid_json() {
     );
 }
 
+// T-240: dry_run_index_json_returns_valid_json
 #[test]
 fn dry_run_index_json_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[
@@ -1968,6 +2150,7 @@ fn dry_run_index_json_returns_valid_json() {
     assert_eq!(parsed["orphans_to_remove"], 0);
 }
 
+// T-241: dry_run_index_json_shows_skip_for_unchanged
 #[test]
 fn dry_run_index_json_shows_skip_for_unchanged() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
@@ -1979,6 +2162,7 @@ fn dry_run_index_json_shows_skip_for_unchanged() {
     assert_eq!(parsed["files_to_skip"], 1);
 }
 
+// T-242: status_json_empty_db
 #[test]
 fn status_json_empty_db() {
     let (y, _dir) = test_yomu();
@@ -1992,6 +2176,7 @@ fn status_json_empty_db() {
     assert!(parsed["last_indexed"].is_null(), "should be null: {json}");
 }
 
+// T-243: status_json_with_data
 #[test]
 fn status_json_with_data() {
     let (conn, _dir) = test_db();
@@ -2022,6 +2207,7 @@ fn status_json_with_data() {
     assert_eq!(parsed["embed_percentage"], 100);
 }
 
+// T-244: impact_json_with_dependents
 #[test]
 fn impact_json_with_dependents() {
     let (y, _dir) = test_yomu();
@@ -2058,6 +2244,7 @@ fn impact_json_with_dependents() {
     assert_eq!(deps[0]["depth"], 1);
 }
 
+// T-245: impact_json_not_in_index
 #[test]
 fn impact_json_not_in_index() {
     let (y, _dir) = test_yomu();
@@ -2078,6 +2265,7 @@ fn impact_json_not_in_index() {
     assert!(deps.is_empty());
 }
 
+// T-246: impact_json_with_symbol_refs
 #[test]
 fn impact_json_with_symbol_refs() {
     let (y, _dir) = test_yomu();
@@ -2175,6 +2363,7 @@ fn impact_semantic_json_field_absent_when_empty() {
 }
 
 // T-079b: --semantic=false JSON output never has semantic_related
+// T-247: impact_no_semantic_json_field_absent
 #[test]
 fn impact_no_semantic_json_field_absent() {
     let (y, _dir) = test_yomu();
@@ -2231,6 +2420,7 @@ fn search_from_no_embeddings_returns_ok() {
 }
 
 // COV-1: search(query=None, from=None) → InvalidInput("query or --from is required")
+// T-248: search_requires_query_or_from
 #[test]
 fn search_requires_query_or_from() {
     let (y, _dir) = test_yomu();
@@ -2242,6 +2432,7 @@ fn search_requires_query_or_from() {
 }
 
 // COV-2: --from rejects path traversal
+// T-249: search_from_rejects_path_traversal
 #[test]
 fn search_from_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
@@ -2279,6 +2470,7 @@ fn search_from_file_integration() {
 }
 
 // COV-5: --from + --path combination excludes files outside path prefix
+// T-250: search_from_with_path_filter_excludes_other_dirs
 #[test]
 fn search_from_with_path_filter_excludes_other_dirs() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -2299,6 +2491,7 @@ fn search_from_with_path_filter_excludes_other_dirs() {
 }
 
 // COV-8: --from with json=true returns valid JSON with "results" key
+// T-251: search_from_json_output_has_results_key
 #[test]
 fn search_from_json_output_has_results_key() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
