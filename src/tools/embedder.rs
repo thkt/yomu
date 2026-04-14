@@ -2,23 +2,11 @@ use std::sync::Arc;
 
 use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
 
-pub(super) use amici::model::embedder::DegradedReason;
+pub(super) use amici::model::embedder::{DegradedReason, degraded_reason_user_note};
 
 use super::Yomu;
 
 pub(super) const DEFAULT_EMBED_BUDGET: u32 = 50;
-
-pub(super) fn degraded_reason_user_note(reason: DegradedReason) -> Option<&'static str> {
-    match reason {
-        DegradedReason::Disabled => None,
-        DegradedReason::NotInstalled => {
-            Some("embedding model not installed; results from text search only")
-        }
-        DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
-            Some("embedding model unavailable; results from text search only")
-        }
-    }
-}
 
 pub(super) fn record_embedder_warning(reason: DegradedReason, detail: &str) {
     tracing::warn!(reason = ?reason, detail, "Embedder unavailable, using text search only");
