@@ -1,35 +1,21 @@
 use std::sync::Arc;
 
-use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, EmbedInitError, Embedder};
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
+
+pub(super) use amici::model::embedder::DegradedReason;
 
 use super::Yomu;
 
 pub(super) const DEFAULT_EMBED_BUDGET: u32 = 50;
-const MIN_EMBED_BUDGET: u32 = 1;
-const MAX_EMBED_BUDGET: u32 = 500;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DegradedReason {
-    Disabled,
-    NotInstalled,
-    BackendUnavailable,
-    ProbeFailed,
-    DownloadFailed,
-}
-
-impl DegradedReason {
-    pub(super) fn user_note(&self) -> Option<&'static str> {
-        match self {
-            Self::Disabled => None,
-            Self::NotInstalled => {
-                Some("embedding model not installed; results from text search only")
-            }
-            Self::BackendUnavailable | Self::ProbeFailed => {
-                Some("embedding model unavailable; results from text search only")
-            }
-            Self::DownloadFailed => {
-                Some("embedding model download failed; results from text search only")
-            }
+pub(super) fn degraded_reason_user_note(reason: DegradedReason) -> Option<&'static str> {
+    match reason {
+        DegradedReason::Disabled => None,
+        DegradedReason::NotInstalled => {
+            Some("embedding model not installed; results from text search only")
+        }
+        DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
+            Some("embedding model unavailable; results from text search only")
         }
     }
 }
@@ -72,11 +58,13 @@ pub(super) fn parse_embed_budget() -> u32 {
 pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
     match value {
         Some(v) => match v.parse::<u32>() {
-            Ok(n) if (MIN_EMBED_BUDGET..=MAX_EMBED_BUDGET).contains(&n) => n,
+            Ok(n) if (super::MIN_EMBED_BUDGET..=super::MAX_EMBED_BUDGET).contains(&n) => n,
             Ok(n) => {
                 tracing::warn!(
                     value = n,
-                    "YOMU_EMBED_BUDGET out of range ({MIN_EMBED_BUDGET}..={MAX_EMBED_BUDGET}), using default"
+                    "YOMU_EMBED_BUDGET out of range ({}..={}), using default",
+                    super::MIN_EMBED_BUDGET,
+                    super::MAX_EMBED_BUDGET
                 );
                 DEFAULT_EMBED_BUDGET
             }
@@ -89,136 +77,41 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
     }
 }
 
-pub(super) fn parse_auto_download(value: Option<&str>) -> bool {
-    match value {
-        Some("1" | "true" | "yes" | "on") => true,
-        Some("0" | "false" | "no" | "off") | None => false,
-        Some(v) => {
-            tracing::warn!(
-                value = %v,
-                "YOMU_AUTO_DOWNLOAD_MODEL only accepts 1/true/yes/on, ignoring"
-            );
-            false
-        }
-    }
-}
-
-/// Load the embedding model, downloading it if `YOMU_AUTO_DOWNLOAD_MODEL=1`.
-///
-/// # Interruption Safety
-///
-/// If a download is interrupted (e.g. SIGINT), hf-hub leaves only a `.part`
-/// file in the cache and no corrupted blob is written. The next call detects no
-/// cached artifacts and retries the download cleanly.
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     if disabled {
         tracing::info!("Embedding disabled via YOMU_EMBED=0");
         return Err(DegradedReason::Disabled);
     }
-    let auto_download =
-        parse_auto_download(std::env::var("YOMU_AUTO_DOWNLOAD_MODEL").ok().as_deref());
-    try_load_embedder_with(
-        auto_download,
+    let result = amici::model::embedder::try_load_embedder_with(
         || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
-        || {
-            let spinner =
-                crate::progress::Spinner::new("Downloading model (YOMU_AUTO_DOWNLOAD_MODEL=1)...");
-            let result = rurico::embed::download_model(rurico::embed::ModelId::default());
-            match result {
-                Ok(p) => {
-                    spinner.finish("Model ready");
-                    Ok(p)
-                }
-                Err(e) => {
-                    spinner.cancel();
-                    Err(e)
-                }
-            }
-        },
-    )
-}
-
-fn try_load_embedder_with<CE: std::fmt::Display, DE: std::fmt::Display>(
-    auto_download: bool,
-    cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
-    download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
-) -> Result<Arc<dyn Embed>, DegradedReason> {
-    try_load_embedder_with_fns(
-        auto_download,
-        cache_check,
-        download_fn,
-        Embedder::probe,
-        Embedder::new,
-    )
-}
-
-fn try_load_embedder_with_fns<CE, DE>(
-    auto_download: bool,
-    cache_check: impl FnOnce() -> Result<Option<rurico::embed::Artifacts>, CE>,
-    download_fn: impl FnOnce() -> Result<rurico::embed::Artifacts, DE>,
-    probe_fn: impl FnOnce(
-        &rurico::embed::Artifacts,
-    ) -> Result<rurico::embed::ProbeStatus, EmbedInitError>,
-    new_fn: impl FnOnce(&rurico::embed::Artifacts) -> Result<Embedder, EmbedInitError>,
-) -> Result<Arc<dyn Embed>, DegradedReason>
-where
-    CE: std::fmt::Display,
-    DE: std::fmt::Display,
-{
-    use rurico::embed::ProbeStatus;
-
-    fn probe_failed(e: &dyn std::fmt::Display) -> DegradedReason {
-        record_embedder_warning(DegradedReason::ProbeFailed, &e.to_string());
-        DegradedReason::ProbeFailed
+        |e| tracing::warn!(error = %e, "failed to delete corrupt model files"),
+    );
+    if let Err(reason) = result.as_ref() {
+        let detail = match reason {
+            DegradedReason::NotInstalled => "model not installed",
+            DegradedReason::BackendUnavailable => "MLX backend unavailable",
+            DegradedReason::ProbeFailed => "probe failed",
+            DegradedReason::Disabled => unreachable!("disabled handled above"),
+        };
+        record_embedder_warning(*reason, detail);
+    } else {
+        tracing::info!("Embedding model loaded successfully");
     }
-
-    fn delete_corrupt(paths: rurico::embed::Artifacts) {
-        if let Err(e) = paths.delete_files() {
-            tracing::warn!(error = %e, "failed to delete corrupt model files");
-        }
-    }
-
-    let paths = match cache_check() {
-        Ok(Some(p)) => p,
-        Ok(None) if auto_download => match download_fn() {
-            Ok(p) => p,
-            Err(e) => {
-                record_embedder_warning(DegradedReason::DownloadFailed, &e.to_string());
-                return Err(DegradedReason::DownloadFailed);
-            }
-        },
-        Ok(None) => return Err(DegradedReason::NotInstalled),
-        Err(e) => return Err(probe_failed(&e)),
-    };
-    match probe_fn(&paths) {
-        Ok(ProbeStatus::Available) => {}
-        Ok(ProbeStatus::BackendUnavailable) => {
-            record_embedder_warning(
-                DegradedReason::BackendUnavailable,
-                "MLX backend unavailable",
-            );
-            return Err(DegradedReason::BackendUnavailable);
-        }
-        Err(e @ EmbedInitError::ModelCorrupt { .. }) => {
-            delete_corrupt(paths);
-            return Err(probe_failed(&e));
-        }
-        Err(e) => return Err(probe_failed(&e)),
-    }
-    let embedder = new_fn(&paths).map_err(|e| probe_failed(&e))?;
-    tracing::info!("Embedding model loaded successfully");
-    Ok(Arc::new(embedder) as Arc<dyn Embed>)
+    result
 }
 
 impl Yomu {
-    pub(super) fn get_embedder(&self) -> &dyn Embed {
-        static NOOP: NoOpEmbedder = NoOpEmbedder;
+    pub(super) fn try_embedder(&self) -> Result<&dyn Embed, DegradedReason> {
         let disabled = self.embed_disabled;
         self.embedder
             .get_or_init(|| try_load_embedder(disabled))
             .as_deref()
-            .ok()
-            .unwrap_or(&NOOP)
+            .map_err(|r| *r)
+    }
+
+    pub(super) fn get_embedder(&self) -> &dyn Embed {
+        static NOOP: NoOpEmbedder = NoOpEmbedder;
+        self.try_embedder().unwrap_or(&NOOP)
     }
 
     pub(super) fn degraded_reason(&self) -> Option<&DegradedReason> {
@@ -250,8 +143,7 @@ impl Yomu {
         }
     }
 
-    /// Create a Yomu with `embed_disabled` and an empty OnceLock so that
-    /// `get_embedder()` exercises the real `try_load_embedder` path.
+    /// Exercises the real `try_load_embedder` path with `embed_disabled=true`.
     pub(super) fn for_test_embed_disabled(
         conn: crate::storage::Db,
         root: std::path::PathBuf,
@@ -272,71 +164,9 @@ impl Yomu {
 mod tests {
     use super::*;
 
-    // disabled=true → DegradedReason::Disabled
     #[test]
     fn disabled_returns_disabled_reason() {
         let result = try_load_embedder(true);
         assert!(matches!(result, Err(DegradedReason::Disabled)));
-    }
-
-    // cache returns None, no auto_download → DegradedReason::NotInstalled
-    #[test]
-    fn absent_returns_not_installed() {
-        let result = try_load_embedder_with(
-            false,
-            || Ok::<_, &str>(None),
-            || -> Result<rurico::embed::Artifacts, &str> {
-                unreachable!("download_fn must not be called when auto_download=false")
-            },
-        );
-        assert!(matches!(result, Err(DegradedReason::NotInstalled)));
-    }
-
-    // cache_check fails → DegradedReason::ProbeFailed
-    #[test]
-    fn cache_error_returns_probe_failed() {
-        let result = try_load_embedder_with(
-            false,
-            || Err::<Option<rurico::embed::Artifacts>, _>("cache broken"),
-            || -> Result<rurico::embed::Artifacts, &str> {
-                unreachable!("download_fn must not be called when cache_check fails")
-            },
-        );
-        assert!(matches!(result, Err(DegradedReason::ProbeFailed)));
-    }
-
-    // auto_download=true, model absent, download fails → DegradedReason::DownloadFailed
-    #[test]
-    fn auto_download_failure_returns_download_failed() {
-        let result = try_load_embedder_with(
-            true,
-            || Ok::<_, &str>(None),
-            || Err::<rurico::embed::Artifacts, _>("download failed"),
-        );
-        assert!(matches!(result, Err(DegradedReason::DownloadFailed)));
-    }
-
-    #[test]
-    fn parse_auto_download_truthy_values() {
-        assert!(parse_auto_download(Some("1")));
-        assert!(parse_auto_download(Some("true")));
-        assert!(parse_auto_download(Some("yes")));
-        assert!(parse_auto_download(Some("on")));
-    }
-
-    #[test]
-    fn parse_auto_download_falsy_values() {
-        assert!(!parse_auto_download(Some("0")));
-        assert!(!parse_auto_download(Some("false")));
-        assert!(!parse_auto_download(Some("no")));
-        assert!(!parse_auto_download(Some("off")));
-        assert!(!parse_auto_download(None));
-    }
-
-    #[test]
-    fn parse_auto_download_unrecognized_returns_false() {
-        assert!(!parse_auto_download(Some("TRUE")));
-        assert!(!parse_auto_download(Some("2")));
-        assert!(!parse_auto_download(Some("enabled")));
     }
 }

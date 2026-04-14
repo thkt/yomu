@@ -24,27 +24,7 @@ pub type Db = Connection;
 pub use rurico::embed::EMBEDDING_DIMS;
 pub use rurico::storage::f32_as_bytes;
 
-pub(crate) fn in_placeholders(len: usize) -> String {
-    (1..=len)
-        .map(|i| format!("?{i}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-// Use when multiple IN clauses share a parameter list: unnamed `?` avoids
-// index collisions that numbered `?N` would cause when params are appended incrementally.
-pub(crate) fn anon_placeholders(n: usize) -> String {
-    vec!["?"; n].join(", ")
-}
-
-pub(crate) fn as_sql_params<T: rusqlite::types::ToSql>(
-    values: &[T],
-) -> Vec<&dyn rusqlite::types::ToSql> {
-    values
-        .iter()
-        .map(|v| v as &dyn rusqlite::types::ToSql)
-        .collect()
-}
+pub(crate) use amici::storage::{anon_placeholders, as_sql_params, in_placeholders};
 
 pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, StorageError> {
     let count: u32 = conn.query_row(

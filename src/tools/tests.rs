@@ -1,10 +1,11 @@
 use super::embedder::{
-    RECORDED_WARNINGS, get_recorded_warnings, parse_budget_value, record_embedder_warning,
+    RECORDED_WARNINGS, degraded_reason_user_note, get_recorded_warnings, parse_budget_value,
+    record_embedder_warning,
 };
 use super::*;
 use std::collections::HashMap;
 
-use rurico::embed::FailingEmbedder;
+use rurico::embed::{FailingEmbedder, MockEmbedder};
 
 fn parse_json(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
@@ -1457,7 +1458,7 @@ fn t012_parent_hit_no_duplicate_parent_display() {
 }
 
 #[test]
-fn t015_json_output_includes_parent_chunk_id() {
+fn json_output_includes_parent_chunk_id() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
@@ -1500,17 +1501,17 @@ fn t015_json_output_includes_parent_chunk_id() {
     let innerfn_item = &items[0];
     assert_eq!(
         innerfn_item["parent_chunk_id"], 42,
-        "[T-015] InnerFn result should have parent_chunk_id: {json}"
+        "InnerFn result should have parent_chunk_id: {json}"
     );
 
     let component_item = &items[1];
     assert!(
         component_item.get("parent_chunk_id").is_some(),
-        "[T-015] Component result should have parent_chunk_id field: {json}"
+        "Component result should have parent_chunk_id field: {json}"
     );
     assert!(
         component_item["parent_chunk_id"].is_null(),
-        "[T-015] Component result parent_chunk_id should be null: {json}"
+        "Component result parent_chunk_id should be null: {json}"
     );
 }
 
@@ -1791,22 +1792,33 @@ fn t009_disabled_no_user_note_in_search() {
 
 #[test]
 fn user_note_exact_values_for_all_variants() {
-    assert_eq!(DegradedReason::Disabled.user_note(), None);
+    assert_eq!(degraded_reason_user_note(DegradedReason::Disabled), None);
     assert_eq!(
-        DegradedReason::NotInstalled.user_note(),
+        degraded_reason_user_note(DegradedReason::NotInstalled),
         Some("embedding model not installed; results from text search only")
     );
     assert_eq!(
-        DegradedReason::BackendUnavailable.user_note(),
+        degraded_reason_user_note(DegradedReason::BackendUnavailable),
         Some("embedding model unavailable; results from text search only")
     );
     assert_eq!(
-        DegradedReason::ProbeFailed.user_note(),
+        degraded_reason_user_note(DegradedReason::ProbeFailed),
         Some("embedding model unavailable; results from text search only")
     );
+}
+
+// T-116: degraded_reason() returns the amici-provided DegradedReason type
+#[test]
+fn t116_degraded_reason_returns_amici_type() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
     assert_eq!(
-        DegradedReason::DownloadFailed.user_note(),
-        Some("embedding model download failed; results from text search only")
+        y.degraded_reason(),
+        Some(&amici::model::embedder::DegradedReason::NotInstalled)
     );
 }
 
@@ -1842,6 +1854,96 @@ fn json_notes_present_when_degraded() {
     assert_eq!(
         notes[0], "embedding model not installed; results from text search only",
         "note should match NotInstalled variant: {json}"
+    );
+}
+
+// T-109: un-embedded chunks are embedded, result reports count
+#[test]
+fn t109_embed_pending_chunks_returns_count() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div>button</div>; }",
+    )]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let text = y.embed(None, false).unwrap();
+    assert!(
+        text.starts_with("Embedded"),
+        "[T-109] expected result starting with 'Embedded': {text}"
+    );
+    assert!(
+        text.contains("chunks"),
+        "[T-109] expected 'chunks' in result: {text}"
+    );
+}
+
+// T-110: no pending chunks → "nothing to embed"
+#[test]
+fn t110_embed_nothing_to_embed() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    // No index run — no chunks to embed.
+
+    let text = y.embed(None, false).unwrap();
+    assert_eq!(
+        text, "nothing to embed",
+        "[T-110] expected 'nothing to embed': {text}"
+    );
+}
+
+// T-111: json=true produces {"embedded": N, "budget_exhausted": bool}
+#[test]
+fn t111_embed_json_format() {
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let (conn, dir) = setup_test_files(&[(
+        "src/Button.tsx",
+        "export function Button() { return <div>button</div>; }",
+    )]);
+    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
+    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+
+    let json = y.embed(None, true).unwrap();
+    let parsed = parse_json(&json);
+    assert!(
+        parsed.get("embedded").is_some(),
+        "[T-111] expected 'embedded' key in JSON: {json}"
+    );
+    assert!(
+        parsed.get("budget_exhausted").is_some(),
+        "[T-111] expected 'budget_exhausted' key in JSON: {json}"
+    );
+}
+
+// T-112: embedder not installed → YomuError::EmbedderUnavailable
+#[test]
+fn t112_embed_embedder_unavailable_returns_error() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(
+        conn,
+        dir.path().to_path_buf(),
+        Err(DegradedReason::NotInstalled),
+    );
+
+    let result = y.embed(None, false);
+    assert!(
+        matches!(result, Err(YomuError::EmbedderUnavailable(_))),
+        "[T-112] expected EmbedderUnavailable error: {result:?}"
+    );
+}
+
+// T-120: embed() with Disabled reason → YomuError::EmbedderUnavailable
+#[test]
+fn t120_embed_disabled_returns_embedder_unavailable() {
+    let (conn, dir) = setup_test_files(&[]);
+    let y = Yomu::for_test_raw(conn, dir.path().to_path_buf(), Err(DegradedReason::Disabled));
+
+    let result = y.embed(None, false);
+    assert!(
+        matches!(result, Err(YomuError::EmbedderUnavailable(_))),
+        "[T-120] expected EmbedderUnavailable for Disabled reason: {result:?}"
     );
 }
 

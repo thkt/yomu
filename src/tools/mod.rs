@@ -16,12 +16,12 @@ use crate::storage;
 
 #[cfg(any(test, feature = "test-support"))]
 use embedder::DEFAULT_EMBED_BUDGET;
-use embedder::{DegradedReason, parse_embed_budget};
+use embedder::{DegradedReason, degraded_reason_user_note, parse_embed_budget};
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_dry_run_json,
-    format_impact_all, format_impact_json, format_impact_results, format_index_json,
-    format_no_results_message, format_rebuild_json, format_results_grouped, format_results_json,
-    format_status_json,
+    format_embed_result, format_impact_all, format_impact_json, format_impact_results,
+    format_index_json, format_no_results_message, format_rebuild_json, format_results_grouped,
+    format_results_json, format_status_json,
 };
 
 const SEMANTIC_THRESHOLD: f32 = 0.7;
@@ -32,6 +32,8 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
+pub const MIN_EMBED_BUDGET: u32 = 1;
+pub const MAX_EMBED_BUDGET: u32 = 500;
 
 #[derive(Debug, PartialEq)]
 enum IndexState {
@@ -67,6 +69,8 @@ pub enum YomuError {
     Internal(String),
     #[error("query error: {0}")]
     Query(#[from] crate::query::QueryError),
+    #[error("{0}")]
+    EmbedderUnavailable(String),
 }
 
 pub struct Yomu {
@@ -76,7 +80,7 @@ pub struct Yomu {
     embed_budget: u32,
     embed_disabled: bool,
     rerank_enabled: bool,
-    reranker: OnceLock<reranker::ModelLoad<Box<dyn Rerank>>>,
+    reranker: OnceLock<amici::model::ModelLoad<Box<dyn Rerank>>>,
 }
 
 impl Yomu {
@@ -191,7 +195,7 @@ impl Yomu {
             notes.push(note);
         }
         if let Some(reason) = self.degraded_reason() {
-            if let Some(note) = reason.user_note() {
+            if let Some(note) = degraded_reason_user_note(*reason) {
                 notes.push(note.to_string());
             }
         } else if outcome.degraded {
@@ -429,6 +433,27 @@ impl Yomu {
             ref_count,
             stats.last_indexed_at.as_deref().unwrap_or("never")
         ))
+    }
+
+    pub fn embed(&self, budget: Option<u32>, json: bool) -> Result<String, YomuError> {
+        let embedder = self.try_embedder().map_err(|reason| {
+            let msg = match reason {
+                DegradedReason::Disabled => "embedding is disabled (YOMU_EMBED=0)",
+                DegradedReason::NotInstalled => "embedding model not installed",
+                DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
+                    "embedding model unavailable"
+                }
+            };
+            YomuError::EmbedderUnavailable(msg.to_string())
+        })?;
+        let max_chunks = budget.unwrap_or(self.embed_budget);
+        let result = indexer::run_incremental_embed(
+            Arc::clone(&self.conn),
+            embedder,
+            max_chunks,
+            None,
+        )?;
+        Ok(format_embed_result(&result, json))
     }
 }
 
