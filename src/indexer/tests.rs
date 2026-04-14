@@ -4,6 +4,7 @@ use rurico::embed::{
     AlternatingEmbedder, FailingEmbedder, MismatchEmbedder, MockChunkedEmbedder, MockEmbedder,
 };
 
+// T-362: file_hash_is_deterministic
 #[test]
 fn file_hash_is_deterministic() {
     let h1 = file_hash("hello world");
@@ -11,6 +12,7 @@ fn file_hash_is_deterministic() {
     assert_eq!(h1, h2);
 }
 
+// T-363: file_hash_changes_with_content
 #[test]
 fn file_hash_changes_with_content() {
     let h1 = file_hash("hello");
@@ -18,6 +20,7 @@ fn file_hash_changes_with_content() {
     assert_ne!(h1, h2);
 }
 
+// T-364: enrich_for_embedding_with_imports
 #[test]
 fn enrich_for_embedding_with_imports() {
     let result = enrich_for_embedding(
@@ -35,6 +38,7 @@ fn enrich_for_embedding_with_imports() {
     assert!(result.ends_with("function App() {}"));
 }
 
+// T-365: enrich_for_embedding_without_imports
 #[test]
 fn enrich_for_embedding_without_imports() {
     let result = enrich_for_embedding(
@@ -51,12 +55,14 @@ fn enrich_for_embedding_without_imports() {
     );
 }
 
+// T-366: enrich_for_embedding_empty_content
 #[test]
 fn enrich_for_embedding_empty_content() {
     let result = enrich_for_embedding("src/empty.ts", "other", None, None, "", "");
     assert_eq!(result, "// File: src/empty.ts\n// Type: other\n");
 }
 
+// T-367: enrich_for_embedding_with_name
 #[test]
 fn enrich_for_embedding_with_name() {
     let result = enrich_for_embedding(
@@ -71,6 +77,7 @@ fn enrich_for_embedding_with_name() {
     assert!(!result.contains("// Parent:"));
 }
 
+// T-368: enrich_for_embedding_with_name_and_parent
 #[test]
 fn enrich_for_embedding_with_name_and_parent() {
     let result = enrich_for_embedding(
@@ -88,12 +95,14 @@ fn enrich_for_embedding_with_name_and_parent() {
     assert!(name_pos < parent_pos);
 }
 
+// T-369: to_rel_path_outside_root
 #[test]
 fn to_rel_path_outside_root() {
     let result = to_rel_path(std::path::Path::new("/a"), std::path::Path::new("/b/c.tsx"));
     assert_eq!(result, "/b/c.tsx");
 }
 
+// T-370: read_source_too_large
 #[test]
 fn read_source_too_large() {
     let dir = tempfile::tempdir().unwrap();
@@ -105,6 +114,7 @@ fn read_source_too_large() {
     assert!(matches!(result.unwrap_err(), FileAction::Skip));
 }
 
+// T-371: read_source_nonexistent
 #[test]
 fn read_source_nonexistent() {
     let result = read_source(std::path::Path::new("/nonexistent/file.ts"));
@@ -119,6 +129,7 @@ fn test_db() -> (storage::Db, tempfile::TempDir) {
     (conn, dir)
 }
 
+// T-372: run_index_with_mock_embedder
 #[test]
 fn run_index_with_mock_embedder() {
     let dir = tempfile::tempdir().unwrap();
@@ -157,6 +168,7 @@ fn run_index_with_mock_embedder() {
     assert!(stats.total_chunks >= 2);
 }
 
+// T-373: run_index_with_multi_chunk_embedder_keeps_first_only
 #[test]
 fn run_index_with_multi_chunk_embedder_keeps_first_only() {
     let dir = tempfile::tempdir().unwrap();
@@ -190,6 +202,7 @@ fn run_index_with_multi_chunk_embedder_keeps_first_only() {
     assert_eq!(stats.embedded_chunks, stats.embeddable_chunks);
 }
 
+// T-374: run_index_skips_unchanged_files
 #[test]
 fn run_index_skips_unchanged_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -223,6 +236,7 @@ fn run_index_skips_unchanged_files() {
     assert_eq!(r2.files_skipped, 1);
 }
 
+// T-375: run_index_force_reindexes
 #[test]
 fn run_index_force_reindexes() {
     let dir = tempfile::tempdir().unwrap();
@@ -253,6 +267,7 @@ fn run_index_force_reindexes() {
     assert_eq!(r2.files_skipped, 0);
 }
 
+// T-376: run_index_removes_deleted_file_chunks
 #[test]
 fn run_index_removes_deleted_file_chunks() {
     let dir = tempfile::tempdir().unwrap();
@@ -296,6 +311,7 @@ fn run_index_removes_deleted_file_chunks() {
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
 
+// T-377: build_references_named_import
 #[test]
 fn build_references_named_import() {
     let tmp = tempfile::tempdir().unwrap();
@@ -320,6 +336,7 @@ fn build_references_named_import() {
     assert_eq!(refs[0].ref_kind, RefKind::Named);
 }
 
+// T-378: build_references_side_effect_import
 #[test]
 fn build_references_side_effect_import() {
     let tmp = tempfile::tempdir().unwrap();
@@ -338,6 +355,7 @@ fn build_references_side_effect_import() {
     assert_eq!(refs[0].ref_kind, RefKind::SideEffect);
 }
 
+// T-379: build_references_unresolvable_returns_empty
 #[test]
 fn build_references_unresolvable_returns_empty() {
     let tmp = tempfile::tempdir().unwrap();
@@ -356,6 +374,7 @@ fn build_references_unresolvable_returns_empty() {
     assert!(refs.is_empty());
 }
 
+// T-380: build_references_rust_crate_import
 #[test]
 fn build_references_rust_crate_import() {
     let tmp = tempfile::tempdir().unwrap();
@@ -381,6 +400,7 @@ fn build_references_rust_crate_import() {
     assert_eq!(refs[0].ref_kind, RefKind::Named);
 }
 
+// T-381: run_index_stores_imports_in_file_context
 #[test]
 fn run_index_stores_imports_in_file_context() {
     let dir = tempfile::tempdir().unwrap();
@@ -416,6 +436,7 @@ fn run_index_stores_imports_in_file_context() {
     );
 }
 
+// T-382: run_chunk_only_index_stores_chunks_without_embeddings
 #[test]
 fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let dir = tempfile::tempdir().unwrap();
@@ -454,6 +475,7 @@ fn run_chunk_only_index_stores_chunks_without_embeddings() {
     );
 }
 
+// T-383: run_incremental_embed_empty_db_returns_zero
 #[test]
 fn run_incremental_embed_empty_db_returns_zero() {
     let dir = tempfile::tempdir().unwrap();
@@ -469,6 +491,7 @@ fn run_incremental_embed_empty_db_returns_zero() {
     assert!(!result.budget_exhausted);
 }
 
+// T-384: run_incremental_embed_within_budget
 #[test]
 fn run_incremental_embed_within_budget() {
     let dir = tempfile::tempdir().unwrap();
@@ -501,6 +524,7 @@ fn run_incremental_embed_within_budget() {
     assert_eq!(stats_after.embedded_chunks, stats_after.total_chunks);
 }
 
+// T-385: run_incremental_embed_exhausts_budget
 #[test]
 fn run_incremental_embed_exhausts_budget() {
     let dir = tempfile::tempdir().unwrap();
@@ -530,6 +554,7 @@ fn run_incremental_embed_exhausts_budget() {
     assert!(stats.embedded_chunks < stats.total_chunks);
 }
 
+// T-386: run_incremental_embed_prioritizes_type_hints
 #[test]
 fn run_incremental_embed_prioritizes_type_hints() {
     let dir = tempfile::tempdir().unwrap();
@@ -604,6 +629,7 @@ fn run_incremental_embed_prioritizes_type_hints() {
     assert!(hook_embedded, "hook file should be embedded first");
 }
 
+// T-387: run_incremental_embed_none_hints_preserves_order
 #[test]
 fn run_incremental_embed_none_hints_preserves_order() {
     let dir = tempfile::tempdir().unwrap();
@@ -655,6 +681,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
     assert!(!result.budget_exhausted);
 }
 
+// T-388: run_incremental_embed_recovers_after_intermittent_failure
 #[test]
 fn run_incremental_embed_recovers_after_intermittent_failure() {
     let dir = tempfile::tempdir().unwrap();
@@ -699,6 +726,7 @@ fn run_incremental_embed_recovers_after_intermittent_failure() {
     );
 }
 
+// T-389: run_incremental_embed_aborts_after_consecutive_failures
 #[test]
 fn run_incremental_embed_aborts_after_consecutive_failures() {
     let dir = tempfile::tempdir().unwrap();
@@ -742,6 +770,7 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
     assert!(err_msg.contains("mock failure"), "got: {err_msg}");
 }
 
+// T-390: embed_and_store_aborts_after_consecutive_failures
 #[test]
 fn embed_and_store_aborts_after_consecutive_failures() {
     let dir = tempfile::tempdir().unwrap();
@@ -773,6 +802,7 @@ fn embed_and_store_aborts_after_consecutive_failures() {
     );
 }
 
+// T-391: order_files_for_embedding_most_imported_first
 #[test]
 fn order_files_for_embedding_most_imported_first() {
     let (conn, _dir) = test_db();
@@ -827,6 +857,7 @@ fn order_files_for_embedding_most_imported_first() {
     assert_eq!(ordered[1], "src/A.tsx");
 }
 
+// T-392: order_files_for_embedding_type_hints_prioritize
 #[test]
 fn order_files_for_embedding_type_hints_prioritize() {
     let (conn, _dir) = test_db();
@@ -873,6 +904,7 @@ fn order_files_for_embedding_type_hints_prioritize() {
     );
 }
 
+// T-393: run_incremental_embed_with_multi_chunk_embedder_keeps_first_only
 #[test]
 fn run_incremental_embed_with_multi_chunk_embedder_keeps_first_only() {
     let (conn, _dir) = test_db();
@@ -909,6 +941,7 @@ fn run_incremental_embed_with_multi_chunk_embedder_keeps_first_only() {
     assert_eq!(stats.embedded_chunks, stats.embeddable_chunks);
 }
 
+// T-394: order_files_for_embedding_empty_hints_no_reorder
 #[test]
 fn order_files_for_embedding_empty_hints_no_reorder() {
     let (conn, _dir) = test_db();
@@ -936,6 +969,7 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
     assert_eq!(ordered[0], "src/A.tsx");
 }
 
+// T-395: embed_and_store_catches_count_mismatch_via_storage
 #[test]
 fn embed_and_store_catches_count_mismatch_via_storage() {
     let dir = tempfile::tempdir().unwrap();
@@ -973,6 +1007,7 @@ fn embed_and_store_catches_count_mismatch_via_storage() {
     // If Err, the mismatch was caught — also acceptable
 }
 
+// T-396: run_incremental_embed_skips_count_mismatch
 #[test]
 fn run_incremental_embed_skips_count_mismatch() {
     let dir = tempfile::tempdir().unwrap();
@@ -1051,6 +1086,7 @@ fn run_incremental_embed_skips_count_mismatch() {
     );
 }
 
+// T-397: run_chunk_only_index_handles_rust_files
 #[test]
 fn run_chunk_only_index_handles_rust_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -1081,6 +1117,7 @@ fn run_chunk_only_index_handles_rust_files() {
 }
 
 #[cfg(unix)]
+// T-398: run_index_counts_unreadable_files_as_errors
 #[test]
 fn run_index_counts_unreadable_files_as_errors() {
     use std::os::unix::fs::PermissionsExt;

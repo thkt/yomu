@@ -4,6 +4,7 @@ fn yomu_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_yomu"))
 }
 
+// T-495: version_flag
 #[test]
 fn version_flag() {
     let output = yomu_cmd().arg("--version").output().unwrap();
@@ -15,6 +16,7 @@ fn version_flag() {
     );
 }
 
+// T-496: help_flag
 #[test]
 fn help_flag() {
     let output = yomu_cmd().arg("--help").output().unwrap();
@@ -30,6 +32,7 @@ fn help_flag() {
     );
 }
 
+// T-497: search_limit_out_of_range
 #[test]
 fn search_limit_out_of_range() {
     let output = yomu_cmd()
@@ -44,6 +47,7 @@ fn search_limit_out_of_range() {
     );
 }
 
+// T-498: search_limit_too_large
 #[test]
 fn search_limit_too_large() {
     let output = yomu_cmd()
@@ -58,6 +62,7 @@ fn search_limit_too_large() {
     );
 }
 
+// T-499: search_offset_too_large
 #[test]
 fn search_offset_too_large() {
     let output = yomu_cmd()
@@ -67,6 +72,7 @@ fn search_offset_too_large() {
     assert!(!output.status.success());
 }
 
+// T-500: impact_depth_too_large
 #[test]
 fn impact_depth_too_large() {
     let output = yomu_cmd()
@@ -76,6 +82,7 @@ fn impact_depth_too_large() {
     assert!(!output.status.success());
 }
 
+// T-501: search_default_limit_accepted
 #[test]
 fn search_default_limit_accepted() {
     // May fail for other reasons (e.g. no project root), but not argument validation
@@ -87,6 +94,7 @@ fn search_default_limit_accepted() {
     );
 }
 
+// T-502: unknown_flag_fails
 #[test]
 fn unknown_flag_fails() {
     let output = yomu_cmd().arg("--nonexistent").output().unwrap();
@@ -121,6 +129,7 @@ fn setup_project() -> tempfile::TempDir {
     dir
 }
 
+// T-503: index_then_status_then_search
 #[test]
 fn index_then_status_then_search() {
     let dir = tempfile::tempdir().unwrap();
@@ -189,6 +198,7 @@ fn index_then_status_then_search() {
     );
 }
 
+// T-504: search_stdin_query
 #[test]
 fn search_stdin_query() {
     let dir = setup_project();
@@ -215,6 +225,7 @@ fn search_stdin_query() {
     );
 }
 
+// T-505: search_format_json
 #[test]
 fn search_format_json() {
     let dir = setup_project();
@@ -261,6 +272,7 @@ fn search_format_json() {
 }
 
 #[cfg(unix)]
+// T-506: search_format_json_includes_index_and_degraded_notes
 #[test]
 fn search_format_json_includes_index_and_degraded_notes() {
     use std::os::unix::fs::PermissionsExt;
@@ -320,6 +332,7 @@ fn search_format_json_includes_index_and_degraded_notes() {
     );
 }
 
+// T-507: index_dry_run
 #[test]
 fn index_dry_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -351,6 +364,7 @@ fn index_dry_run() {
     );
 }
 
+// T-508: rebuild_after_index
 #[test]
 fn rebuild_after_index() {
     let dir = setup_project();
@@ -371,6 +385,7 @@ fn rebuild_after_index() {
     );
 }
 
+// T-509: search_stdin_empty_query_fails
 #[test]
 fn search_stdin_empty_query_fails() {
     let dir = setup_project();
@@ -393,6 +408,7 @@ fn search_stdin_empty_query_fails() {
     );
 }
 
+// T-510: rebuild_dry_run_reports_all_files
 #[test]
 fn rebuild_dry_run_reports_all_files() {
     let dir = setup_project();
@@ -413,6 +429,7 @@ fn rebuild_dry_run_reports_all_files() {
     );
 }
 
+// T-511: shorthand_query_runs_as_search
 #[test]
 fn shorthand_query_runs_as_search() {
     let dir = setup_project();
@@ -433,6 +450,7 @@ fn shorthand_query_runs_as_search() {
     );
 }
 
+// T-512: shorthand_explicit_search_still_works
 #[test]
 fn shorthand_explicit_search_still_works() {
     let dir = setup_project();
@@ -453,6 +471,7 @@ fn shorthand_explicit_search_still_works() {
     );
 }
 
+// T-513: shorthand_help_not_treated_as_search
 #[test]
 fn shorthand_help_not_treated_as_search() {
     let output = yomu_cmd().arg("help").output().unwrap();
@@ -464,6 +483,7 @@ fn shorthand_help_not_treated_as_search() {
     );
 }
 
+// T-514: shorthand_status_not_treated_as_search
 #[test]
 fn shorthand_status_not_treated_as_search() {
     let dir = setup_project();
@@ -484,6 +504,7 @@ fn shorthand_status_not_treated_as_search() {
     );
 }
 
+// T-515: shorthand_typo_not_treated_as_search
 #[test]
 fn shorthand_typo_not_treated_as_search() {
     let output = yomu_cmd().arg("stauts").output().unwrap();
@@ -498,6 +519,7 @@ fn shorthand_typo_not_treated_as_search() {
     );
 }
 
+// T-516: shorthand_near_command_name_still_searches
 #[test]
 fn shorthand_near_command_name_still_searches() {
     // "state" is OSA distance 2 from "status" — should be treated as search, not typo
@@ -523,6 +545,7 @@ fn shorthand_near_command_name_still_searches() {
 
 // --- Global --json flag tests ---
 
+// T-517: json_flag_with_status
 #[test]
 fn json_flag_with_status() {
     let dir = setup_project();
@@ -547,6 +570,7 @@ fn json_flag_with_status() {
     }
 }
 
+// T-518: json_flag_with_index
 #[test]
 fn json_flag_with_index() {
     let dir = tempfile::tempdir().unwrap();
@@ -585,6 +609,7 @@ fn json_flag_with_index() {
     );
 }
 
+// T-519: json_flag_with_rebuild
 #[test]
 fn json_flag_with_rebuild() {
     let dir = setup_project();
@@ -605,6 +630,7 @@ fn json_flag_with_rebuild() {
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
 }
 
+// T-520: json_flag_with_search_shorthand
 #[test]
 fn json_flag_with_search_shorthand() {
     let dir = setup_project();
@@ -627,6 +653,7 @@ fn json_flag_with_search_shorthand() {
     );
 }
 
+// T-521: json_flag_after_subcommand
 #[test]
 fn json_flag_after_subcommand() {
     let dir = setup_project();
@@ -649,6 +676,7 @@ fn json_flag_after_subcommand() {
     );
 }
 
+// T-522: deprecated_format_json_still_works
 #[test]
 fn deprecated_format_json_still_works() {
     let dir = setup_project();
@@ -671,6 +699,7 @@ fn deprecated_format_json_still_works() {
     );
 }
 
+// T-523: json_flag_with_index_dry_run
 #[test]
 fn json_flag_with_index_dry_run() {
     let dir = setup_project();
@@ -701,6 +730,7 @@ fn json_flag_with_index_dry_run() {
     }
 }
 
+// T-524: json_flag_with_rebuild_dry_run
 #[test]
 fn json_flag_with_rebuild_dry_run() {
     let dir = setup_project();
@@ -723,6 +753,7 @@ fn json_flag_with_rebuild_dry_run() {
     );
 }
 
+// T-525: json_flag_with_impact
 #[test]
 fn json_flag_with_impact() {
     let dir = setup_project();
@@ -766,20 +797,21 @@ fn json_flag_with_impact() {
     assert!(parsed.get("total").is_some(), "should have total: {stdout}");
 }
 
+// T-010: probe_embed_flag_rejected
 #[test]
-fn t010_probe_embed_flag_rejected() {
+fn probe_embed_flag_rejected() {
     let output = yomu_cmd()
         .args(["--probe-embed", "/nonexistent/model/dir"])
         .output()
         .unwrap();
     assert!(
         !output.status.success(),
-        "[T-010] --probe-embed should fail: {:?}",
+        "--probe-embed should fail: {:?}",
         output.status
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("unexpected argument") || stderr.contains("unrecognized"),
-        "[T-010] should show unrecognized flag error, got: {stderr}"
+        "should show unrecognized flag error, got: {stderr}"
     );
 }

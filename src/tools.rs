@@ -447,12 +447,8 @@ impl Yomu {
             YomuError::EmbedderUnavailable(msg.to_string())
         })?;
         let max_chunks = budget.unwrap_or(self.embed_budget);
-        let result = indexer::run_incremental_embed(
-            Arc::clone(&self.conn),
-            embedder,
-            max_chunks,
-            None,
-        )?;
+        let result =
+            indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, max_chunks, None)?;
         Ok(format_embed_result(&result, json))
     }
 }

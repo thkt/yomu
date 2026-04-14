@@ -244,8 +244,9 @@ fn main() -> ExitCode {
     }
 }
 
-const KNOWN_SUBCOMMANDS: &[&str] =
-    &["search", "index", "rebuild", "impact", "status", "embed", "model"];
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "search", "index", "rebuild", "impact", "status", "embed", "model",
+];
 const GLOBAL_FLAGS: &[&str] = &["--json"];
 
 fn parse_cli_args<I, T>(args: I) -> Result<Cli, clap::Error>
@@ -364,6 +365,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    // T-305: resolve_query_with_direct_arg
     #[test]
     fn resolve_query_with_direct_arg() {
         let mut stdin = Cursor::new(b"");
@@ -371,6 +373,7 @@ mod tests {
         assert_eq!(result.unwrap(), "auth hooks");
     }
 
+    // T-306: resolve_query_with_dash_reads_stdin
     #[test]
     fn resolve_query_with_dash_reads_stdin() {
         let mut stdin = Cursor::new(b"piped query");
@@ -378,6 +381,7 @@ mod tests {
         assert_eq!(result.unwrap(), "piped query");
     }
 
+    // T-307: resolve_query_with_none_reads_stdin
     #[test]
     fn resolve_query_with_none_reads_stdin() {
         let mut stdin = Cursor::new(b"  streaming hooks  ");
@@ -385,6 +389,7 @@ mod tests {
         assert_eq!(result.unwrap(), "streaming hooks");
     }
 
+    // T-308: resolve_query_with_none_terminal_returns_no_query
     #[test]
     fn resolve_query_with_none_terminal_returns_no_query() {
         let mut stdin = Cursor::new(b"");
@@ -394,6 +399,7 @@ mod tests {
         assert!(err.to_string().contains("query required"));
     }
 
+    // T-309: resolve_query_with_empty_stdin_returns_no_query
     #[test]
     fn resolve_query_with_empty_stdin_returns_no_query() {
         let mut stdin = Cursor::new(b"   ");
@@ -404,6 +410,7 @@ mod tests {
     }
 
     // RC-005: I/O errors must not be swallowed as NoQuery
+    // T-310: resolve_query_with_io_error_returns_io_variant
     #[test]
     fn resolve_query_with_io_error_returns_io_variant() {
         struct FailingReader;
@@ -445,10 +452,10 @@ mod tests {
     #[test]
     fn shorthand_without_flags_has_json_false() {
         let cli = parse_cli_args(["yomu", "query"]).unwrap();
-        assert!(!cli.json, "[T-049] json should default to false");
+        assert!(!cli.json, "json should default to false");
         match cli.command.unwrap() {
             Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
-            other => panic!("[T-049] expected Search, got {other:?}"),
+            other => panic!("expected Search, got {other:?}"),
         }
     }
 
@@ -502,7 +509,7 @@ mod tests {
         assert!(result.is_err(), "typo 'serach' should be clap error");
     }
 
-    // TC-014: non-search subcommand names are not rewritten as search shorthand
+    // T-014: non-search subcommand names are not rewritten as search shorthand
     #[test]
     fn all_subcommands_not_shorthand() {
         for cmd in ["index", "rebuild", "impact", "status"] {
@@ -512,7 +519,7 @@ mod tests {
                     result.as_ref().map(|c| c.command.as_ref()),
                     Ok(Some(Command::Search { .. }))
                 ),
-                "[TC-014] subcommand '{cmd}' should not be rewritten as Search shorthand"
+                "subcommand '{cmd}' should not be rewritten as Search shorthand"
             );
         }
     }
@@ -530,7 +537,7 @@ mod tests {
         }
     }
 
-    // T-078 (parse): --semantic flag on impact parses to semantic=true
+    // T-078: --semantic flag on impact parses to semantic=true
     #[test]
     fn impact_semantic_flag_parses() {
         let cli = parse_cli_args(["yomu", "impact", "src/foo.rs", "--semantic"]).unwrap();
@@ -545,7 +552,7 @@ mod tests {
         }
     }
 
-    // T-079 (parse): impact without --semantic defaults to semantic=false
+    // T-079: impact without --semantic defaults to semantic=false
     #[test]
     fn impact_no_semantic_flag_defaults_false() {
         let cli = parse_cli_args(["yomu", "impact", "src/foo.rs"]).unwrap();

@@ -213,6 +213,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    // T-327: resolve_relative_tsx
     #[test]
     fn resolve_relative_tsx() {
         let tmp = tempfile::tempdir().unwrap();
@@ -226,6 +227,7 @@ mod tests {
         assert_eq!(result, Some("src/Button.tsx".to_string()));
     }
 
+    // T-328: resolve_index_file_tsx
     #[test]
     fn resolve_index_file_tsx() {
         let tmp = tempfile::tempdir().unwrap();
@@ -239,6 +241,7 @@ mod tests {
         assert_eq!(result, Some("src/components/index.tsx".to_string()));
     }
 
+    // T-329: resolve_missing_returns_none
     #[test]
     fn resolve_missing_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -251,6 +254,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-330: resolve_bare_specifier_returns_none
     #[test]
     fn resolve_bare_specifier_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -261,6 +265,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-331: load_aliases_from_tsconfig
     #[test]
     fn load_aliases_from_tsconfig() {
         let tmp = tempfile::tempdir().unwrap();
@@ -283,6 +288,7 @@ mod tests {
         );
     }
 
+    // T-332: load_aliases_no_tsconfig
     #[test]
     fn load_aliases_no_tsconfig() {
         let tmp = tempfile::tempdir().unwrap();
@@ -291,6 +297,7 @@ mod tests {
         assert!(aliases.is_empty());
     }
 
+    // T-333: resolve_alias_path
     #[test]
     fn resolve_alias_path() {
         let tmp = tempfile::tempdir().unwrap();
@@ -312,6 +319,7 @@ mod tests {
         assert_eq!(result, Some("src/lib/auth.ts".to_string()));
     }
 
+    // T-334: resolve_relative_ts
     #[test]
     fn resolve_relative_ts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -324,6 +332,7 @@ mod tests {
         assert_eq!(result, Some("src/utils.ts".to_string()));
     }
 
+    // T-335: resolve_parent_directory
     #[test]
     fn resolve_parent_directory() {
         let tmp = tempfile::tempdir().unwrap();
@@ -338,6 +347,7 @@ mod tests {
         assert_eq!(result, Some("src/utils/format.ts".to_string()));
     }
 
+    // T-336: resolve_css_file
     #[test]
     fn resolve_css_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -350,6 +360,7 @@ mod tests {
         assert_eq!(result, Some("src/styles.css".to_string()));
     }
 
+    // T-337: resolve_prefers_tsx_over_ts
     #[test]
     fn resolve_prefers_tsx_over_ts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -363,6 +374,7 @@ mod tests {
         assert_eq!(result, Some("src/Button.tsx".to_string()));
     }
 
+    // T-338: resolve_index_file_ts
     #[test]
     fn resolve_index_file_ts() {
         let tmp = tempfile::tempdir().unwrap();
@@ -375,6 +387,7 @@ mod tests {
         assert_eq!(result, Some("src/hooks/index.ts".to_string()));
     }
 
+    // T-339: load_aliases_multiple
     #[test]
     fn load_aliases_multiple() {
         let tmp = tempfile::tempdir().unwrap();
@@ -400,6 +413,7 @@ mod tests {
         }));
     }
 
+    // T-340: resolve_non_frontend_extension_returns_none
     #[test]
     fn resolve_non_frontend_extension_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -412,6 +426,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-341: resolve_scoped_package_returns_none
     #[test]
     fn resolve_scoped_package_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -422,6 +437,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-342: resolve_tilde_alias
     #[test]
     fn resolve_tilde_alias() {
         let tmp = tempfile::tempdir().unwrap();
@@ -443,6 +459,7 @@ mod tests {
         assert_eq!(result, Some("lib/core/engine.ts".to_string()));
     }
 
+    // T-343: resolve_reexport_chain_circular
     #[test]
     fn resolve_reexport_chain_circular() {
         let tmp = tempfile::tempdir().unwrap();
@@ -456,6 +473,7 @@ mod tests {
         assert_eq!(chain, vec!["src/b.ts".to_string()]);
     }
 
+    // T-344: resolve_reexport_chain_linear
     #[test]
     fn resolve_reexport_chain_linear() {
         let tmp = tempfile::tempdir().unwrap();
@@ -470,6 +488,7 @@ mod tests {
         assert_eq!(chain, vec!["src/b.ts".to_string(), "src/c.ts".to_string()]);
     }
 
+    // T-345: resolve_reexport_chain_no_reexports
     #[test]
     fn resolve_reexport_chain_no_reexports() {
         let tmp = tempfile::tempdir().unwrap();
@@ -482,6 +501,7 @@ mod tests {
         assert!(chain.is_empty());
     }
 
+    // T-346: resolve_html_file
     #[test]
     fn resolve_html_file() {
         let tmp = tempfile::tempdir().unwrap();

@@ -1,5 +1,6 @@
 use yomu::storage::{StorageError, open_db};
 
+// T-526: open_db_detects_missing_column_in_stale_schema
 #[test]
 fn open_db_detects_missing_column_in_stale_schema() {
     let dir = tempfile::tempdir().unwrap();
@@ -45,6 +46,7 @@ fn open_db_detects_missing_column_in_stale_schema() {
     );
 }
 
+// T-527: open_db_succeeds_with_current_schema
 #[test]
 fn open_db_succeeds_with_current_schema() {
     let dir = tempfile::tempdir().unwrap();

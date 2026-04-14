@@ -121,6 +121,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    // T-315: resolve_crate_basic
     #[test]
     fn resolve_crate_basic() {
         let tmp = tempfile::tempdir().unwrap();
@@ -133,6 +134,7 @@ mod tests {
         assert_eq!(result, Some("src/foo/bar.rs".to_string()));
     }
 
+    // T-316: resolve_crate_nested
     #[test]
     fn resolve_crate_nested() {
         let tmp = tempfile::tempdir().unwrap();
@@ -145,6 +147,7 @@ mod tests {
         assert_eq!(result, Some("src/a/b/c.rs".to_string()));
     }
 
+    // T-317: resolve_crate_mod_rs_fallback
     #[test]
     fn resolve_crate_mod_rs_fallback() {
         let tmp = tempfile::tempdir().unwrap();
@@ -157,6 +160,7 @@ mod tests {
         assert_eq!(result, Some("src/foo/mod.rs".to_string()));
     }
 
+    // T-318: resolve_super_sibling
     #[test]
     fn resolve_super_sibling() {
         let tmp = tempfile::tempdir().unwrap();
@@ -170,6 +174,7 @@ mod tests {
         assert_eq!(result, Some("src/foo/baz.rs".to_string()));
     }
 
+    // T-319: resolve_super_at_root_returns_none
     #[test]
     fn resolve_super_at_root_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -182,6 +187,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-320: resolve_self_submodule
     #[test]
     fn resolve_self_submodule() {
         let tmp = tempfile::tempdir().unwrap();
@@ -195,6 +201,7 @@ mod tests {
         assert_eq!(result, Some("src/foo/sub.rs".to_string()));
     }
 
+    // T-321: resolve_prefers_rs_over_mod_rs
     #[test]
     fn resolve_prefers_rs_over_mod_rs() {
         let tmp = tempfile::tempdir().unwrap();
@@ -209,6 +216,7 @@ mod tests {
         assert_eq!(result, Some("src/foo.rs".to_string()));
     }
 
+    // T-322: resolve_missing_returns_none
     #[test]
     fn resolve_missing_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -220,6 +228,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-323: resolve_super_from_mod_rs
     #[test]
     fn resolve_super_from_mod_rs() {
         let tmp = tempfile::tempdir().unwrap();
@@ -234,6 +243,7 @@ mod tests {
         assert_eq!(result, Some("src/bar.rs".to_string()));
     }
 
+    // T-324: resolve_self_from_file
     #[test]
     fn resolve_self_from_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -248,6 +258,7 @@ mod tests {
         assert_eq!(result, Some("src/foo/bar.rs".to_string()));
     }
 
+    // T-325: resolve_external_crate_returns_none
     #[test]
     fn resolve_external_crate_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -258,6 +269,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // T-326: resolve_super_super_multi_level
     #[test]
     fn resolve_super_super_multi_level() {
         let tmp = tempfile::tempdir().unwrap();

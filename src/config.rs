@@ -18,6 +18,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    // T-312: detect_root_finds_git_dir
     #[test]
     fn detect_root_finds_git_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -31,6 +32,7 @@ mod tests {
         assert_eq!(root, tmp.path());
     }
 
+    // T-313: detect_root_prefers_yomu_over_git
     #[test]
     fn detect_root_prefers_yomu_over_git() {
         let tmp = tempfile::tempdir().unwrap();
@@ -41,6 +43,7 @@ mod tests {
         assert_eq!(root, tmp.path());
     }
 
+    // T-314: detect_root_falls_back_to_start
     #[test]
     fn detect_root_falls_back_to_start() {
         let tmp = tempfile::tempdir().unwrap();
