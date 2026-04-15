@@ -1,3 +1,5 @@
+use std::iter;
+
 use super::*;
 
 // T-399: chunk_tsx_component_function
@@ -176,7 +178,7 @@ fn classify_utility_function_as_other() {
 #[test]
 fn chunk_fallback_produces_overlapping_chunks() {
     let line = "x".repeat(60);
-    let source = std::iter::repeat_n(line.as_str(), 30)
+    let source = iter::repeat_n(line.as_str(), 30)
         .collect::<Vec<_>>()
         .join("\n");
     let chunks = chunk_fallback(&source);
@@ -259,7 +261,7 @@ fn parse_namespace_import() {
     assert_eq!(result[0].source, "./mod");
     assert_eq!(result[0].specifiers.len(), 1);
     assert_eq!(result[0].specifiers[0].name, "*");
-    assert_eq!(result[0].specifiers[0].alias, Some("X".to_string()));
+    assert_eq!(result[0].specifiers[0].alias, Some("X".to_owned()));
     assert_eq!(result[0].specifiers[0].kind, ImportKind::Namespace);
 }
 
@@ -350,7 +352,7 @@ fn parse_reexport_named() {
     let source = "export { Button } from './Button';";
     let result = parse_reexports(source, "tsx");
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].symbol_name, Some("Button".to_string()));
+    assert_eq!(result[0].symbol_name, Some("Button".to_owned()));
     assert_eq!(result[0].source, "./Button");
 }
 
@@ -370,8 +372,8 @@ fn parse_reexport_multiple_named() {
     let source = "export { Button, Card } from './components';";
     let result = parse_reexports(source, "tsx");
     assert_eq!(result.len(), 2);
-    assert_eq!(result[0].symbol_name, Some("Button".to_string()));
-    assert_eq!(result[1].symbol_name, Some("Card".to_string()));
+    assert_eq!(result[0].symbol_name, Some("Button".to_owned()));
+    assert_eq!(result[1].symbol_name, Some("Card".to_owned()));
     assert_eq!(result[0].source, "./components");
 }
 
@@ -389,7 +391,7 @@ fn parse_reexport_mixed_with_imports() {
     let source = "import { useState } from 'react';\nexport { Button } from './Button';\nexport * from './utils';";
     let result = parse_reexports(source, "tsx");
     assert_eq!(result.len(), 2);
-    assert_eq!(result[0].symbol_name, Some("Button".to_string()));
+    assert_eq!(result[0].symbol_name, Some("Button".to_owned()));
     assert_eq!(result[1].symbol_name, None);
     assert_eq!(result[1].source, "./utils");
 }
@@ -410,7 +412,7 @@ fn parse_aliased_named_import() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].specifiers.len(), 1);
     assert_eq!(result[0].specifiers[0].name, "useState");
-    assert_eq!(result[0].specifiers[0].alias, Some("useS".to_string()));
+    assert_eq!(result[0].specifiers[0].alias, Some("useS".to_owned()));
     assert_eq!(result[0].specifiers[0].kind, ImportKind::Named);
 }
 
@@ -941,7 +943,7 @@ fn chunk_rust_parses_use_as_clause() {
     assert_eq!(result.parsed_imports[0].specifiers[0].name, "Bar");
     assert_eq!(
         result.parsed_imports[0].specifiers[0].alias,
-        Some("Baz".to_string())
+        Some("Baz".to_owned())
     );
 }
 
@@ -1096,8 +1098,8 @@ fn chunk_empty_input_html() {
 fn raw_chunk_parent_index_defaults_to_none() {
     let chunk = RawChunk {
         chunk_type: ChunkType::Component,
-        name: Some("App".to_string()),
-        content: "function App() {}".to_string(),
+        name: Some("App".to_owned()),
+        content: "function App() {}".to_owned(),
         start_line: 1,
         end_line: 5,
         parent_index: None,
@@ -1111,8 +1113,8 @@ fn raw_chunk_parent_index_defaults_to_none() {
 fn raw_chunk_parent_index_holds_value() {
     let chunk = RawChunk {
         chunk_type: ChunkType::InnerFn,
-        name: Some("handleClick".to_string()),
-        content: "const handleClick = () => {}".to_string(),
+        name: Some("handleClick".to_owned()),
+        content: "const handleClick = () => {}".to_owned(),
         start_line: 10,
         end_line: 15,
         parent_index: Some(0),
@@ -1125,7 +1127,7 @@ fn raw_chunk_parent_index_holds_value() {
 fn make_large_component(name: &str, inner_fns: &[&str]) -> String {
     let mut lines = Vec::new();
     lines.push(format!("export function {name}() {{"));
-    lines.push("  const [state, setState] = useState(0);".to_string());
+    lines.push("  const [state, setState] = useState(0);".to_owned());
     for inner in inner_fns {
         lines.push(format!("  {inner}"));
     }
@@ -1133,8 +1135,8 @@ fn make_large_component(name: &str, inner_fns: &[&str]) -> String {
     for i in 0..(55usize.saturating_sub(current)) {
         lines.push(format!("  const pad{i} = {i};"));
     }
-    lines.push("  return <div>{state}</div>;".to_string());
-    lines.push("}".to_string());
+    lines.push("  return <div>{state}</div>;".to_owned());
+    lines.push("}".to_owned());
     lines.join("\n")
 }
 
@@ -1312,27 +1314,27 @@ fn parent_emitted_before_children() {
 #[test]
 fn non_component_no_subchunks() {
     let mut hook_lines = vec![
-        "export function useAuth() {".to_string(),
-        "  const [user, setUser] = useState(null);".to_string(),
-        "  const login = () => { setUser({ name: 'Alice' }); };".to_string(),
-        "  const logout = () => { setUser(null); };".to_string(),
+        "export function useAuth() {".to_owned(),
+        "  const [user, setUser] = useState(null);".to_owned(),
+        "  const login = () => { setUser({ name: 'Alice' }); };".to_owned(),
+        "  const logout = () => { setUser(null); };".to_owned(),
     ];
     for i in 0..50 {
         hook_lines.push(format!("  const pad{i} = {i};"));
     }
-    hook_lines.push("  return { user, login, logout };".to_string());
-    hook_lines.push("}".to_string());
+    hook_lines.push("  return { user, login, logout };".to_owned());
+    hook_lines.push("}".to_owned());
 
     let mut other_lines = vec![
-        "function processData() {".to_string(),
-        "  const result = [];".to_string(),
-        "  const transform = () => { return 42; };".to_string(),
+        "function processData() {".to_owned(),
+        "  const result = [];".to_owned(),
+        "  const transform = () => { return 42; };".to_owned(),
     ];
     for i in 0..50 {
         other_lines.push(format!("  const pad{i} = {i};"));
     }
-    other_lines.push("  return result;".to_string());
-    other_lines.push("}".to_string());
+    other_lines.push("  return result;".to_owned());
+    other_lines.push("}".to_owned());
 
     let cases = [
         (hook_lines.join("\n"), ChunkType::Hook, "useAuth"),

@@ -1,7 +1,14 @@
-use std::io::{IsTerminal, Read};
+use std::env;
+use std::ffi::OsString;
+use std::fmt;
+use std::io::{self, IsTerminal, Read};
+use std::iter;
 use std::process::ExitCode;
 
+use amici::cli::try_expand_shorthand;
+use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
+use rurico::model_probe::handle_probe_if_needed;
 use yomu::tools::{
     MAX_EMBED_BUDGET, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, MIN_EMBED_BUDGET,
     Yomu, YomuError,
@@ -101,8 +108,8 @@ enum QueryError {
     Io(String),
 }
 
-impl std::fmt::Display for QueryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for QueryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoQuery(msg) | Self::Io(msg) => f.write_str(msg),
         }
@@ -110,27 +117,24 @@ impl std::fmt::Display for QueryError {
 }
 
 fn main() -> ExitCode {
-    rurico::model_probe::handle_probe_if_needed();
+    handle_probe_if_needed();
 
     tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+        .with_writer(io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("yomu=warn")),
         )
         .init();
 
-    let cli = parse_cli_args(std::env::args_os()).unwrap_or_else(|e| e.exit());
+    let cli = parse_cli_args(env::args_os()).unwrap_or_else(|e| e.exit());
     let json = cli.json;
 
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
             Cli::command()
-                .error(
-                    clap::error::ErrorKind::MissingSubcommand,
-                    "requires a subcommand",
-                )
+                .error(ErrorKind::MissingSubcommand, "requires a subcommand")
                 .exit();
         }
     };
@@ -252,26 +256,20 @@ const GLOBAL_FLAGS: &[&str] = &["--json"];
 fn parse_cli_args<I, T>(args: I) -> Result<Cli, clap::Error>
 where
     I: IntoIterator<Item = T>,
-    T: Into<std::ffi::OsString> + Clone,
+    T: Into<OsString> + Clone,
 {
-    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-    let expanded = amici::cli::try_expand_shorthand(&args, KNOWN_SUBCOMMANDS, GLOBAL_FLAGS);
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let expanded = try_expand_shorthand(&args, KNOWN_SUBCOMMANDS, GLOBAL_FLAGS);
     if let Some(expanded) = expanded
         && let Ok(cli) = Cli::try_parse_from(&expanded)
     {
-        let display: Vec<_> = std::iter::once("yomu")
+        let display: Vec<_> = iter::once("yomu")
             .chain(expanded[1..].iter().filter_map(|a| a.to_str()))
             .collect();
         eprintln!("→ {}", display.join(" "));
         return Ok(cli);
     }
     Cli::try_parse_from(args)
-}
-
-fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
-    let stdin = std::io::stdin();
-    let is_terminal = stdin.is_terminal();
-    resolve_query_with(arg, &mut stdin.lock(), is_terminal)
 }
 
 fn resolve_query_with(
@@ -295,16 +293,23 @@ fn resolve_query_with(
             if trimmed.is_empty() {
                 return Err(QueryError::NoQuery("empty query from stdin".into()));
             }
-            Ok(trimmed.to_string())
+            Ok(trimmed.to_owned())
         }
     }
 }
 
-fn run_model_download(json: bool) -> Result<String, YomuError> {
-    use rurico::embed::{EmbedInitError, Embedder, ModelId, ProbeStatus};
+fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
+    let stdin = io::stdin();
+    let is_terminal = stdin.is_terminal();
+    resolve_query_with(arg, &mut stdin.lock(), is_terminal)
+}
 
-    let spinner = amici::cli::Spinner::new("Downloading model...");
-    let paths = match rurico::embed::download_model(ModelId::default()) {
+fn run_model_download(json: bool) -> Result<String, YomuError> {
+    use amici::cli::Spinner;
+    use rurico::embed::{EmbedInitError, Embedder, ModelId, ProbeStatus, download_model};
+
+    let spinner = Spinner::new("Downloading model...");
+    let paths = match download_model(ModelId::default()) {
         Ok(p) => p,
         Err(e) => {
             spinner.cancel();
@@ -319,7 +324,7 @@ fn run_model_download(json: bool) -> Result<String, YomuError> {
         Ok(ProbeStatus::BackendUnavailable) => {
             spinner.cancel();
             return Err(YomuError::Internal(
-                "Model downloaded but MLX backend is unavailable".to_string(),
+                "Model downloaded but MLX backend is unavailable".to_owned(),
             ));
         }
         Err(e) => {
@@ -338,7 +343,7 @@ fn run_model_download(json: bool) -> Result<String, YomuError> {
             if json {
                 Ok(serde_json::json!({"status": "ok"}).to_string())
             } else {
-                Ok("Model downloaded and verified".to_string())
+                Ok("Model downloaded and verified".to_owned())
             }
         }
         Err(e) => {
@@ -414,12 +419,9 @@ mod tests {
     #[test]
     fn resolve_query_with_io_error_returns_io_variant() {
         struct FailingReader;
-        impl std::io::Read for FailingReader {
-            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "broken pipe",
-                ))
+        impl io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
             }
         }
         let result = resolve_query_with(None, &mut FailingReader, false);
@@ -471,7 +473,7 @@ mod tests {
         }
     }
 
-    // T-076: multiple --path values
+    // T-563: multiple --path values
     #[test]
     fn search_multiple_path_filters_parse() {
         let cli = parse_cli_args([
@@ -492,7 +494,7 @@ mod tests {
         }
     }
 
-    // T-076: --path absent → empty vec (full search)
+    // T-564: --path absent → empty vec (full search)
     #[test]
     fn search_no_path_defaults_to_empty() {
         let cli = parse_cli_args(["yomu", "search", "query"]).unwrap();

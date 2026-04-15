@@ -1,3 +1,5 @@
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 const PROBE_EXTENSIONS: &[&str] = &["tsx", "ts", "jsx", "js"];
@@ -17,35 +19,6 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(root: &Path) -> Self {
-        let canonical_root = root.canonicalize().ok();
-        Self {
-            root: root.to_path_buf(),
-            canonical_root,
-            aliases: load_aliases(root),
-        }
-    }
-
-    /// Returns None for bare specifiers (npm packages) or unresolvable paths.
-    pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
-        let resolved_source = self.apply_alias(source);
-        let source = resolved_source.as_deref().unwrap_or(source);
-
-        if !source.starts_with('.') && !source.starts_with('/') && resolved_source.is_none() {
-            return None;
-        }
-
-        let base_dir = if resolved_source.is_some() {
-            self.root.clone()
-        } else {
-            let from_abs = self.root.join(from_file);
-            from_abs.parent()?.to_path_buf()
-        };
-
-        let candidate = base_dir.join(source);
-        self.probe_path(&candidate)
-    }
-
     fn apply_alias(&self, source: &str) -> Option<String> {
         for alias in &self.aliases {
             if let Some(rest) = source.strip_prefix(&alias.prefix) {
@@ -53,6 +26,10 @@ impl Resolver {
             }
         }
         None
+    }
+
+    fn to_relative(&self, abs: &Path) -> Option<String> {
+        to_relative_path(abs, &self.root, self.canonical_root.as_deref())
     }
 
     fn probe_path(&self, candidate: &Path) -> Option<String> {
@@ -82,8 +59,33 @@ impl Resolver {
         None
     }
 
-    fn to_relative(&self, abs: &Path) -> Option<String> {
-        to_relative_path(abs, &self.root, self.canonical_root.as_deref())
+    pub fn new(root: &Path) -> Self {
+        let canonical_root = root.canonicalize().ok();
+        Self {
+            root: root.to_path_buf(),
+            canonical_root,
+            aliases: load_aliases(root),
+        }
+    }
+
+    /// Returns None for bare specifiers (npm packages) or unresolvable paths.
+    pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
+        let resolved_source = self.apply_alias(source);
+        let source = resolved_source.as_deref().unwrap_or(source);
+
+        if !source.starts_with('.') && !source.starts_with('/') && resolved_source.is_none() {
+            return None;
+        }
+
+        let base_dir = if resolved_source.is_some() {
+            self.root.clone()
+        } else {
+            let from_abs = self.root.join(from_file);
+            from_abs.parent()?.to_path_buf()
+        };
+
+        let candidate = base_dir.join(source);
+        self.probe_path(&candidate)
     }
 
     /// Follow re-export chain through barrel files. Returns files excluding start.
@@ -94,12 +96,12 @@ impl Resolver {
 
         let mut result = Vec::new();
         let mut visited = HashSet::new();
-        visited.insert(start_file.to_string());
-        let mut current = start_file.to_string();
+        visited.insert(start_file.to_owned());
+        let mut current = start_file.to_owned();
 
         loop {
             let abs_path = self.root.join(&current);
-            let content = match std::fs::read_to_string(&abs_path) {
+            let content = match fs::read_to_string(&abs_path) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(file = %current, error = %e, "Failed to read file in re-export chain");
@@ -166,9 +168,9 @@ pub fn to_relative_path(abs: &Path, root: &Path, canonical_root: Option<&Path>) 
 
 pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
     let tsconfig_path = root.join("tsconfig.json");
-    let content = match std::fs::read_to_string(&tsconfig_path) {
+    let content = match fs::read_to_string(&tsconfig_path) {
         Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return vec![],
         Err(e) => {
             tracing::warn!(path = %tsconfig_path.display(), error = %e, "Failed to read tsconfig.json");
             return vec![];
@@ -201,8 +203,8 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
             let target_str = target_arr.first()?.as_str()?;
             let target = target_str.strip_suffix('*')?;
             Some(PathAlias {
-                prefix: prefix.to_string(),
-                target: target.to_string(),
+                prefix: prefix.to_owned(),
+                target: target.to_owned(),
             })
         })
         .collect()
@@ -210,13 +212,16 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
 
     // T-327: resolve_relative_tsx
     #[test]
     fn resolve_relative_tsx() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("Button.tsx"), "").unwrap();
@@ -224,13 +229,13 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./Button", "src/App.tsx");
-        assert_eq!(result, Some("src/Button.tsx".to_string()));
+        assert_eq!(result, Some("src/Button.tsx".to_owned()));
     }
 
     // T-328: resolve_index_file_tsx
     #[test]
     fn resolve_index_file_tsx() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let components = tmp.path().join("src").join("components");
         fs::create_dir_all(&components).unwrap();
         fs::write(components.join("index.tsx"), "").unwrap();
@@ -238,13 +243,13 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./components", "src/App.tsx");
-        assert_eq!(result, Some("src/components/index.tsx".to_string()));
+        assert_eq!(result, Some("src/components/index.tsx".to_owned()));
     }
 
     // T-329: resolve_missing_returns_none
     #[test]
     fn resolve_missing_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("App.tsx"), "").unwrap();
@@ -257,7 +262,7 @@ mod tests {
     // T-330: resolve_bare_specifier_returns_none
     #[test]
     fn resolve_bare_specifier_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("src")).unwrap();
 
         let resolver = Resolver::new(tmp.path());
@@ -268,7 +273,7 @@ mod tests {
     // T-331: load_aliases_from_tsconfig
     #[test]
     fn load_aliases_from_tsconfig() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let tsconfig = r#"{
             "compilerOptions": {
                 "paths": {
@@ -282,8 +287,8 @@ mod tests {
         assert_eq!(
             aliases,
             vec![PathAlias {
-                prefix: "@/".to_string(),
-                target: "src/".to_string(),
+                prefix: "@/".to_owned(),
+                target: "src/".to_owned(),
             }]
         );
     }
@@ -291,7 +296,7 @@ mod tests {
     // T-332: load_aliases_no_tsconfig
     #[test]
     fn load_aliases_no_tsconfig() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
 
         let aliases = load_aliases(tmp.path());
         assert!(aliases.is_empty());
@@ -300,7 +305,7 @@ mod tests {
     // T-333: resolve_alias_path
     #[test]
     fn resolve_alias_path() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let lib = tmp.path().join("src").join("lib");
         fs::create_dir_all(&lib).unwrap();
         fs::write(lib.join("auth.ts"), "").unwrap();
@@ -316,26 +321,26 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("@/lib/auth", "src/App.tsx");
-        assert_eq!(result, Some("src/lib/auth.ts".to_string()));
+        assert_eq!(result, Some("src/lib/auth.ts".to_owned()));
     }
 
     // T-334: resolve_relative_ts
     #[test]
     fn resolve_relative_ts() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("utils.ts"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./utils", "src/App.tsx");
-        assert_eq!(result, Some("src/utils.ts".to_string()));
+        assert_eq!(result, Some("src/utils.ts".to_owned()));
     }
 
     // T-335: resolve_parent_directory
     #[test]
     fn resolve_parent_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let utils = tmp.path().join("src").join("utils");
         let components = tmp.path().join("src").join("components");
         fs::create_dir_all(&utils).unwrap();
@@ -344,26 +349,26 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("../utils/format", "src/components/Button.tsx");
-        assert_eq!(result, Some("src/utils/format.ts".to_string()));
+        assert_eq!(result, Some("src/utils/format.ts".to_owned()));
     }
 
     // T-336: resolve_css_file
     #[test]
     fn resolve_css_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("styles.css"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./styles.css", "src/App.tsx");
-        assert_eq!(result, Some("src/styles.css".to_string()));
+        assert_eq!(result, Some("src/styles.css".to_owned()));
     }
 
     // T-337: resolve_prefers_tsx_over_ts
     #[test]
     fn resolve_prefers_tsx_over_ts() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("Button.tsx"), "").unwrap();
@@ -371,26 +376,26 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./Button", "src/App.tsx");
-        assert_eq!(result, Some("src/Button.tsx".to_string()));
+        assert_eq!(result, Some("src/Button.tsx".to_owned()));
     }
 
     // T-338: resolve_index_file_ts
     #[test]
     fn resolve_index_file_ts() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let hooks = tmp.path().join("src").join("hooks");
         fs::create_dir_all(&hooks).unwrap();
         fs::write(hooks.join("index.ts"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./hooks", "src/App.tsx");
-        assert_eq!(result, Some("src/hooks/index.ts".to_string()));
+        assert_eq!(result, Some("src/hooks/index.ts".to_owned()));
     }
 
     // T-339: load_aliases_multiple
     #[test]
     fn load_aliases_multiple() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let tsconfig = r#"{
             "compilerOptions": {
                 "paths": {
@@ -404,19 +409,19 @@ mod tests {
         let aliases = load_aliases(tmp.path());
         assert_eq!(aliases.len(), 2);
         assert!(aliases.contains(&PathAlias {
-            prefix: "@/".to_string(),
-            target: "src/".to_string(),
+            prefix: "@/".to_owned(),
+            target: "src/".to_owned(),
         }));
         assert!(aliases.contains(&PathAlias {
-            prefix: "~/".to_string(),
-            target: "lib/".to_string(),
+            prefix: "~/".to_owned(),
+            target: "lib/".to_owned(),
         }));
     }
 
     // T-340: resolve_non_frontend_extension_returns_none
     #[test]
     fn resolve_non_frontend_extension_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("data.json"), "").unwrap();
@@ -429,7 +434,7 @@ mod tests {
     // T-341: resolve_scoped_package_returns_none
     #[test]
     fn resolve_scoped_package_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("src")).unwrap();
 
         let resolver = Resolver::new(tmp.path());
@@ -440,7 +445,7 @@ mod tests {
     // T-342: resolve_tilde_alias
     #[test]
     fn resolve_tilde_alias() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let lib = tmp.path().join("lib").join("core");
         fs::create_dir_all(&lib).unwrap();
         fs::write(lib.join("engine.ts"), "").unwrap();
@@ -456,13 +461,13 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("~/core/engine", "src/App.tsx");
-        assert_eq!(result, Some("lib/core/engine.ts".to_string()));
+        assert_eq!(result, Some("lib/core/engine.ts".to_owned()));
     }
 
     // T-343: resolve_reexport_chain_circular
     #[test]
     fn resolve_reexport_chain_circular() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.ts"), "export { X } from './b';").unwrap();
@@ -470,13 +475,13 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let chain = resolver.resolve_reexport_chain("src/a.ts");
-        assert_eq!(chain, vec!["src/b.ts".to_string()]);
+        assert_eq!(chain, vec!["src/b.ts".to_owned()]);
     }
 
     // T-344: resolve_reexport_chain_linear
     #[test]
     fn resolve_reexport_chain_linear() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.ts"), "export { X } from './b';").unwrap();
@@ -485,13 +490,13 @@ mod tests {
 
         let resolver = Resolver::new(tmp.path());
         let chain = resolver.resolve_reexport_chain("src/a.ts");
-        assert_eq!(chain, vec!["src/b.ts".to_string(), "src/c.ts".to_string()]);
+        assert_eq!(chain, vec!["src/b.ts".to_owned(), "src/c.ts".to_owned()]);
     }
 
     // T-345: resolve_reexport_chain_no_reexports
     #[test]
     fn resolve_reexport_chain_no_reexports() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.ts"), "export const X = 1;").unwrap();
@@ -504,13 +509,13 @@ mod tests {
     // T-346: resolve_html_file
     #[test]
     fn resolve_html_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("template.html"), "").unwrap();
 
         let resolver = Resolver::new(tmp.path());
         let result = resolver.resolve("./template.html", "src/App.tsx");
-        assert_eq!(result, Some("src/template.html".to_string()));
+        assert_eq!(result, Some("src/template.html".to_owned()));
     }
 }

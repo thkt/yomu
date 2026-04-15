@@ -1,4 +1,4 @@
-use rurico::reranker::Rerank;
+use rurico::reranker::{Rerank, RerankerModelId, cached_artifacts};
 
 use amici::model::reranker::try_load_reranker_with;
 use amici::model::{DegradedReason, ModelLoad};
@@ -7,7 +7,7 @@ use super::Yomu;
 
 pub(crate) fn try_load_reranker() -> ModelLoad<Box<dyn Rerank>> {
     match try_load_reranker_with(
-        || rurico::reranker::cached_artifacts(rurico::reranker::RerankerModelId::default()),
+        || cached_artifacts(RerankerModelId::default()),
         |e| tracing::warn!(error = %e, "failed to delete corrupt reranker model files"),
         |e| tracing::warn!(error = %e, "reranker failed to load"),
     ) {

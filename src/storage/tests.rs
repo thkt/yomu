@@ -1,7 +1,9 @@
+use tempfile::{TempDir, tempdir};
+
 use super::*;
 
-fn test_db() -> (Connection, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+fn test_db() -> (Connection, TempDir) {
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
     (conn, dir)
@@ -1316,7 +1318,7 @@ fn get_files_by_import_count_boosts_hook_component_files() {
     // hook/component files (+3 boost) should come before type_def (no boost)
     assert_eq!(ordered.len(), 3);
     // First two should be hook or component files (both have +3 boost)
-    let boosted: Vec<&str> = ordered.iter().take(2).map(|s| s.as_str()).collect();
+    let boosted: Vec<&str> = ordered.iter().take(2).map(String::as_str).collect();
     assert!(
         boosted.contains(&"src/useAuth.tsx"),
         "hook file should be boosted: {ordered:?}"
@@ -1509,7 +1511,7 @@ fn fts_chunks_deleted_with_file() {
 // T-160: fts5_migration_from_v2
 #[test]
 fn fts5_migration_from_v2() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
 
@@ -1682,7 +1684,7 @@ fn fts_chunks_vocab_exists_on_new_db() {
 // T-167: migration_v3_to_v4_creates_vocab_table
 #[test]
 fn migration_v3_to_v4_creates_vocab_table() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
 
@@ -1893,7 +1895,7 @@ fn fts_automerge_guard_restores_on_drop() {
     );
 }
 
-// T-007: new_chunk_with_parent_index_stores_parent_chunk_id
+// T-543: new_chunk_with_parent_index_stores_parent_chunk_id
 #[test]
 fn new_chunk_with_parent_index_stores_parent_chunk_id() {
     let (conn, _dir) = test_db();
@@ -1947,7 +1949,7 @@ fn new_chunk_with_parent_index_stores_parent_chunk_id() {
     assert_eq!(rows[1].2, Some(parent_id));
 }
 
-// T-009: out_of_order_chunks_resolves_to_null
+// T-546: out_of_order_chunks_resolves_to_null
 #[test]
 fn out_of_order_chunks_resolves_to_null() {
     let (conn, _dir) = test_db();
@@ -1993,7 +1995,7 @@ fn out_of_order_chunks_resolves_to_null() {
     );
 }
 
-// T-010: innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts
+// T-549: innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts
 #[test]
 fn innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
     let (conn, _dir) = test_db();
@@ -2042,7 +2044,7 @@ fn innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
     assert_eq!(fts_count, 2);
 }
 
-// T-016: get_stats_returns_embeddable_and_total_chunks
+// T-560: get_stats_returns_embeddable_and_total_chunks
 #[test]
 fn get_stats_returns_embeddable_and_total_chunks() {
     let (conn, _dir) = test_db();
@@ -2233,7 +2235,7 @@ fn idf_uses_total_chunks_innerfn_included_non_negative() {
     }
 }
 
-// T-011: chunk_from_row_reads_parent_chunk_id
+// T-551: chunk_from_row_reads_parent_chunk_id
 #[test]
 fn chunk_from_row_reads_parent_chunk_id() {
     let (conn, _dir) = test_db();
@@ -2301,7 +2303,7 @@ fn chunk_from_row_reads_parent_chunk_id() {
     );
 }
 
-// T-011: chunk_from_row_reads_parent_chunk_id_name_search
+// T-552: chunk_from_row_reads_parent_chunk_id_name_search
 #[test]
 fn chunk_from_row_reads_parent_chunk_id_name_search() {
     let (conn, _dir) = test_db();
@@ -2369,7 +2371,7 @@ fn chunk_from_row_reads_parent_chunk_id_name_search() {
     );
 }
 
-// T-012: parent_chunk_search_result_has_no_parent_chunk_id
+// T-554: parent_chunk_search_result_has_no_parent_chunk_id
 #[test]
 fn parent_chunk_search_result_has_no_parent_chunk_id() {
     let (conn, _dir) = test_db();
@@ -2408,7 +2410,7 @@ fn parent_chunk_search_result_has_no_parent_chunk_id() {
 
 // ── Phase 1: FTS 3-column unification (FR-001, FR-002, FR-010, FR-011) ──
 
-// T-001: fts_stores_split_identifier_name
+// T-528: fts_stores_split_identifier_name
 #[test]
 fn fts_stores_split_identifier_name() {
     let (conn, _dir) = test_db();
@@ -2437,7 +2439,7 @@ fn fts_stores_split_identifier_name() {
     );
 }
 
-// T-002: fts_stores_empty_name_for_none
+// T-531: fts_stores_empty_name_for_none
 #[test]
 fn fts_stores_empty_name_for_none() {
     let (conn, _dir) = test_db();
@@ -2495,10 +2497,10 @@ fn fts_stores_file_path() {
     );
 }
 
-// T-014: migration_v6_to_v7_preserves_fts_search
+// T-557: migration_v6_to_v7_preserves_fts_search
 #[test]
 fn migration_v6_to_v7_preserves_fts_search() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
 
@@ -2546,10 +2548,10 @@ fn migration_v6_to_v7_preserves_fts_search() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("processData"));
 }
 
-// T-015: migration_populates_fts_name_with_split_identifier
+// T-559: migration_populates_fts_name_with_split_identifier
 #[test]
 fn migration_populates_fts_name_with_split_identifier() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
 
@@ -2680,7 +2682,7 @@ fn search_by_fts_finds_by_path_segment() {
     assert_eq!(results[0].chunk.file_path, "src/auth/login.ts");
 }
 
-// T-007: search_by_fts_respects_type_filter
+// T-544: search_by_fts_respects_type_filter
 #[test]
 fn search_by_fts_respects_type_filter() {
     let (conn, _dir) = test_db();
@@ -2719,7 +2721,7 @@ fn search_by_fts_respects_type_filter() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
 }
 
-// T-016: search_by_fts_excludes_ids
+// T-561: search_by_fts_excludes_ids
 #[test]
 fn search_by_fts_excludes_ids() {
     let (conn, _dir) = test_db();
@@ -2756,6 +2758,7 @@ fn search_by_fts_excludes_ids() {
 }
 
 // T-173: vec_chunks_embedding_retrievable_by_rowid
+#[allow(clippy::cast_possible_truncation)]
 #[test]
 fn vec_chunks_embedding_retrievable_by_rowid() {
     let (conn, _dir) = test_db();
@@ -2805,7 +2808,7 @@ fn vec_chunks_embedding_retrievable_by_rowid() {
     assert!((recovered[100] - emb[100]).abs() < 1e-6);
 }
 
-// T-001: get_chunks_for_from_target file-only returns non-inner_fn chunks
+// T-529: get_chunks_for_from_target file-only returns non-inner_fn chunks
 #[test]
 fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
     let (conn, _dir) = test_db();
@@ -2865,7 +2868,7 @@ fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
     assert_eq!(ids.len(), 2);
 }
 
-// T-002: get_chunks_for_from_target returns empty for unknown file
+// T-532: get_chunks_for_from_target returns empty for unknown file
 #[test]
 fn get_chunks_for_from_target_unknown_file_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2873,7 +2876,7 @@ fn get_chunks_for_from_target_unknown_file_returns_empty() {
     assert!(rows.is_empty());
 }
 
-// T-003: get_chunks_for_from_target with symbol returns exact match
+// T-534: get_chunks_for_from_target with symbol returns exact match
 #[test]
 fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
     let (conn, _dir) = test_db();
@@ -2922,7 +2925,7 @@ fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
     );
 }
 
-// T-004: get_chunks_for_from_target symbol not found returns empty
+// T-537: get_chunks_for_from_target symbol not found returns empty
 #[test]
 fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2949,7 +2952,8 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
     assert!(rows.is_empty());
 }
 
-// T-005: get_sub_embeddings_for_chunks returns correct byte length
+// T-541: get_sub_embeddings_for_chunks returns correct byte length
+#[allow(clippy::cast_possible_truncation)]
 #[test]
 fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
     let (conn, _dir) = test_db();
@@ -2980,7 +2984,7 @@ fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
     assert_eq!(results[0].1.len(), EMBEDDING_DIMS * 4); // 768 * 4 = 3072 bytes
 }
 
-// T-006: get_sub_embeddings_for_chunks with missing chunk returns empty
+// T-542: get_sub_embeddings_for_chunks with missing chunk returns empty
 #[test]
 fn get_sub_embeddings_for_chunks_missing_chunk_returns_empty() {
     let (conn, _dir) = test_db();
@@ -2988,7 +2992,7 @@ fn get_sub_embeddings_for_chunks_missing_chunk_returns_empty() {
     assert!(results.is_empty());
 }
 
-// T-007: vec_search_multi merges duplicate chunk_ids by min distance
+// T-545: vec_search_multi merges duplicate chunk_ids by min distance
 #[test]
 fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
     let (conn, _dir) = test_db();
@@ -3045,7 +3049,7 @@ fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
     );
 }
 
-// T-009: search_by_fts include_ids filters results to specified subset
+// T-547: search_by_fts include_ids filters results to specified subset
 #[test]
 fn search_by_fts_with_include_ids_filters_to_subset() {
     let (conn, _dir) = test_db();

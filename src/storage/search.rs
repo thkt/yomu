@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::Connection;
+use rurico::storage::{fts_quote, prepare_match_query};
+use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter, types::ToSql};
 
 use super::{
     Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, f32_as_bytes,
+    in_placeholders,
 };
 
-fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
+const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
+
+fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
     Ok(Chunk {
         file_path: row.get(offset)?,
         chunk_type: ChunkType::from_db(row.get::<_, String>(offset + 1)?.as_ref()),
@@ -18,7 +22,87 @@ fn chunk_from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Ch
     })
 }
 
-const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
+fn append_type_filter(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn ToSql>>,
+    column: &str,
+    types: Option<&[ChunkType]>,
+) {
+    if let Some(types) = types
+        && !types.is_empty()
+    {
+        sql.push_str(&format!(
+            " AND {column} IN ({})",
+            anon_placeholders(types.len())
+        ));
+        for t in types {
+            params.push(Box::new(t.as_str().to_owned()));
+        }
+    }
+}
+
+fn append_exclude_ids(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn ToSql>>,
+    column: &str,
+    exclude_ids: &HashSet<i64>,
+) {
+    if !exclude_ids.is_empty() {
+        sql.push_str(&format!(
+            " AND {column} NOT IN ({})",
+            anon_placeholders(exclude_ids.len())
+        ));
+        for id in exclude_ids {
+            params.push(Box::new(*id));
+        }
+    }
+}
+
+fn append_include_ids(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn ToSql>>,
+    column: &str,
+    include_ids: Option<&HashSet<i64>>,
+) {
+    if let Some(ids) = include_ids {
+        if ids.is_empty() {
+            sql.push_str(" AND 1 = 0");
+        } else {
+            sql.push_str(&format!(
+                " AND {column} IN ({})",
+                anon_placeholders(ids.len())
+            ));
+            for id in ids {
+                params.push(Box::new(*id));
+            }
+        }
+    }
+}
+
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn append_path_filter(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn ToSql>>,
+    column: &str,
+    paths: &[String],
+) {
+    if paths.is_empty() {
+        return;
+    }
+    let conditions: Vec<String> = paths
+        .iter()
+        .map(|_| format!("{column} LIKE ? ESCAPE '\\'"))
+        .collect();
+    sql.push_str(&format!(" AND ({})", conditions.join(" OR ")));
+    for path in paths {
+        params.push(Box::new(format!("{}%", escape_like(path))));
+    }
+}
 
 pub fn vec_search(
     conn: &Connection,
@@ -38,7 +122,7 @@ pub fn vec_search(
              WHERE embedding MATCH ?1 AND k = ?2 \
              ORDER BY distance",
         )?;
-        stmt.query_map(rusqlite::params![query_bytes, k], |row| {
+        stmt.query_map(params![query_bytes, k], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?
@@ -66,15 +150,15 @@ pub fn vec_search(
          FROM chunks WHERE id IN ({})",
         anon_placeholders(chunk_ids.len())
     );
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = chunk_ids
+    let mut params: Vec<Box<dyn ToSql>> = chunk_ids
         .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .map(|id| Box::new(*id) as Box<dyn ToSql>)
         .collect();
     append_path_filter(&mut sql, &mut params, "file_path", path_filter);
 
     let mut stmt2 = conn.prepare(&sql)?;
     let meta: HashMap<i64, Chunk> = stmt2
-        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        .query_map(params_from_iter(params.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 Chunk {
@@ -108,6 +192,7 @@ pub fn vec_search(
     Ok(results)
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn search_by_fts(
     conn: &Connection,
     keywords: &[&str],
@@ -123,11 +208,11 @@ pub fn search_by_fts(
 
     let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| match rurico::storage::prepare_match_query(conn, k) {
+        .filter_map(|k| match prepare_match_query(conn, k) {
             Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
             Err(e) if !k.trim().is_empty() => {
                 tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
-                Some(rurico::storage::fts_quote(k))
+                Some(fts_quote(k))
             }
             _ => None,
         })
@@ -148,7 +233,7 @@ pub fn search_by_fts(
          WHERE fts_chunks MATCH ?1",
     );
 
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
     params.push(Box::new(fts_query));
 
     append_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
@@ -159,7 +244,7 @@ pub fn search_by_fts(
     params.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+    let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
         let bm25_score: f64 = row.get(8)?;
         let abs = (bm25_score as f32).abs();
         let base_score = abs / (1.0 + abs);
@@ -182,7 +267,7 @@ pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>
     )?;
     match stmt.query_row([chunk_id], |row| chunk_from_row(row, 0)) {
         Ok(chunk) => Ok(Some(chunk)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(RusqliteError::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
@@ -194,13 +279,13 @@ pub fn get_chunks_by_ids(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = super::in_placeholders(ids.len());
+    let placeholders = in_placeholders(ids.len());
     let sql = format!(
         "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
          FROM chunks WHERE id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+    let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
         let id: i64 = row.get(0)?;
         let chunk = chunk_from_row(row, 1)?;
         Ok((id, chunk))
@@ -216,7 +301,7 @@ pub fn get_keyword_doc_frequencies(
 ) -> Result<Vec<u32>, StorageError> {
     let mut dfs = Vec::with_capacity(keywords.len());
     for kw in keywords {
-        let fts_term = rurico::storage::fts_quote(kw);
+        let fts_term = fts_quote(kw);
         let count: u32 = match conn.query_row(
             "SELECT COUNT(*) FROM fts_chunks WHERE fts_chunks MATCH ?1",
             [&fts_term],
@@ -280,10 +365,8 @@ pub fn get_chunks_for_from_target(
 
     let mut stmt = conn.prepare(&sql)?;
     let ids = if let Some(sym) = symbol {
-        stmt.query_map(rusqlite::params![file_path, sym], |row| {
-            row.get::<_, i64>(0)
-        })?
-        .collect::<Result<Vec<_>, _>>()?
+        stmt.query_map(params![file_path, sym], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?
     } else {
         stmt.query_map([file_path], |row| row.get::<_, i64>(0))?
             .collect::<Result<Vec<_>, _>>()?
@@ -307,7 +390,7 @@ pub fn get_sub_embeddings_for_chunks(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mappings: Vec<(i64, i64)> = stmt
-        .query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| {
+        .query_map(params_from_iter(chunk_ids.iter()), |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -323,7 +406,7 @@ pub fn get_sub_embeddings_for_chunks(
     let mut by_rowid: HashMap<i64, Vec<u8>> = conn
         .prepare(&emb_sql)?
         .query_map(
-            rusqlite::params_from_iter(mappings.iter().map(|(_, vid)| vid)),
+            params_from_iter(mappings.iter().map(|(_, vid)| vid)),
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?
         .collect::<Result<_, _>>()?;
@@ -333,86 +416,4 @@ pub fn get_sub_embeddings_for_chunks(
         .filter_map(|(chunk_id, vec_rowid)| by_rowid.remove(vec_rowid).map(|b| (*chunk_id, b)))
         .collect();
     Ok(results)
-}
-
-fn append_type_filter(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-    column: &str,
-    types: Option<&[ChunkType]>,
-) {
-    if let Some(types) = types
-        && !types.is_empty()
-    {
-        sql.push_str(&format!(
-            " AND {column} IN ({})",
-            anon_placeholders(types.len())
-        ));
-        for t in types {
-            params.push(Box::new(t.as_str().to_string()));
-        }
-    }
-}
-
-fn append_exclude_ids(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-    column: &str,
-    exclude_ids: &HashSet<i64>,
-) {
-    if !exclude_ids.is_empty() {
-        sql.push_str(&format!(
-            " AND {column} NOT IN ({})",
-            anon_placeholders(exclude_ids.len())
-        ));
-        for id in exclude_ids {
-            params.push(Box::new(*id));
-        }
-    }
-}
-
-fn append_include_ids(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-    column: &str,
-    include_ids: Option<&HashSet<i64>>,
-) {
-    if let Some(ids) = include_ids {
-        if ids.is_empty() {
-            sql.push_str(" AND 1 = 0");
-        } else {
-            sql.push_str(&format!(
-                " AND {column} IN ({})",
-                anon_placeholders(ids.len())
-            ));
-            for id in ids {
-                params.push(Box::new(*id));
-            }
-        }
-    }
-}
-
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-fn append_path_filter(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-    column: &str,
-    paths: &[String],
-) {
-    if paths.is_empty() {
-        return;
-    }
-    let conditions: Vec<String> = paths
-        .iter()
-        .map(|_| format!("{column} LIKE ? ESCAPE '\\'"))
-        .collect();
-    sql.push_str(&format!(" AND ({})", conditions.join(" OR ")));
-    for path in paths {
-        params.push(Box::new(format!("{}%", escape_like(path))));
-    }
 }

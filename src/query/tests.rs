@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder};
+use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder, ModelId};
 use rurico::reranker::{MockReranker, RankedResult, Rerank, RerankerError};
+use tempfile::tempdir;
 
 use super::*;
 use crate::storage;
@@ -16,7 +17,7 @@ fn test_embedding() -> Vec<f32> {
 // T-252: search_with_mock_embedder
 #[test]
 fn search_with_mock_embedder() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -39,7 +40,7 @@ fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -77,16 +78,16 @@ fn extract_keywords_lowercases() {
 #[test]
 fn extract_keywords_no_stem_for_non_gerunds() {
     let kw = extract_keywords("string parsing");
-    assert!(kw.contains(&"string".to_string()), "string should remain");
-    assert!(!kw.contains(&"str".to_string()), "str should not appear");
+    assert!(kw.contains(&"string".to_owned()), "string should remain");
+    assert!(!kw.contains(&"str".to_owned()), "str should not appear");
 }
 
 // T-258: extract_keywords_no_stem_for_non_plurals
 #[test]
 fn extract_keywords_no_stem_for_non_plurals() {
     let kw = extract_keywords("class definition");
-    assert!(kw.contains(&"class".to_string()), "class should remain");
-    assert!(!kw.contains(&"clas".to_string()), "clas should not appear");
+    assert!(kw.contains(&"class".to_owned()), "class should remain");
+    assert!(!kw.contains(&"clas".to_owned()), "clas should not appear");
 }
 
 // T-259: extract_keywords_short_ing_not_stemmed
@@ -100,19 +101,19 @@ fn extract_keywords_short_ing_not_stemmed() {
 #[test]
 fn extract_keywords_expands_camel_case() {
     let kw = extract_keywords("useChat");
-    assert!(kw.contains(&"usechat".to_string()), "whole token: {kw:?}");
-    assert!(kw.contains(&"use".to_string()), "part 'use': {kw:?}");
-    assert!(kw.contains(&"chat".to_string()), "part 'chat': {kw:?}");
+    assert!(kw.contains(&"usechat".to_owned()), "whole token: {kw:?}");
+    assert!(kw.contains(&"use".to_owned()), "part 'use': {kw:?}");
+    assert!(kw.contains(&"chat".to_owned()), "part 'chat': {kw:?}");
 }
 
 // T-261: extract_keywords_expands_kebab_case
 #[test]
 fn extract_keywords_expands_kebab_case() {
     let kw = extract_keywords("data-table component");
-    assert!(kw.contains(&"data-table".to_string()));
-    assert!(kw.contains(&"data".to_string()));
-    assert!(kw.contains(&"table".to_string()));
-    assert!(kw.contains(&"component".to_string()));
+    assert!(kw.contains(&"data-table".to_owned()));
+    assert!(kw.contains(&"data".to_owned()));
+    assert!(kw.contains(&"table".to_owned()));
+    assert!(kw.contains(&"component".to_owned()));
 }
 
 // T-262: extract_keywords_no_duplicate_parts
@@ -128,18 +129,18 @@ fn extract_keywords_no_duplicate_parts() {
 fn extract_keywords_cjk_chars_counted_not_bytes() {
     let kw = extract_keywords("認証");
     assert!(
-        kw.contains(&"認証".to_string()),
+        kw.contains(&"認証".to_owned()),
         "2-char CJK token should be kept: {kw:?}"
     );
 
     // Single CJK char should be filtered (chars().count() == 1 < 2)
     let kw_single = extract_keywords("認 認証フロー");
     assert!(
-        !kw_single.contains(&"認".to_string()),
+        !kw_single.contains(&"認".to_owned()),
         "single CJK char should be filtered by chars().count(): {kw_single:?}"
     );
     assert!(
-        kw_single.contains(&"認証フロー".to_string()),
+        kw_single.contains(&"認証フロー".to_owned()),
         "multi-char CJK token should be kept: {kw_single:?}"
     );
 }
@@ -185,7 +186,7 @@ fn extract_type_hints_singular_and_plural() {
 // T-268: search_fallback_merges_vector_and_name_results
 #[test]
 fn search_fallback_merges_vector_and_name_results() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -226,7 +227,7 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
+    let results = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
         .unwrap()
         .results;
 
@@ -258,7 +259,7 @@ fn search_fallback_merges_vector_and_name_results() {
 // T-269: search_deduplicates_vector_and_name_results
 #[test]
 fn search_deduplicates_vector_and_name_results() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -281,7 +282,7 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
+    let results = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
         .unwrap()
         .results;
 
@@ -306,9 +307,9 @@ fn make_result(
     };
     storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: file_path.to_string(),
+            file_path: file_path.to_owned(),
             chunk_type,
-            name: Some(name.to_string()),
+            name: Some(name.to_owned()),
             content: format!("function {name}() {{}}"),
             start_line: 1,
             end_line: 3,
@@ -343,7 +344,7 @@ fn rerank_semantic_base_score() {
 // T-271: rerank_fts_base_score_passthrough
 #[test]
 fn rerank_fts_base_score_passthrough() {
-    let kw = vec!["auth".to_string()];
+    let kw = vec!["auth".to_owned()];
     let mut results = vec![make_result(
         "src/A.tsx",
         "useAuth",
@@ -448,8 +449,8 @@ fn rerank_import_rank_bonus() {
         ),
     ];
     let import_counts = HashMap::from([
-        ("src/popular.tsx".to_string(), 10u32),
-        ("src/unpopular.tsx".to_string(), 1u32),
+        ("src/popular.tsx".to_owned(), 10u32),
+        ("src/unpopular.tsx".to_owned(), 1u32),
     ]);
     rerank(&mut results, &RerankContext::default(), &import_counts);
 
@@ -526,7 +527,7 @@ fn rerank_test_query_exempts_penalty() {
 // T-277: rerank_fts_all_bonuses
 #[test]
 fn rerank_fts_all_bonuses() {
-    let kw = vec!["auth".to_string()];
+    let kw = vec!["auth".to_owned()];
     let mut results = vec![make_result(
         "src/useAuth.tsx",
         "useAuth",
@@ -534,7 +535,7 @@ fn rerank_fts_all_bonuses() {
         f32::INFINITY,
         storage::MatchSource::Fts,
     )];
-    let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
+    let import_counts = HashMap::from([("src/useAuth.tsx".to_owned(), 10u32)]);
     rerank(
         &mut results,
         &RerankContext {
@@ -561,7 +562,7 @@ fn rerank_combined_bonuses_semantic() {
         0.1,
         storage::MatchSource::Semantic,
     )];
-    let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
+    let import_counts = HashMap::from([("src/useAuth.tsx".to_owned(), 10u32)]);
     rerank(
         &mut results,
         &RerankContext {
@@ -590,7 +591,7 @@ fn rerank_combined_score_can_exceed_one() {
         0.0,
         storage::MatchSource::Semantic,
     )];
-    let import_counts = HashMap::from([("src/useAuth.tsx".to_string(), 10u32)]);
+    let import_counts = HashMap::from([("src/useAuth.tsx".to_owned(), 10u32)]);
     rerank(
         &mut results,
         &RerankContext {
@@ -616,7 +617,7 @@ fn rerank_combined_score_can_exceed_one() {
 // T-280: search_returns_results_sorted_by_score
 #[test]
 fn search_returns_results_sorted_by_score() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -657,9 +658,17 @@ fn search_returns_results_sorted_by_score() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(conn, &MockEmbedder::default(), "auth hook", 5, 0, None, &[])
-        .unwrap()
-        .results;
+    let results = search(
+        &conn,
+        &MockEmbedder::default(),
+        "auth hook",
+        5,
+        0,
+        None,
+        &[],
+    )
+    .unwrap()
+    .results;
 
     for w in results.windows(2) {
         assert!(
@@ -731,7 +740,7 @@ fn rerank_low_coverage_dampens_semantic() {
 // T-286: rerank_low_coverage_fts_beats_semantic
 #[test]
 fn rerank_low_coverage_fts_beats_semantic() {
-    let kw = vec!["chat".to_string()];
+    let kw = vec!["chat".to_owned()];
     let mut results = vec![
         // At 2% coverage: 1/(1+0.6) * 0.68 ≈ 0.43
         make_result(
@@ -775,14 +784,14 @@ fn rerank_low_coverage_fts_beats_semantic() {
 // T-287: content_match_scores_from_content_body
 #[test]
 fn content_match_scores_from_content_body() {
-    let kw = vec!["validation".to_string(), "form".to_string()];
+    let kw = vec!["validation".to_owned(), "form".to_owned()];
     let result = storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/submit.ts".to_string(),
+            file_path: "src/submit.ts".to_owned(),
             chunk_type: storage::ChunkType::Other,
-            name: Some("submitHandler".to_string()),
+            name: Some("submitHandler".to_owned()),
             content: "function submitHandler(form: Form) { if (!validation(form)) return; }"
-                .to_string(),
+                .to_owned(),
             start_line: 1,
             end_line: 3,
             parent_chunk_id: None,
@@ -808,7 +817,7 @@ fn content_match_scores_from_content_body() {
 // T-288: rerank_semantic_keyword_overlap_bonus
 #[test]
 fn rerank_semantic_keyword_overlap_bonus() {
-    let kw = vec!["chat".to_string()];
+    let kw = vec!["chat".to_owned()];
     let mut with_overlap = vec![make_result(
         "src/useChat.tsx",
         "useChat",
@@ -847,7 +856,7 @@ fn rerank_semantic_keyword_overlap_bonus() {
 // T-289: search_degrades_on_embed_failure
 #[test]
 fn search_degrades_on_embed_failure() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -871,7 +880,7 @@ fn search_degrades_on_embed_failure() {
 
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
-        conn,
+        &conn,
         &FailingEmbedder::query_only("embedding unavailable"),
         "auth",
         10,
@@ -897,12 +906,12 @@ fn search_degrades_on_embed_failure() {
 fn search_degrades_on_model_not_available() {
     let embedder = FailingEmbedder::all_fail("embedder not available");
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(conn, &embedder, "test", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &embedder, "test", 10, 0, None, &[]).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
@@ -961,7 +970,7 @@ impl Rerank for ScriptedReranker {
 // T-001: YOMU_RERANK=1 + MockReranker -> results reordered by reranker score.
 #[test]
 fn reranker_reorders_results_by_cross_encoder_score() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1007,7 +1016,7 @@ fn reranker_reorders_results_by_cross_encoder_score() {
 
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
-        conn,
+        &conn,
         &MockEmbedder::default(),
         "auth",
         5,
@@ -1033,7 +1042,7 @@ fn reranker_reorders_results_by_cross_encoder_score() {
 // T-002: YOMU_RERANK unset -> identical to existing RRF results.
 #[test]
 fn no_reranker_produces_rrf_results() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1056,18 +1065,10 @@ fn no_reranker_produces_rrf_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(
-        Arc::clone(&conn),
-        &MockEmbedder::default(),
-        "auth",
-        5,
-        0,
-        None,
-        &[],
-    )
-    .unwrap();
+    let outcome = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
 
-    let outcome_existing = search(conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
+    let outcome_existing =
+        search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
 
     assert_eq!(
         outcome.results.len(),
@@ -1091,7 +1092,7 @@ fn no_reranker_produces_rrf_results() {
 // T-006: YOMU_RERANK=1, limit=10, offset=5 -> fetch_limit = 10 * 4 + 5 = 45.
 #[test]
 fn reranker_increases_fetch_limit() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1125,7 +1126,7 @@ fn reranker_increases_fetch_limit() {
 
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
-        conn,
+        &conn,
         &MockEmbedder::default(),
         "component",
         limit,
@@ -1155,7 +1156,7 @@ fn reranker_increases_fetch_limit() {
 // T-007: YOMU_RERANK=1, cap_per_file=2, file A has 3 candidates
 #[test]
 fn reranker_scores_applied_before_cap_per_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1214,7 +1215,7 @@ fn reranker_scores_applied_before_cap_per_file() {
 
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
-        conn,
+        &conn,
         &MockEmbedder::default(),
         "auth",
         10,
@@ -1263,9 +1264,9 @@ fn reranker_scores_applied_before_cap_per_file() {
 #[ignore = "requires model download"]
 fn search_returns_results() {
     use rurico::embed::download_model;
-    let paths = download_model(rurico::embed::ModelId::default()).expect("download model");
+    let paths = download_model(ModelId::default()).expect("download model");
     let embedder = Embedder::new(&paths).expect("load model");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1288,14 +1289,14 @@ fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &embedder, "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &embedder, "button", 10, 0, None, &[]).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
 // T-292: search_pipeline_text_only_returns_name_matches
 #[test]
 fn search_pipeline_text_only_returns_name_matches() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1329,7 +1330,7 @@ fn search_pipeline_text_only_returns_name_matches() {
 // T-293: search_pipeline_with_embedding_returns_semantic
 #[test]
 fn search_pipeline_with_embedding_returns_semantic() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1359,7 +1360,7 @@ fn search_pipeline_with_embedding_returns_semantic() {
 // T-294: search_pipeline_caps_per_file
 #[test]
 fn search_pipeline_caps_per_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1389,7 +1390,7 @@ fn search_pipeline_caps_per_file() {
 // T-295: text_only_search_with_offset_returns_results
 #[test]
 fn text_only_search_with_offset_returns_results() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1432,7 +1433,7 @@ fn text_only_search_with_offset_returns_results() {
 
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
-        conn,
+        &conn,
         &FailingEmbedder::query_only("unavailable"),
         "widget",
         3,
@@ -1450,7 +1451,7 @@ fn text_only_search_with_offset_returns_results() {
 // T-296: search_chunk_only_index_with_embedder_falls_back_to_text
 #[test]
 fn search_chunk_only_index_with_embedder_falls_back_to_text() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1476,7 +1477,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
     assert!(
         !outcome.results.is_empty(),
         "should return text/name fallback results even with zero embeddings"
@@ -1485,7 +1486,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
 }
 
 fn from_test_db() -> (storage::Db, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let conn = storage::open_db(&dir.path().join("test.db")).unwrap();
     (conn, dir)
 }
@@ -1524,7 +1525,7 @@ fn bench_knn_round_trips() {
         .unwrap();
     }
 
-    let source_ids = std::collections::HashSet::new();
+    let source_ids = HashSet::new();
 
     let run = |n: usize, label: &str| {
         let emb_bytes: Vec<Vec<u8>> = (0..n)
@@ -1732,7 +1733,7 @@ fn search_from_file_no_embeddings_returns_empty() {
     assert!(results.is_empty());
 }
 
-// T-014: search_from_file caps at 20 sub-embeddings
+// T-556: search_from_file caps at 20 sub-embeddings
 #[test]
 fn search_from_file_caps_sub_embeddings_at_20() {
     let (conn, _dir) = from_test_db();
@@ -1764,7 +1765,7 @@ fn search_from_file_caps_sub_embeddings_at_20() {
     assert!(!results.is_empty());
 }
 
-// T-015: FTS filter uses fetch_limit (not limit) so rerank picks best semantic match
+// T-558: FTS filter uses fetch_limit (not limit) so rerank picks best semantic match
 #[test]
 fn search_from_file_fts_uses_fetch_limit_not_limit() {
     let (conn, _dir) = from_test_db();
@@ -2074,10 +2075,10 @@ fn search_from_file_stopword_query_falls_back_to_semantic() {
 fn keyword_hit_ratio_uses_idf_weights() {
     let result = storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/auth.ts".to_string(),
+            file_path: "src/auth.ts".to_owned(),
             chunk_type: storage::ChunkType::Other,
-            name: Some("authenticate".to_string()),
-            content: "function authenticate() {}".to_string(),
+            name: Some("authenticate".to_owned()),
+            content: "function authenticate() {}".to_owned(),
             start_line: 1,
             end_line: 1,
             parent_chunk_id: None,
@@ -2087,7 +2088,7 @@ fn keyword_hit_ratio_uses_idf_weights() {
         match_source: storage::MatchSource::Fts,
         score: 0.0,
     };
-    let keywords = vec!["auth".to_string(), "form".to_string()];
+    let keywords = vec!["auth".to_owned(), "form".to_owned()];
     let idfs = [1.0_f32, 2.0_f32];
     // "auth" matches name "authenticate" (contains "auth"); "form" does not match.
     // total_idf = 3.0 >= 1e-6 → IDF-weighted branch executes.

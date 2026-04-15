@@ -2,16 +2,19 @@ mod embedder;
 mod format;
 mod reranker;
 
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use amici::model::ModelLoad;
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
 use crate::config;
 use crate::indexer;
-use crate::query;
+use crate::query::{self, QueryError};
 use crate::storage;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -35,7 +38,7 @@ pub const MAX_IMPACT_DEPTH: u32 = 10;
 pub const MIN_EMBED_BUDGET: u32 = 1;
 pub const MAX_EMBED_BUDGET: u32 = 500;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum IndexState {
     Empty,
     ChunkedOnly,
@@ -55,12 +58,35 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
     }
 }
 
+fn validate_path(path: &str) -> Result<(), YomuError> {
+    if path.contains("..") || Path::new(path).is_absolute() {
+        return Err(YomuError::InvalidInput(format!(
+            "'{path}' must be a relative path and must not contain '..'"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
+    if let Some(colon_pos) = target.rfind(':')
+        && colon_pos > 0
+        && colon_pos < target.len() - 1
+    {
+        let file = &target[..colon_pos];
+        let symbol = &target[colon_pos + 1..];
+        if !symbol.contains('/') && !symbol.contains('\\') {
+            return (file, Some(symbol));
+        }
+    }
+    (target, None)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum YomuError {
     #[error("storage error: {0}")]
     Storage(#[from] storage::StorageError),
     #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     #[error("{0}")]
     InvalidInput(String),
     #[error("{0}")]
@@ -68,7 +94,7 @@ pub enum YomuError {
     #[error("internal error: {0}")]
     Internal(String),
     #[error("query error: {0}")]
-    Query(#[from] crate::query::QueryError),
+    Query(#[from] QueryError),
     #[error("{0}")]
     EmbedderUnavailable(String),
 }
@@ -80,12 +106,12 @@ pub struct Yomu {
     embed_budget: u32,
     embed_disabled: bool,
     rerank_enabled: bool,
-    reranker: OnceLock<amici::model::ModelLoad<Box<dyn Rerank>>>,
+    reranker: OnceLock<ModelLoad<Box<dyn Rerank>>>,
 }
 
 impl Yomu {
     pub fn new() -> Result<Self, YomuError> {
-        let cwd = std::env::current_dir()?;
+        let cwd = env::current_dir()?;
         let root = config::detect_root(&cwd);
         Self::with_root(root)
     }
@@ -95,8 +121,8 @@ impl Yomu {
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let embed_disabled = std::env::var("YOMU_EMBED").as_deref() == Ok("0");
-        let rerank_enabled = std::env::var("YOMU_RERANK").as_deref() == Ok("1");
+        let embed_disabled = env::var("YOMU_EMBED").as_deref() == Ok("0");
+        let rerank_enabled = env::var("YOMU_RERANK").as_deref() == Ok("1");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
@@ -178,7 +204,7 @@ impl Yomu {
         let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
         let outcome = query::search(
-            Arc::clone(&self.conn),
+            &self.conn,
             embedder,
             query,
             limit,
@@ -196,7 +222,7 @@ impl Yomu {
         }
         if let Some(reason) = self.degraded_reason() {
             if let Some(note) = degraded_reason_user_note(*reason) {
-                notes.push(note.to_string());
+                notes.push(note.to_owned());
             }
         } else if outcome.degraded {
             notes.push("embedding model not loaded; results from text search only".into());
@@ -277,7 +303,7 @@ impl Yomu {
     }
 
     pub fn index(&self, json: bool) -> Result<String, YomuError> {
-        let chunk_result = indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index(&self.conn, &self.root)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
@@ -298,7 +324,7 @@ impl Yomu {
     }
 
     pub fn dry_run_index(&self, force: bool, json: bool) -> Result<String, YomuError> {
-        let preview = indexer::dry_run_index(Arc::clone(&self.conn), &self.root, force)?;
+        let preview = indexer::dry_run_index(&self.conn, &self.root, force)?;
 
         if json {
             return Ok(format_dry_run_json(&preview));
@@ -321,7 +347,7 @@ impl Yomu {
     }
 
     pub fn rebuild(&self, json: bool) -> Result<String, YomuError> {
-        let chunk_result = indexer::run_chunk_only_index_force(Arc::clone(&self.conn), &self.root)?;
+        let chunk_result = indexer::run_chunk_only_index_force(&self.conn, &self.root)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
@@ -364,8 +390,8 @@ impl Yomu {
 
         let symbol_filter = symbol.or(parsed_symbol);
         let max_depth = depth.min(MAX_IMPACT_DEPTH);
-        let fp = file_path.to_string();
-        let sym_owned = symbol_filter.map(|s| s.to_string());
+        let fp = file_path.to_owned();
+        let sym_owned = symbol_filter.map(str::to_owned);
 
         let (file_in_index, dependents, symbol_refs) = self.with_db(move |conn| {
             let exists = storage::file_exists_in_index(conn, &fp)?;
@@ -444,16 +470,66 @@ impl Yomu {
                     "embedding model unavailable"
                 }
             };
-            YomuError::EmbedderUnavailable(msg.to_string())
+            YomuError::EmbedderUnavailable(msg.to_owned())
         })?;
         let max_chunks = budget.unwrap_or(self.embed_budget);
-        let result =
-            indexer::run_incremental_embed(Arc::clone(&self.conn), embedder, max_chunks, None)?;
+        let result = indexer::run_incremental_embed(&self.conn, embedder, max_chunks, None)?;
         Ok(format_embed_result(&result, json))
     }
 }
 
 impl Yomu {
+    fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
+    where
+        F: FnOnce(&storage::Db) -> Result<T, storage::StorageError>,
+    {
+        let conn = self.conn.lock().unwrap();
+        f(&conn).map_err(YomuError::from)
+    }
+
+    fn check_index_fresh(&self) -> bool {
+        match self.with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS)) {
+            Ok(fresh) => fresh,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");
+                false
+            }
+        }
+    }
+
+    fn try_rechunk(&self) -> Option<String> {
+        match indexer::run_chunk_only_index(&self.conn, &self.root) {
+            Ok(r) if r.files_errored > 0 => Some(format!(
+                "{} files had errors during re-indexing",
+                r.files_errored
+            )),
+            Ok(_) => None,
+            Err(e) => Some(format!("re-chunking failed: {e}")),
+        }
+    }
+
+    fn handle_empty_index(&self) -> Result<bool, YomuError> {
+        tracing::info!("Index is empty, running chunk-only index");
+        indexer::run_chunk_only_index(&self.conn, &self.root)?;
+        Ok(true)
+    }
+
+    fn rechunk_if_stale(&self) -> Option<String> {
+        if self.check_index_fresh() {
+            return None;
+        }
+        self.try_rechunk()
+    }
+
+    fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
+        if self.check_index_fresh() {
+            return Ok((false, None));
+        }
+        let note = self.try_rechunk();
+        let stats = self.with_db(storage::get_stats)?;
+        Ok((stats.embedded_chunks < stats.embeddable_chunks, note))
+    }
+
     fn ensure_indexed(
         &self,
         embedder: &dyn Embed,
@@ -471,7 +547,7 @@ impl Yomu {
 
         let embed_note = if needs_embed && self.embedding_available() {
             match indexer::run_incremental_embed(
-                Arc::clone(&self.conn),
+                &self.conn,
                 embedder,
                 self.embed_budget,
                 type_hints,
@@ -499,49 +575,6 @@ impl Yomu {
         })
     }
 
-    fn handle_empty_index(&self) -> Result<bool, YomuError> {
-        tracing::info!("Index is empty, running chunk-only index");
-        indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root)?;
-        Ok(true)
-    }
-
-    fn try_rechunk(&self) -> Option<String> {
-        match indexer::run_chunk_only_index(Arc::clone(&self.conn), &self.root) {
-            Ok(r) if r.files_errored > 0 => Some(format!(
-                "{} files had errors during re-indexing",
-                r.files_errored
-            )),
-            Ok(_) => None,
-            Err(e) => Some(format!("re-chunking failed: {e}")),
-        }
-    }
-
-    fn rechunk_if_stale(&self) -> Option<String> {
-        if self.check_index_fresh() {
-            return None;
-        }
-        self.try_rechunk()
-    }
-
-    fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
-        if self.check_index_fresh() {
-            return Ok((false, None));
-        }
-        let note = self.try_rechunk();
-        let stats = self.with_db(storage::get_stats)?;
-        Ok((stats.embedded_chunks < stats.embeddable_chunks, note))
-    }
-
-    fn check_index_fresh(&self) -> bool {
-        match self.with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS)) {
-            Ok(fresh) => fresh,
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");
-                false
-            }
-        }
-    }
-
     fn fetch_enrichment_context(
         &self,
         results: &[storage::SearchResult],
@@ -555,7 +588,7 @@ impl Yomu {
                 .collect()
         };
         self.with_db(move |conn| {
-            let path_refs: Vec<&str> = unique_paths.iter().map(|s| s.as_str()).collect();
+            let path_refs: Vec<&str> = unique_paths.iter().map(String::as_str).collect();
             let imports = storage::get_file_contexts(conn, &path_refs)?;
             let siblings = storage::get_file_siblings(conn, &path_refs)?;
             Ok(EnrichmentContext { imports, siblings })
@@ -565,13 +598,13 @@ impl Yomu {
     fn fetch_parent_chunks(
         &self,
         results: &[storage::SearchResult],
-    ) -> Result<std::collections::HashMap<i64, storage::Chunk>, YomuError> {
+    ) -> Result<HashMap<i64, storage::Chunk>, YomuError> {
         let parent_ids: Vec<i64> = results
             .iter()
             .filter_map(|r| r.chunk.parent_chunk_id)
             .collect();
         if parent_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids))
     }
@@ -585,8 +618,8 @@ impl Yomu {
         let embedder = self.get_embedder();
         self.ensure_indexed(embedder, state, None)?;
 
-        let fp = file_path.to_string();
-        let sym = symbol.map(|s| s.to_string());
+        let fp = file_path.to_owned();
+        let sym = symbol.map(str::to_owned);
         let mut results = self.with_db(move |c| {
             let ids = storage::get_chunks_for_from_target(c, &fp, sym.as_deref())?;
             let bytes: Vec<Vec<u8>> = storage::get_sub_embeddings_for_chunks(c, &ids)?
@@ -604,37 +637,6 @@ impl Yomu {
         results.retain(|r| seen.insert(r.chunk.file_path.clone()));
         Ok(results)
     }
-
-    fn with_db<T, F>(&self, f: F) -> Result<T, YomuError>
-    where
-        F: FnOnce(&storage::Db) -> Result<T, storage::StorageError>,
-    {
-        let conn = self.conn.lock().unwrap();
-        f(&conn).map_err(YomuError::from)
-    }
-}
-
-fn validate_path(path: &str) -> Result<(), YomuError> {
-    if path.contains("..") || std::path::Path::new(path).is_absolute() {
-        return Err(YomuError::InvalidInput(format!(
-            "'{path}' must be a relative path and must not contain '..'"
-        )));
-    }
-    Ok(())
-}
-
-pub(crate) fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
-    if let Some(colon_pos) = target.rfind(':')
-        && colon_pos > 0
-        && colon_pos < target.len() - 1
-    {
-        let file = &target[..colon_pos];
-        let symbol = &target[colon_pos + 1..];
-        if !symbol.contains('/') && !symbol.contains('\\') {
-            return (file, Some(symbol));
-        }
-    }
-    (target, None)
 }
 
 #[cfg(test)]

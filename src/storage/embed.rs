@@ -8,6 +8,25 @@ use super::{
     insert_sub_embeddings,
 };
 
+fn existing_embedded_ids(
+    conn: &Connection,
+    chunk_ids: &[i64],
+) -> Result<HashSet<i64>, StorageError> {
+    if chunk_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let sql = format!(
+        "SELECT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
+        in_placeholders(chunk_ids.len())
+    );
+    let params = as_sql_params(chunk_ids);
+    let mut stmt = conn.prepare(&sql)?;
+    let ids = stmt
+        .query_map(params.as_slice(), |row| row.get::<_, i64>(0))?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(ids)
+}
+
 pub fn add_chunked_embeddings(
     conn: &Connection,
     embeddings: &[(i64, ChunkedEmbedding)],
@@ -28,25 +47,6 @@ pub fn add_chunked_embeddings(
     }
     tx.commit()?;
     Ok(count)
-}
-
-fn existing_embedded_ids(
-    conn: &Connection,
-    chunk_ids: &[i64],
-) -> Result<HashSet<i64>, StorageError> {
-    if chunk_ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let sql = format!(
-        "SELECT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
-        in_placeholders(chunk_ids.len())
-    );
-    let params = as_sql_params(chunk_ids);
-    let mut stmt = conn.prepare(&sql)?;
-    let ids = stmt
-        .query_map(params.as_slice(), |row| row.get::<_, i64>(0))?
-        .collect::<Result<HashSet<_>, _>>()?;
-    Ok(ids)
 }
 
 pub struct UnembeddedChunk {
@@ -107,7 +107,7 @@ pub fn get_files_with_chunk_types(
     );
     let params: Vec<String> = types
         .iter()
-        .map(|t| t.as_str().to_string())
+        .map(|t| t.as_str().to_owned())
         .chain(files.iter().cloned())
         .collect();
     let mut stmt = conn.prepare(&sql)?;
@@ -130,17 +130,6 @@ pub fn has_embeddings(conn: &Connection) -> bool {
     .unwrap_or(false)
 }
 
-pub fn should_reindex(
-    conn: &Connection,
-    file_path: &str,
-    current_hash: &str,
-) -> Result<bool, StorageError> {
-    match stored_hash_for_file(conn, file_path)? {
-        None => Ok(true),
-        Some(h) => Ok(h != current_hash),
-    }
-}
-
 fn stored_hash_for_file(
     conn: &Connection,
     file_path: &str,
@@ -153,6 +142,17 @@ fn stored_hash_for_file(
         Ok(h) => Ok(Some(h)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
+    }
+}
+
+pub fn should_reindex(
+    conn: &Connection,
+    file_path: &str,
+    current_hash: &str,
+) -> Result<bool, StorageError> {
+    match stored_hash_for_file(conn, file_path)? {
+        None => Ok(true),
+        Some(h) => Ok(h != current_hash),
     }
 }
 

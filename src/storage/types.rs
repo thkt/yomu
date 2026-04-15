@@ -1,3 +1,6 @@
+use std::io;
+use std::path::PathBuf;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkType {
     Component,
@@ -92,6 +95,7 @@ impl IndexStatus {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn embed_percentage(&self) -> u32 {
         (self.embed_coverage() as f64 * 100.0) as u32
     }
@@ -118,7 +122,7 @@ pub enum StorageError {
     #[error("Database error: {0}")]
     Db(#[from] rusqlite::Error),
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     #[error("chunks/embeddings length mismatch: {chunks} chunks vs {embeddings} embeddings")]
     LengthMismatch { chunks: usize, embeddings: usize },
     #[error("embedding dimension mismatch: expected {expected}, got {actual}")]
@@ -127,7 +131,7 @@ pub enum StorageError {
     SchemaMismatch {
         table: &'static str,
         missing: Vec<String>,
-        path: std::path::PathBuf,
+        path: PathBuf,
     },
 }
 

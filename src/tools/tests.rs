@@ -1,11 +1,13 @@
 use super::embedder::{
-    RECORDED_WARNINGS, degraded_reason_user_note, get_recorded_warnings, parse_budget_value,
-    record_embedder_warning,
+    DegradedReason, RECORDED_WARNINGS, degraded_reason_user_note, get_recorded_warnings,
+    parse_budget_value, record_embedder_warning,
 };
 use super::*;
 use std::collections::HashMap;
+use std::fs;
 
-use rurico::embed::{FailingEmbedder, MockEmbedder};
+use rurico::embed::{Embed, FailingEmbedder, MockEmbedder};
+use tempfile::{TempDir, tempdir};
 
 fn parse_json(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
@@ -17,34 +19,34 @@ fn test_embedding() -> Vec<f32> {
     emb
 }
 
-fn test_db() -> (storage::Db, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+fn test_db() -> (storage::Db, TempDir) {
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = storage::open_db(&db_path).unwrap();
     (conn, dir)
 }
 
-fn test_yomu() -> (Yomu, tempfile::TempDir) {
+fn test_yomu() -> (Yomu, TempDir) {
     let (conn, dir) = test_db();
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     (y, dir)
 }
 
-fn setup_test_files(files: &[(&str, &str)]) -> (storage::Db, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+fn setup_test_files(files: &[(&str, &str)]) -> (storage::Db, TempDir) {
+    let dir = tempdir().unwrap();
     for (path, content) in files {
         let full_path = dir.path().join(path);
         if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
+            fs::create_dir_all(parent).unwrap();
         }
-        std::fs::write(&full_path, content).unwrap();
+        fs::write(&full_path, content).unwrap();
     }
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     (conn, dir)
 }
 
-fn test_yomu_with_files(files: &[(&str, &str)]) -> (Yomu, tempfile::TempDir) {
+fn test_yomu_with_files(files: &[(&str, &str)]) -> (Yomu, TempDir) {
     let (conn, dir) = setup_test_files(files);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     (y, dir)
@@ -52,8 +54,8 @@ fn test_yomu_with_files(files: &[(&str, &str)]) -> (Yomu, tempfile::TempDir) {
 
 fn test_yomu_with_files_and_embedder(
     files: &[(&str, &str)],
-    embedder: Arc<dyn rurico::embed::Embed>,
-) -> (Yomu, tempfile::TempDir) {
+    embedder: Arc<dyn Embed>,
+) -> (Yomu, TempDir) {
     let (conn, dir) = setup_test_files(files);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
     (y, dir)
@@ -111,7 +113,7 @@ fn search_rejects_long_query() {
 fn search_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search(Some("query"), 10, 0, &["../etc".to_string()], false, None)
+        .search(Some("query"), 10, 0, &["../etc".to_owned()], false, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -124,7 +126,7 @@ fn search_rejects_path_traversal() {
 fn search_rejects_absolute_path() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search(Some("query"), 10, 0, &["/etc".to_string()], false, None)
+        .search(Some("query"), 10, 0, &["/etc".to_owned()], false, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -140,7 +142,7 @@ fn search_path_filter_excludes_other_dirs() {
             ("src/fetcher/index.ts", "export function fetchData() {}"),
             ("src/storage/db.ts", "export function openDb() {}"),
         ],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
     let text = y
@@ -148,7 +150,7 @@ fn search_path_filter_excludes_other_dirs() {
             Some("open"),
             10,
             0,
-            &["src/storage/".to_string()],
+            &["src/storage/".to_owned()],
             false,
             None,
         )
@@ -181,7 +183,7 @@ fn search_without_embedder_degrades_gracefully() {
 fn search_auto_indexes_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Button.tsx", "function Button() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
     let text = y
@@ -212,10 +214,10 @@ fn search_auto_indexes_empty_db() {
 fn search_incremental_embeds_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Form.tsx", "export function Form() { return <form/>; }")],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     {
         let c = y.conn.lock().unwrap();
@@ -242,7 +244,7 @@ fn search_incremental_embeds_chunked_only() {
 // T-183: search_shows_coverage_on_no_results
 #[test]
 fn search_shows_coverage_on_no_results() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -276,7 +278,7 @@ fn search_shows_coverage_on_no_results() {
 // T-184: search_degraded_empty_results_shows_note
 #[test]
 fn search_degraded_empty_results_shows_note() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -301,8 +303,7 @@ fn search_degraded_empty_results_shows_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
-            as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn Embed>),
     );
 
     let text = y
@@ -326,24 +327,17 @@ fn search_degraded_with_results_shows_note() {
             "src/Button.tsx",
             "export function Button() { return <div/>; }",
         )],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_index(
-        Arc::clone(&y.conn),
-        y.root.as_path(),
-        &rurico::embed::MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn2 = storage::open_db(&db_path).unwrap();
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
-            as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn Embed>),
     );
 
     let result = y_failing
@@ -361,10 +355,10 @@ fn search_degraded_with_results_shows_note() {
 fn format_results_grouped_renders_file_header_and_context() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/Button.tsx".to_string(),
+            file_path: "src/Button.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("Button".to_string()),
-            content: "function Button() { return <div/>; }".to_string(),
+            name: Some("Button".to_owned()),
+            content: "function Button() { return <div/>; }".to_owned(),
             start_line: 5,
             end_line: 7,
             parent_chunk_id: None,
@@ -375,13 +369,13 @@ fn format_results_grouped_renders_file_header_and_context() {
         score: 1.0 / (1.0 + 0.15),
     }];
     let imports_map = HashMap::from([(
-        "src/Button.tsx".to_string(),
-        "import React from 'react'".to_string(),
+        "src/Button.tsx".to_owned(),
+        "import React from 'react'".to_owned(),
     )]);
     let siblings_map = HashMap::from([(
-        "src/Button.tsx".to_string(),
+        "src/Button.tsx".to_owned(),
         vec![storage::SiblingInfo {
-            name: Some("ButtonProps".to_string()),
+            name: Some("ButtonProps".to_owned()),
             chunk_type: storage::ChunkType::TypeDef,
             start_line: 1,
             end_line: 3,
@@ -414,10 +408,10 @@ fn format_results_grouped_groups_same_file_chunks() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/Form.tsx".to_string(),
+                file_path: "src/Form.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("Form".to_string()),
-                content: "function Form() {}".to_string(),
+                name: Some("Form".to_owned()),
+                content: "function Form() {}".to_owned(),
                 start_line: 1,
                 end_line: 5,
                 parent_chunk_id: None,
@@ -429,10 +423,10 @@ fn format_results_grouped_groups_same_file_chunks() {
         },
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/Form.tsx".to_string(),
+                file_path: "src/Form.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Hook,
-                name: Some("useForm".to_string()),
-                content: "function useForm() {}".to_string(),
+                name: Some("useForm".to_owned()),
+                content: "function useForm() {}".to_owned(),
                 start_line: 7,
                 end_line: 10,
                 parent_chunk_id: None,
@@ -462,10 +456,10 @@ fn format_results_grouped_groups_same_file_chunks() {
 fn format_results_grouped_deduplicates_siblings() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/A.tsx".to_string(),
+            file_path: "src/A.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("A".to_string()),
-            content: "function A() {}".to_string(),
+            name: Some("A".to_owned()),
+            content: "function A() {}".to_owned(),
             start_line: 5,
             end_line: 7,
             parent_chunk_id: None,
@@ -476,16 +470,16 @@ fn format_results_grouped_deduplicates_siblings() {
         score: 1.0 / (1.0 + 0.1),
     }];
     let siblings_map = HashMap::from([(
-        "src/A.tsx".to_string(),
+        "src/A.tsx".to_owned(),
         vec![
             storage::SiblingInfo {
-                name: Some("A".to_string()),
+                name: Some("A".to_owned()),
                 chunk_type: storage::ChunkType::Component,
                 start_line: 5,
                 end_line: 7,
             },
             storage::SiblingInfo {
-                name: Some("AProps".to_string()),
+                name: Some("AProps".to_owned()),
                 chunk_type: storage::ChunkType::TypeDef,
                 start_line: 1,
                 end_line: 3,
@@ -513,10 +507,10 @@ fn format_results_grouped_deduplicates_siblings() {
 fn format_results_grouped_omits_empty_imports() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/A.tsx".to_string(),
+            file_path: "src/A.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("A".to_string()),
-            content: "code".to_string(),
+            name: Some("A".to_owned()),
+            content: "code".to_owned(),
             start_line: 1,
             end_line: 3,
             parent_chunk_id: None,
@@ -526,7 +520,7 @@ fn format_results_grouped_omits_empty_imports() {
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.1),
     }];
-    let imports_map = HashMap::from([("src/A.tsx".to_string(), String::new())]);
+    let imports_map = HashMap::from([("src/A.tsx".to_owned(), String::new())]);
     let ctx = EnrichmentContext {
         imports: imports_map,
         siblings: HashMap::new(),
@@ -543,10 +537,10 @@ fn format_results_grouped_omits_empty_imports() {
 fn format_results_grouped_omits_empty_siblings() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/A.tsx".to_string(),
+            file_path: "src/A.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("A".to_string()),
-            content: "code".to_string(),
+            name: Some("A".to_owned()),
+            content: "code".to_owned(),
             start_line: 1,
             end_line: 3,
             parent_chunk_id: None,
@@ -556,7 +550,7 @@ fn format_results_grouped_omits_empty_siblings() {
         match_source: storage::MatchSource::Semantic,
         score: 1.0 / (1.0 + 0.1),
     }];
-    let siblings_map = HashMap::from([("src/A.tsx".to_string(), vec![])]);
+    let siblings_map = HashMap::from([("src/A.tsx".to_owned(), vec![])]);
     let ctx = EnrichmentContext {
         imports: HashMap::new(),
         siblings: siblings_map,
@@ -574,10 +568,10 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/B.tsx".to_string(),
+                file_path: "src/B.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("B".to_string()),
-                content: "code B".to_string(),
+                name: Some("B".to_owned()),
+                content: "code B".to_owned(),
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
@@ -589,10 +583,10 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
         },
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/A.tsx".to_string(),
+                file_path: "src/A.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("A".to_string()),
-                content: "code A".to_string(),
+                name: Some("A".to_owned()),
+                content: "code A".to_owned(),
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
@@ -622,10 +616,10 @@ fn format_results_grouped_shows_score_for_all() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/A.tsx".to_string(),
+                file_path: "src/A.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("A".to_string()),
-                content: "function A() {}".to_string(),
+                name: Some("A".to_owned()),
+                content: "function A() {}".to_owned(),
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
@@ -637,10 +631,10 @@ fn format_results_grouped_shows_score_for_all() {
         },
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/B.tsx".to_string(),
+                file_path: "src/B.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Hook,
-                name: Some("useAuth".to_string()),
-                content: "function useAuth() {}".to_string(),
+                name: Some("useAuth".to_owned()),
+                content: "function useAuth() {}".to_owned(),
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
@@ -719,7 +713,7 @@ fn rebuild_re_parses_all_files() {
     };
     assert!(chunks_before > 0, "should have chunks after index");
 
-    std::fs::write(
+    fs::write(
         dir.path().join("src/B.tsx"),
         "export function B() { return <span/>; }",
     )
@@ -1030,13 +1024,7 @@ fn integration_index_then_impact() {
         ("src/C.tsx", "export function C() { return <div/>; }"),
     ]);
 
-    indexer::run_index(
-        Arc::clone(&y.conn),
-        y.root.as_path(),
-        &rurico::embed::MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
 
     let text = y.impact("src/C.tsx", None, 3, false, false).unwrap();
     assert!(
@@ -1179,10 +1167,10 @@ fn determine_index_state_variants() {
 fn ensure_indexed_partially_embedded_triggers_embed() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/App.tsx", "export function App() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let stats_before = {
         let c = y.conn.lock().unwrap();
@@ -1220,16 +1208,10 @@ fn ensure_indexed_fully_embedded_skips_embed() {
             "src/Button.tsx",
             "export function Button() { return <button/>; }",
         )],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_index(
-        Arc::clone(&y.conn),
-        y.root.as_path(),
-        &rurico::embed::MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
 
     let stats = {
         let c = y.conn.lock().unwrap();
@@ -1249,24 +1231,17 @@ fn ensure_indexed_fully_embedded_skips_embed() {
 fn ensure_indexed_fully_embedded_with_failing_embedder() {
     let (y, dir) = test_yomu_with_files_and_embedder(
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_index(
-        Arc::clone(&y.conn),
-        y.root.as_path(),
-        &rurico::embed::MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn2 = storage::open_db(&db_path).unwrap();
     let y_failing = Yomu::for_test(
         conn2,
         dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable"))
-            as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn Embed>),
     );
 
     let result = y_failing
@@ -1281,7 +1256,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
 // T-222: with_root_creates_db_and_returns_yomu
 #[test]
 fn with_root_creates_db_and_returns_yomu() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let result = Yomu::with_root(dir.path().to_path_buf());
     assert!(
         result.is_ok(),
@@ -1299,7 +1274,7 @@ fn search_without_embedder_skips_embed_attempt() {
     let (y, _dir) =
         test_yomu_with_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     {
         let c = y.conn.lock().unwrap();
@@ -1322,7 +1297,7 @@ fn search_json_format_returns_valid_json() {
         "src/Button.tsx",
         "export function Button() { return <button/>; }",
     )]);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1350,7 +1325,7 @@ fn search_json_format_returns_valid_json() {
 fn search_json_format_empty_results() {
     let (y, _dir) =
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y
         .search(Some("zzzznonexistent"), 10, 0, &[], true, None)
@@ -1402,7 +1377,7 @@ fn dry_run_index_shows_skip_for_unchanged() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.dry_run_index(false, false).unwrap();
     assert!(
@@ -1422,7 +1397,7 @@ fn search_json_format_degraded_includes_flag() {
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
         Arc::new(FailingEmbedder::all_fail("service unavailable")),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1436,16 +1411,16 @@ fn search_json_format_degraded_includes_flag() {
     );
 }
 
-// T-011: innerfn_hit_shows_parent_context_in_text_output
+// T-553: innerfn_hit_shows_parent_context_in_text_output
 #[test]
 fn innerfn_hit_shows_parent_context_in_text_output() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/UserForm.tsx".to_string(),
+            file_path: "src/UserForm.tsx".to_owned(),
             chunk_type: storage::ChunkType::InnerFn,
-            name: Some("handleSubmit".to_string()),
+            name: Some("handleSubmit".to_owned()),
             content: "const handleSubmit = (e) => {\n  e.preventDefault();\n  submit(name);\n};"
-                .to_string(),
+                .to_owned(),
             start_line: 10,
             end_line: 13,
             parent_chunk_id: Some(42),
@@ -1463,10 +1438,10 @@ fn innerfn_hit_shows_parent_context_in_text_output() {
     parent_chunks.insert(
         42,
         storage::Chunk {
-            file_path: "src/UserForm.tsx".to_string(),
+            file_path: "src/UserForm.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("UserForm".to_string()),
-            content: "function UserForm() {\n  return <form/>;\n}".to_string(),
+            name: Some("UserForm".to_owned()),
+            content: "function UserForm() {\n  return <form/>;\n}".to_owned(),
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
@@ -1479,15 +1454,15 @@ fn innerfn_hit_shows_parent_context_in_text_output() {
     );
 }
 
-// T-012: parent_hit_no_duplicate_parent_display
+// T-555: parent_hit_no_duplicate_parent_display
 #[test]
 fn parent_hit_no_duplicate_parent_display() {
     let results = vec![storage::SearchResult {
         chunk: storage::Chunk {
-            file_path: "src/UserForm.tsx".to_string(),
+            file_path: "src/UserForm.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("UserForm".to_string()),
-            content: "function UserForm() {\n  return <form/>;\n}".to_string(),
+            name: Some("UserForm".to_owned()),
+            content: "function UserForm() {\n  return <form/>;\n}".to_owned(),
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
@@ -1519,10 +1494,10 @@ fn json_output_includes_parent_chunk_id() {
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/UserForm.tsx".to_string(),
+                file_path: "src/UserForm.tsx".to_owned(),
                 chunk_type: storage::ChunkType::InnerFn,
-                name: Some("handleSubmit".to_string()),
-                content: "const handleSubmit = () => {}".to_string(),
+                name: Some("handleSubmit".to_owned()),
+                content: "const handleSubmit = () => {}".to_owned(),
                 start_line: 10,
                 end_line: 13,
                 parent_chunk_id: Some(42),
@@ -1534,10 +1509,10 @@ fn json_output_includes_parent_chunk_id() {
         },
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/App.tsx".to_string(),
+                file_path: "src/App.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("App".to_string()),
-                content: "function App() {}".to_string(),
+                name: Some("App".to_owned()),
+                content: "function App() {}".to_owned(),
                 start_line: 1,
                 end_line: 5,
                 parent_chunk_id: None,
@@ -1576,21 +1551,21 @@ fn json_output_includes_parent_chunk_id() {
 #[test]
 fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
     let mut lines = vec![
-        "export function UserForm() {".to_string(),
-        "  const [name, setName] = useState('');".to_string(),
-        "  const handleSubmit = () => {".to_string(),
-        "    submitFormData(name);".to_string(),
-        "    resetForm();".to_string(),
-        "  };".to_string(),
-        "  const handleCancel = () => {".to_string(),
-        "    resetForm();".to_string(),
-        "  };".to_string(),
+        "export function UserForm() {".to_owned(),
+        "  const [name, setName] = useState('');".to_owned(),
+        "  const handleSubmit = () => {".to_owned(),
+        "    submitFormData(name);".to_owned(),
+        "    resetForm();".to_owned(),
+        "  };".to_owned(),
+        "  const handleCancel = () => {".to_owned(),
+        "    resetForm();".to_owned(),
+        "  };".to_owned(),
     ];
     for i in 0..48 {
         lines.push(format!("  const pad{i} = {i};"));
     }
-    lines.push("  return <form onSubmit={handleSubmit}><input/></form>;".to_string());
-    lines.push("}".to_string());
+    lines.push("  return <form onSubmit={handleSubmit}><input/></form>;".to_owned());
+    lines.push("}".to_owned());
     let fixture = lines.join("\n");
 
     let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
@@ -1628,17 +1603,17 @@ fn below_threshold_no_subchunks_in_index() {
     );
 }
 
-// T-003: parent_and_child_both_in_results_no_duplicate
+// T-535: parent_and_child_both_in_results_no_duplicate
 #[test]
 fn parent_and_child_both_in_results_no_duplicate() {
     let parent_id = 42i64;
     let results = vec![
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/UserForm.tsx".to_string(),
+                file_path: "src/UserForm.tsx".to_owned(),
                 chunk_type: storage::ChunkType::Component,
-                name: Some("UserForm".to_string()),
-                content: "function UserForm() { return <form/>; }".to_string(),
+                name: Some("UserForm".to_owned()),
+                content: "function UserForm() { return <form/>; }".to_owned(),
                 start_line: 1,
                 end_line: 20,
                 parent_chunk_id: None,
@@ -1650,10 +1625,10 @@ fn parent_and_child_both_in_results_no_duplicate() {
         },
         storage::SearchResult {
             chunk: storage::Chunk {
-                file_path: "src/UserForm.tsx".to_string(),
+                file_path: "src/UserForm.tsx".to_owned(),
                 chunk_type: storage::ChunkType::InnerFn,
-                name: Some("handleSubmit".to_string()),
-                content: "const handleSubmit = () => {}".to_string(),
+                name: Some("handleSubmit".to_owned()),
+                content: "const handleSubmit = () => {}".to_owned(),
                 start_line: 10,
                 end_line: 13,
                 parent_chunk_id: Some(parent_id),
@@ -1672,10 +1647,10 @@ fn parent_and_child_both_in_results_no_duplicate() {
     parent_chunks.insert(
         parent_id,
         storage::Chunk {
-            file_path: "src/UserForm.tsx".to_string(),
+            file_path: "src/UserForm.tsx".to_owned(),
             chunk_type: storage::ChunkType::Component,
-            name: Some("UserForm".to_string()),
-            content: "function UserForm() { return <form/>; }".to_string(),
+            name: Some("UserForm".to_owned()),
+            content: "function UserForm() { return <form/>; }".to_owned(),
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
@@ -1691,7 +1666,7 @@ fn parent_and_child_both_in_results_no_duplicate() {
     assert!(text.contains("handleSubmit"), "child should appear: {text}");
 }
 
-// T-004: get_chunk_by_id_returns_parent_chunk_id
+// T-538: get_chunk_by_id_returns_parent_chunk_id
 #[test]
 fn get_chunk_by_id_returns_parent_chunk_id() {
     let (conn, _dir) = test_db();
@@ -1734,7 +1709,7 @@ fn get_chunk_by_id_returns_parent_chunk_id() {
     assert!(missing.is_none(), "nonexistent ID should return None");
 }
 
-// T-001: search_with_not_installed_shows_note
+// T-530: search_with_not_installed_shows_note
 #[test]
 fn search_with_not_installed_shows_note() {
     let (conn, dir) = setup_test_files(&[(
@@ -1742,7 +1717,7 @@ fn search_with_not_installed_shows_note() {
         "export function Button() { return <div/>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1751,7 +1726,7 @@ fn search_with_not_installed_shows_note() {
     );
 }
 
-// T-002: search_with_ok_embedder_no_degraded_note
+// T-533: search_with_ok_embedder_no_degraded_note
 #[test]
 fn search_with_ok_embedder_no_degraded_note() {
     let (conn, dir) = setup_test_files(&[(
@@ -1761,7 +1736,7 @@ fn search_with_ok_embedder_no_degraded_note() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
     );
 
     let text = y
@@ -1777,7 +1752,7 @@ fn search_with_ok_embedder_no_degraded_note() {
     );
 }
 
-// T-003: search_with_backend_unavailable_shows_note
+// T-536: search_with_backend_unavailable_shows_note
 #[test]
 fn search_with_backend_unavailable_shows_note() {
     let (conn, dir) = setup_test_files(&[(
@@ -1789,7 +1764,7 @@ fn search_with_backend_unavailable_shows_note() {
         dir.path().to_path_buf(),
         Err(DegradedReason::BackendUnavailable),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1798,7 +1773,7 @@ fn search_with_backend_unavailable_shows_note() {
     );
 }
 
-// T-004: search_with_probe_failed_shows_note
+// T-539: search_with_probe_failed_shows_note
 #[test]
 fn search_with_probe_failed_shows_note() {
     let (conn, dir) = setup_test_files(&[(
@@ -1810,7 +1785,7 @@ fn search_with_probe_failed_shows_note() {
         dir.path().to_path_buf(),
         Err(DegradedReason::ProbeFailed),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1819,7 +1794,7 @@ fn search_with_probe_failed_shows_note() {
     );
 }
 
-// T-004: record_embedder_warning_observation_seam
+// T-540: record_embedder_warning_observation_seam
 #[test]
 fn record_embedder_warning_observation_seam() {
     RECORDED_WARNINGS.with(|w| w.borrow_mut().clear());
@@ -1832,7 +1807,7 @@ fn record_embedder_warning_observation_seam() {
     assert_eq!(warnings[0].1, "model load failed");
 }
 
-// T-009: disabled_no_user_note_in_search
+// T-548: disabled_no_user_note_in_search
 #[test]
 fn disabled_no_user_note_in_search() {
     let (conn, dir) = setup_test_files(&[(
@@ -1844,7 +1819,7 @@ fn disabled_no_user_note_in_search() {
         dir.path().to_path_buf(),
         Err(DegradedReason::Disabled),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1884,10 +1859,7 @@ fn degraded_reason_returns_amici_type() {
         dir.path().to_path_buf(),
         Err(DegradedReason::NotInstalled),
     );
-    assert_eq!(
-        y.degraded_reason(),
-        Some(&amici::model::embedder::DegradedReason::NotInstalled)
-    );
+    assert_eq!(y.degraded_reason(), Some(&DegradedReason::NotInstalled));
 }
 
 // T-233: embed_disabled_yields_degraded_disabled
@@ -1909,7 +1881,7 @@ fn json_notes_present_when_degraded() {
     let (conn, dir) =
         setup_test_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1930,13 +1902,13 @@ fn json_notes_present_when_degraded() {
 // T-109: un-embedded chunks are embedded, result reports count
 #[test]
 fn embed_pending_chunks_returns_count() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div>button</div>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let text = y.embed(None, false).unwrap();
     assert!(
@@ -1952,7 +1924,7 @@ fn embed_pending_chunks_returns_count() {
 // T-110: no pending chunks → "nothing to embed"
 #[test]
 fn embed_nothing_to_embed() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
     let (conn, dir) = setup_test_files(&[]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
     // No index run — no chunks to embed.
@@ -1967,13 +1939,13 @@ fn embed_nothing_to_embed() {
 // T-111: json=true produces {"embedded": N, "budget_exhausted": bool}
 #[test]
 fn embed_json_format() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>;
+    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
     let (conn, dir) = setup_test_files(&[(
         "src/Button.tsx",
         "export function Button() { return <div>button</div>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.embed(None, true).unwrap();
     let parsed = parse_json(&json);
@@ -2029,7 +2001,7 @@ fn json_notes_empty_via_search_with_ok_embedder() {
     let y = Yomu::for_test(
         conn,
         dir.path().to_path_buf(),
-        Some(Arc::new(rurico::embed::MockEmbedder::default()) as Arc<dyn rurico::embed::Embed>),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
     );
 
     let json = y.search(Some("nav"), 10, 0, &[], true, None).unwrap();
@@ -2051,7 +2023,7 @@ fn json_notes_outcome_degraded_fallback() {
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
         Arc::new(FailingEmbedder::all_fail("inference error")),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -2081,7 +2053,7 @@ fn json_notes_backend_unavailable() {
         dir.path().to_path_buf(),
         Err(DegradedReason::BackendUnavailable),
     );
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -2154,7 +2126,7 @@ fn dry_run_index_json_returns_valid_json() {
 #[test]
 fn dry_run_index_json_shows_skip_for_unchanged() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
-    indexer::run_chunk_only_index(Arc::clone(&y.conn), y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
     let json = y.dry_run_index(false, true).unwrap();
     let parsed = parse_json(&json);
@@ -2309,7 +2281,7 @@ fn impact_json_with_symbol_refs() {
     );
 }
 
-// T-078: --semantic with no stored embeddings returns empty semantic_related
+// T-565: --semantic with no stored embeddings returns empty semantic_related
 #[test]
 fn impact_semantic_no_embeddings_returns_empty() {
     let (y, _dir) = test_yomu();
@@ -2343,7 +2315,7 @@ fn impact_semantic_no_embeddings_returns_empty() {
     );
 }
 
-// T-079: --semantic JSON output omits semantic_related when empty
+// T-566: --semantic JSON output omits semantic_related when empty
 #[test]
 fn impact_semantic_json_field_absent_when_empty() {
     let (y, _dir) = test_yomu();
@@ -2362,7 +2334,7 @@ fn impact_semantic_json_field_absent_when_empty() {
     );
 }
 
-// T-079b: --semantic=false JSON output never has semantic_related
+// T-567b: --semantic=false JSON output never has semantic_related
 // T-247: impact_no_semantic_json_field_absent
 #[test]
 fn impact_no_semantic_json_field_absent() {
@@ -2445,7 +2417,7 @@ fn search_from_rejects_path_traversal() {
     );
 }
 
-// T-017: integration — from-file search excludes source, returns ≤ limit
+// T-562: integration — from-file search excludes source, returns ≤ limit
 #[test]
 fn search_from_file_integration() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
@@ -2454,7 +2426,7 @@ fn search_from_file_integration() {
             ("src/b.rs", "pub fn beta() { alpha(); }"),
             ("src/c.rs", "pub fn gamma() { beta(); }"),
         ],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
 
     let text = y.search(None, 5, 0, &[], false, Some("src/a.rs")).unwrap();
@@ -2479,10 +2451,10 @@ fn search_from_with_path_filter_excludes_other_dirs() {
             ("src/b.rs", "pub fn beta() {}"),
             ("lib/c.rs", "pub fn gamma() {}"),
         ],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
     let text = y
-        .search(None, 10, 0, &["src/".to_string()], false, Some("src/a.rs"))
+        .search(None, 10, 0, &["src/".to_owned()], false, Some("src/a.rs"))
         .unwrap();
     assert!(
         !text.contains("lib/c.rs") && !text.contains("gamma"),
@@ -2499,7 +2471,7 @@ fn search_from_json_output_has_results_key() {
             ("src/a.rs", "pub fn alpha() {}"),
             ("src/b.rs", "pub fn beta() {}"),
         ],
-        Arc::new(rurico::embed::MockEmbedder::default()),
+        Arc::new(MockEmbedder::default()),
     );
     let json = y.search(None, 10, 0, &[], true, Some("src/a.rs")).unwrap();
     let parsed = parse_json(&json);

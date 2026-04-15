@@ -15,13 +15,15 @@ pub fn detect_root(start: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
     use super::*;
     use std::fs;
 
     // T-312: detect_root_finds_git_dir
     #[test]
     fn detect_root_finds_git_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
 
@@ -35,7 +37,7 @@ mod tests {
     // T-313: detect_root_prefers_yomu_over_git
     #[test]
     fn detect_root_prefers_yomu_over_git() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         fs::create_dir(tmp.path().join(".git")).unwrap();
         fs::create_dir(tmp.path().join(".yomu")).unwrap();
 
@@ -46,7 +48,7 @@ mod tests {
     // T-314: detect_root_falls_back_to_start
     #[test]
     fn detect_root_falls_back_to_start() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let root = detect_root(tmp.path());
         assert_eq!(root, tmp.path());
     }

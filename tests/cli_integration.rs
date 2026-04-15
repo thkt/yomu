@@ -1,4 +1,7 @@
-use std::process::Command;
+use std::fs;
+use std::process::{Command, Stdio};
+
+use tempfile::{TempDir, tempdir};
 
 fn yomu_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_yomu"))
@@ -103,11 +106,11 @@ fn unknown_flag_fails() {
 
 // --- Success-path integration tests ---
 
-fn setup_project() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+fn setup_project() -> TempDir {
+    let dir = tempdir().unwrap();
     let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
         src.join("Button.tsx"),
         "export function Button() { return <button>Click</button>; }\n",
     )
@@ -115,8 +118,8 @@ fn setup_project() -> tempfile::TempDir {
     Command::new("git")
         .args(["init"])
         .current_dir(dir.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output()
         .unwrap();
     // pre-index so tests don't depend on auto-indexing
@@ -132,10 +135,10 @@ fn setup_project() -> tempfile::TempDir {
 // T-503: index_then_status_then_search
 #[test]
 fn index_then_status_then_search() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
         src.join("Button.tsx"),
         "export function Button() { return <button>Click</button>; }\n",
     )
@@ -205,9 +208,9 @@ fn search_stdin_query() {
     let mut child = yomu_cmd()
         .args(["search", "-"])
         .current_dir(dir.path())
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     use std::io::Write;
@@ -281,13 +284,13 @@ fn search_format_json_includes_index_and_degraded_notes() {
     let src = dir.path().join("src");
     let bad_path = src.join("Unreadable.tsx");
     let hf_home = dir.path().join("empty-hf-home");
-    std::fs::create_dir_all(&hf_home).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&hf_home).unwrap();
+    fs::write(
         &bad_path,
         "export function Unreadable() { return <div />; }\n",
     )
     .unwrap();
-    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o000)).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = rusqlite::Connection::open(db_path).unwrap();
@@ -306,7 +309,7 @@ fn search_format_json_includes_index_and_degraded_notes() {
         .output()
         .unwrap();
 
-    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o644)).unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -335,15 +338,15 @@ fn search_format_json_includes_index_and_degraded_notes() {
 // T-507: index_dry_run
 #[test]
 fn index_dry_run() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("App.tsx"), "export function App() {}").unwrap();
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("App.tsx"), "export function App() {}").unwrap();
     Command::new("git")
         .args(["init"])
         .current_dir(dir.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output()
         .unwrap();
 
@@ -392,9 +395,9 @@ fn search_stdin_empty_query_fails() {
     let mut child = yomu_cmd()
         .args(["search", "-"])
         .current_dir(dir.path())
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     // Close stdin immediately (empty input)
@@ -573,10 +576,10 @@ fn json_flag_with_status() {
 // T-518: json_flag_with_index
 #[test]
 fn json_flag_with_index() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
         src.join("App.tsx"),
         "export function App() { return <div/>; }\n",
     )
@@ -584,8 +587,8 @@ fn json_flag_with_index() {
     Command::new("git")
         .args(["init"])
         .current_dir(dir.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output()
         .unwrap();
 
@@ -759,7 +762,7 @@ fn json_flag_with_impact() {
     let dir = setup_project();
     // Add a file that imports Button so impact has dependents
     let src = dir.path().join("src");
-    std::fs::write(
+    fs::write(
         src.join("App.tsx"),
         "import { Button } from './Button';\nexport function App() { return <Button/>; }\n",
     )
@@ -797,7 +800,7 @@ fn json_flag_with_impact() {
     assert!(parsed.get("total").is_some(), "should have total: {stdout}");
 }
 
-// T-010: probe_embed_flag_rejected
+// T-550: probe_embed_flag_rejected
 #[test]
 fn probe_embed_flag_rejected() {
     let output = yomu_cmd()

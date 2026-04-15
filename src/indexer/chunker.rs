@@ -3,6 +3,8 @@ mod markdown;
 mod rust;
 mod ts;
 
+use tree_sitter::{Language, Node, Parser};
+
 use crate::storage::ChunkType;
 
 pub use ts::parse_reexports;
@@ -79,8 +81,8 @@ pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
 #[cfg(test)]
 pub(crate) use ts::parse_structured_imports;
 
-fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
-    let mut parser = tree_sitter::Parser::new();
+fn make_parser(lang: &Language) -> Option<Parser> {
+    let mut parser = Parser::new();
     if let Err(e) = parser.set_language(lang) {
         tracing::warn!(error = %e, "Failed to set tree-sitter language, using fallback chunker");
         return None;
@@ -90,8 +92,8 @@ fn make_parser(lang: &tree_sitter::Language) -> Option<tree_sitter::Parser> {
 
 fn chunk_with_ast(
     source: &str,
-    parser: &mut tree_sitter::Parser,
-    classify: impl Fn(&tree_sitter::Node, &str) -> Option<RawChunk>,
+    parser: &mut Parser,
+    classify: impl Fn(&Node, &str) -> Option<RawChunk>,
 ) -> Vec<RawChunk> {
     let Some(tree) = parser.parse(source, None) else {
         tracing::warn!("AST parse failed, using fallback chunker");
@@ -109,6 +111,7 @@ fn chunk_with_ast(
     chunks
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn chunk_fallback(source: &str) -> Vec<RawChunk> {
     const MAX_CHUNK_SIZE: usize = 1000;
 
@@ -153,9 +156,10 @@ fn chunk_fallback(source: &str) -> Vec<RawChunk> {
     chunks
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub(super) fn attach_pending_comments(
     chunk: &mut RawChunk,
-    pending_comments: &mut Vec<tree_sitter::Node>,
+    pending_comments: &mut Vec<Node>,
     source: &str,
 ) {
     if pending_comments.is_empty() {
@@ -171,21 +175,8 @@ pub(super) fn attach_pending_comments(
     pending_comments.clear();
 }
 
-fn other_or_skip(source: &str, node: &tree_sitter::Node) -> Option<RawChunk> {
-    let text = &source[node.byte_range()];
-    if text.trim().is_empty() {
-        None
-    } else {
-        Some(make_chunk(source, node, ChunkType::Other, None))
-    }
-}
-
-fn make_chunk(
-    source: &str,
-    node: &tree_sitter::Node,
-    chunk_type: ChunkType,
-    name: Option<String>,
-) -> RawChunk {
+#[allow(clippy::cast_possible_truncation)]
+fn make_chunk(source: &str, node: &Node, chunk_type: ChunkType, name: Option<String>) -> RawChunk {
     let start = node.start_position().row as u32 + 1;
     RawChunk {
         chunk_type,
@@ -198,17 +189,118 @@ fn make_chunk(
     }
 }
 
+fn other_or_skip(source: &str, node: &Node) -> Option<RawChunk> {
+    let text = &source[node.byte_range()];
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(make_chunk(source, node, ChunkType::Other, None))
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn make_inner_fn_chunk(
+    source: &str,
+    node: &Node,
+    name: Option<String>,
+    parent_index: usize,
+) -> RawChunk {
+    let s = node.start_position().row as u32 + 1;
+    RawChunk {
+        chunk_type: ChunkType::InnerFn,
+        name,
+        content: source[node.byte_range()].to_string(),
+        start_line: s,
+        end_line: node.end_position().row as u32 + 1,
+        parent_index: Some(parent_index),
+        ast_start_line: s,
+    }
+}
+
 /// Minimum line count for a Component chunk to trigger subchunk extraction.
 const SUBCHUNK_THRESHOLD: u32 = 50;
 
 /// Hook names whose callback arguments should be extracted as subchunks.
 const HOOK_CALLBACK_NAMES: &[&str] = &["useEffect", "useMemo", "useCallback"];
 
+fn extract_name(node: &Node, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" || child.kind() == "type_identifier" {
+            return Some(source[child.byte_range()].to_string());
+        }
+    }
+    None
+}
+
+fn extract_arrow_from_lexical(source: &str, node: &Node, parent_index: usize) -> Option<RawChunk> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        let has_arrow = child
+            .children(&mut child.walk())
+            .any(|c| c.kind() == "arrow_function");
+        if has_arrow {
+            let name = extract_name(&child, source);
+            return Some(make_inner_fn_chunk(source, node, name, parent_index));
+        }
+    }
+    None
+}
+
+fn extract_hook_from_lexical(source: &str, node: &Node, parent_index: usize) -> Option<RawChunk> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        // Look for call_expression as the value: const x = useMemo(...)
+        let mut c2 = child.walk();
+        for grandchild in child.children(&mut c2) {
+            if grandchild.kind() == "call_expression" {
+                let callee = grandchild.children(&mut grandchild.walk()).next()?;
+                let callee_name = &source[callee.byte_range()];
+                if HOOK_CALLBACK_NAMES.contains(&callee_name) {
+                    return Some(make_inner_fn_chunk(
+                        source,
+                        node,
+                        Some(callee_name.to_owned()),
+                        parent_index,
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_hook_callback(source: &str, stmt: &Node, parent_index: usize) -> Option<RawChunk> {
+    let mut cursor = stmt.walk();
+    for child in stmt.children(&mut cursor) {
+        if child.kind() != "call_expression" {
+            continue;
+        }
+        let callee = child.children(&mut child.walk()).next()?;
+        let callee_name = &source[callee.byte_range()];
+        if HOOK_CALLBACK_NAMES.contains(&callee_name) {
+            return Some(make_inner_fn_chunk(
+                source,
+                stmt,
+                Some(callee_name.to_owned()),
+                parent_index,
+            ));
+        }
+    }
+    None
+}
+
 /// Extract direct inner functions from a Component chunk's AST node.
 /// Returns subchunks with `parent_index` pointing to the parent's position.
 pub(super) fn extract_inner_functions(
     source: &str,
-    body_node: &tree_sitter::Node,
+    body_node: &Node,
     parent_index: usize,
 ) -> Vec<RawChunk> {
     let mut subchunks = Vec::new();
@@ -228,16 +320,7 @@ pub(super) fn extract_inner_functions(
             // function handleSubmit() { ... }
             "function_declaration" => {
                 let name = extract_name(&stmt, source);
-                let s = stmt.start_position().row as u32 + 1;
-                subchunks.push(RawChunk {
-                    chunk_type: ChunkType::InnerFn,
-                    name,
-                    content: source[stmt.byte_range()].to_string(),
-                    start_line: s,
-                    end_line: stmt.end_position().row as u32 + 1,
-                    parent_index: Some(parent_index),
-                    ast_start_line: s,
-                });
+                subchunks.push(make_inner_fn_chunk(source, &stmt, name, parent_index));
             }
             // useEffect(() => { ... }, []);
             "expression_statement" => {
@@ -251,111 +334,9 @@ pub(super) fn extract_inner_functions(
     subchunks
 }
 
-fn extract_arrow_from_lexical(
-    source: &str,
-    node: &tree_sitter::Node,
-    parent_index: usize,
-) -> Option<RawChunk> {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() != "variable_declarator" {
-            continue;
-        }
-        let has_arrow = child
-            .children(&mut child.walk())
-            .any(|c| c.kind() == "arrow_function");
-        if has_arrow {
-            let name = extract_name(&child, source);
-            let s = node.start_position().row as u32 + 1;
-            return Some(RawChunk {
-                chunk_type: ChunkType::InnerFn,
-                name,
-                content: source[node.byte_range()].to_string(),
-                start_line: s,
-                end_line: node.end_position().row as u32 + 1,
-                parent_index: Some(parent_index),
-                ast_start_line: s,
-            });
-        }
-    }
-    None
-}
-
-fn extract_hook_from_lexical(
-    source: &str,
-    node: &tree_sitter::Node,
-    parent_index: usize,
-) -> Option<RawChunk> {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() != "variable_declarator" {
-            continue;
-        }
-        // Look for call_expression as the value: const x = useMemo(...)
-        let mut c2 = child.walk();
-        for grandchild in child.children(&mut c2) {
-            if grandchild.kind() == "call_expression" {
-                let callee = grandchild.children(&mut grandchild.walk()).next()?;
-                let callee_name = &source[callee.byte_range()];
-                if HOOK_CALLBACK_NAMES.contains(&callee_name) {
-                    let s = node.start_position().row as u32 + 1;
-                    return Some(RawChunk {
-                        chunk_type: ChunkType::InnerFn,
-                        name: Some(callee_name.to_string()),
-                        content: source[node.byte_range()].to_string(),
-                        start_line: s,
-                        end_line: node.end_position().row as u32 + 1,
-                        ast_start_line: s,
-                        parent_index: Some(parent_index),
-                    });
-                }
-            }
-        }
-    }
-    None
-}
-
-fn extract_hook_callback(
-    source: &str,
-    stmt: &tree_sitter::Node,
-    parent_index: usize,
-) -> Option<RawChunk> {
-    let mut cursor = stmt.walk();
-    for child in stmt.children(&mut cursor) {
-        if child.kind() != "call_expression" {
-            continue;
-        }
-        let callee = child.children(&mut child.walk()).next()?;
-        let callee_name = &source[callee.byte_range()];
-        if HOOK_CALLBACK_NAMES.contains(&callee_name) {
-            let s = stmt.start_position().row as u32 + 1;
-            return Some(RawChunk {
-                chunk_type: ChunkType::InnerFn,
-                name: Some(callee_name.to_string()),
-                content: source[stmt.byte_range()].to_string(),
-                start_line: s,
-                end_line: stmt.end_position().row as u32 + 1,
-                parent_index: Some(parent_index),
-                ast_start_line: s,
-            });
-        }
-    }
-    None
-}
-
 pub(super) fn should_extract_subchunks(chunk: &RawChunk) -> bool {
     chunk.chunk_type == ChunkType::Component
         && (chunk.end_line - chunk.start_line + 1) > SUBCHUNK_THRESHOLD
-}
-
-fn extract_name(node: &tree_sitter::Node, source: &str) -> Option<String> {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "identifier" || child.kind() == "type_identifier" {
-            return Some(source[child.byte_range()].to_string());
-        }
-    }
-    None
 }
 
 fn classify_function(name: Option<&str>) -> ChunkType {
@@ -363,17 +344,12 @@ fn classify_function(name: Option<&str>) -> ChunkType {
         Some(n) if n.starts_with("use") && n.len() > 3 && n.as_bytes()[3].is_ascii_uppercase() => {
             ChunkType::Hook
         }
-        Some(n) if n.as_bytes().first().is_some_and(|b| b.is_ascii_uppercase()) => {
-            ChunkType::Component
-        }
+        Some(n) if n.as_bytes().first().is_some_and(u8::is_ascii_uppercase) => ChunkType::Component,
         _ => ChunkType::Other,
     }
 }
 
-fn find_child_by_kind<'a>(
-    node: &'a tree_sitter::Node<'a>,
-    kind: &str,
-) -> Option<tree_sitter::Node<'a>> {
+fn find_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     node.children(&mut cursor).find(|c| c.kind() == kind)
 }

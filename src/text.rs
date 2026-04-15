@@ -1,3 +1,5 @@
+use std::mem;
+
 pub fn split_identifier(s: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -7,14 +9,14 @@ pub fn split_identifier(s: &str) -> Vec<String> {
         let c = chars[i];
         if c == '-' || c == '_' {
             if !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
+                parts.push(mem::take(&mut current));
             }
         } else if c.is_uppercase() {
             let prev_lower = i > 0 && chars[i - 1].is_lowercase();
             let prev_upper = i > 0 && chars[i - 1].is_uppercase();
             let next_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
             if (prev_lower || (prev_upper && next_lower)) && !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
+                parts.push(mem::take(&mut current));
             }
             current.push(c);
         } else {
