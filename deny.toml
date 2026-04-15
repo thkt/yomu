@@ -1,6 +1,10 @@
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # paste is unmaintained (RUSTSEC-2024-0436) but has no safe upgrade path;
+    # pulled in transitively via rurico → mlx-rs / tokenizers.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 version = 2
