@@ -1,4 +1,4 @@
-use ignore::WalkBuilder;
+use ignore::{DirEntry, WalkBuilder};
 use std::path::{Path, PathBuf};
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "css", "html", "rs", "md"];
@@ -26,14 +26,18 @@ pub fn walk_source_files(root: &Path) -> Vec<PathBuf> {
                     .and_then(|ext| ext.to_str())
                     .is_some_and(|ext| SUPPORTED_EXTENSIONS.contains(&ext))
         })
-        .map(|entry| entry.into_path())
+        .map(DirEntry::into_path)
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+    use std::process::Command;
+
+    use tempfile::tempdir;
+
+    use super::*;
 
     fn setup_project(dir: &Path) {
         for name in [
@@ -75,7 +79,7 @@ mod tests {
 
     fn setup_project_with_gitignore(dir: &Path) {
         setup_project(dir);
-        std::process::Command::new("git")
+        Command::new("git")
             .args(["init", "-q"])
             .current_dir(dir)
             .output()
@@ -86,7 +90,7 @@ mod tests {
     // T-357: walk_collects_source_files
     #[test]
     fn walk_collects_source_files() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         setup_project_with_gitignore(tmp.path());
 
         let files = walk_source_files(tmp.path());
@@ -116,7 +120,7 @@ mod tests {
     // T-358: walk_excludes_hidden_and_gitignored_dirs
     #[test]
     fn walk_excludes_hidden_and_gitignored_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         setup_project_with_gitignore(tmp.path());
 
         let files = walk_source_files(tmp.path());
@@ -132,7 +136,7 @@ mod tests {
     // T-359: walk_respects_custom_gitignore_patterns
     #[test]
     fn walk_respects_custom_gitignore_patterns() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         setup_project_with_gitignore(tmp.path());
 
         let plugin_file = tmp.path().join("plugins/cache/big-plugin/README.md");

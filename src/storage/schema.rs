@@ -1,23 +1,29 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io;
 use std::path::Path;
 
+use rurico::storage::ensure_sqlite_vec;
 use rusqlite::Connection;
+use rusqlite::ffi::{Error as FfiError, ErrorCode};
+
+use crate::text::split_identifier;
 
 use super::{EMBEDDING_DIMS, StorageError};
 
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
-    rurico::storage::ensure_sqlite_vec().map_err(|e| StorageError::Io(std::io::Error::other(e)))?;
+    ensure_sqlite_vec().map_err(|e| StorageError::Io(io::Error::other(e)))?;
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
     }
 
     let conn = match Connection::open(path) {
         Ok(c) => c,
         Err(
             ref e @ rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error {
-                    code:
-                        rusqlite::ffi::ErrorCode::CannotOpen | rusqlite::ffi::ErrorCode::SystemIoFailure,
+                FfiError {
+                    code: ErrorCode::CannotOpen | ErrorCode::SystemIoFailure,
                     ..
                 },
                 _,
@@ -25,8 +31,8 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
         ) => {
             tracing::warn!(error = %e, "DB open failed (I/O), removing WAL/SHM and retrying");
             let path_str = path.to_string_lossy();
-            let _ = std::fs::remove_file(format!("{path_str}-wal"));
-            let _ = std::fs::remove_file(format!("{path_str}-shm"));
+            let _ = fs::remove_file(format!("{path_str}-wal"));
+            let _ = fs::remove_file(format!("{path_str}-shm"));
             Connection::open(path)?
         }
         Err(e) => return Err(e.into()),
@@ -152,14 +158,14 @@ fn verify_required_columns(conn: &Connection, path: &Path) -> Result<(), Storage
     ];
 
     let mut stmt = conn.prepare("PRAGMA table_info(chunks)")?;
-    let existing: std::collections::HashSet<String> = stmt
+    let existing: HashSet<String> = stmt
         .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<std::collections::HashSet<String>, _>>()?;
+        .collect::<Result<HashSet<String>, _>>()?;
 
     let missing: Vec<String> = REQUIRED
         .iter()
         .filter(|col| !existing.contains(**col))
-        .map(|col| (*col).to_string())
+        .map(|col| (*col).to_owned())
         .collect();
 
     if !missing.is_empty() {
@@ -273,7 +279,7 @@ fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
             let content: String = row.get(3)?;
             let fts_name = name
                 .as_deref()
-                .map(|n| crate::text::split_identifier(n).join(" "))
+                .map(|n| split_identifier(n).join(" "))
                 .unwrap_or_default();
             insert.execute(rusqlite::params![id, fts_name, content, path])?;
         }

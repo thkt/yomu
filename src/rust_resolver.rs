@@ -7,25 +7,51 @@ pub struct RustResolver {
     canonical_root: Option<PathBuf>,
 }
 
-impl RustResolver {
-    pub fn new(root: &Path) -> Self {
-        let canonical_root = root.canonicalize().ok();
-        Self {
-            root: root.to_path_buf(),
-            canonical_root,
-        }
+fn module_path_from_file(from_file: &str) -> Vec<String> {
+    let path = from_file.strip_prefix("src/").unwrap_or(from_file);
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let parent = Path::new(path).parent().unwrap_or(Path::new(""));
+
+    if stem == "lib" || stem == "main" {
+        return vec![];
     }
 
-    pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
-        if let Some(rest) = source.strip_prefix("crate::") {
-            self.resolve_crate(rest)
-        } else if source.starts_with("super::") {
-            self.resolve_super(source, from_file)
-        } else if let Some(rest) = source.strip_prefix("self::") {
-            self.resolve_self(rest, from_file)
-        } else {
-            None
+    let mut segments: Vec<String> = parent
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+
+    if stem != "mod" {
+        segments.push(stem.to_owned());
+    }
+
+    segments
+}
+
+impl RustResolver {
+    fn probe_module(&self, segments: &[&str]) -> Option<String> {
+        let path = segments.join("/");
+        let canonical_root = self.canonical_root.as_deref();
+        let rs_candidate = self.root.join("src").join(format!("{path}.rs"));
+        if let Ok(abs) = rs_candidate.canonicalize() {
+            return strip_canonical_prefix(&abs, canonical_root);
         }
+        let mod_candidate = self.root.join("src").join(&path).join("mod.rs");
+        if let Ok(abs) = mod_candidate.canonicalize() {
+            return strip_canonical_prefix(&abs, canonical_root);
+        }
+        None
+    }
+
+    fn probe_with_symbol_fallback(&self, segments: &[&str], min_len: usize) -> Option<String> {
+        self.probe_module(segments).or_else(|| {
+            (segments.len() > min_len)
+                .then(|| self.probe_module(&segments[..segments.len() - 1]))
+                .flatten()
+        })
     }
 
     fn resolve_crate(&self, rest: &str) -> Option<String> {
@@ -46,7 +72,7 @@ impl RustResolver {
         let min_len = module_path.len() + 1;
         let segments: Vec<&str> = module_path
             .iter()
-            .map(|s| s.as_str())
+            .map(String::as_str)
             .chain(rest.split("::"))
             .collect();
         self.probe_with_symbol_fallback(&segments, min_len)
@@ -57,32 +83,30 @@ impl RustResolver {
         let min_len = module_path.len() + 1;
         let segments: Vec<&str> = module_path
             .iter()
-            .map(|s| s.as_str())
+            .map(String::as_str)
             .chain(rest.split("::"))
             .collect();
         self.probe_with_symbol_fallback(&segments, min_len)
     }
 
-    fn probe_with_symbol_fallback(&self, segments: &[&str], min_len: usize) -> Option<String> {
-        self.probe_module(segments).or_else(|| {
-            (segments.len() > min_len)
-                .then(|| self.probe_module(&segments[..segments.len() - 1]))
-                .flatten()
-        })
+    pub fn new(root: &Path) -> Self {
+        let canonical_root = root.canonicalize().ok();
+        Self {
+            root: root.to_path_buf(),
+            canonical_root,
+        }
     }
 
-    fn probe_module(&self, segments: &[&str]) -> Option<String> {
-        let path = segments.join("/");
-        let canonical_root = self.canonical_root.as_deref();
-        let rs_candidate = self.root.join("src").join(format!("{path}.rs"));
-        if let Ok(abs) = rs_candidate.canonicalize() {
-            return strip_canonical_prefix(&abs, canonical_root);
+    pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
+        if let Some(rest) = source.strip_prefix("crate::") {
+            self.resolve_crate(rest)
+        } else if source.starts_with("super::") {
+            self.resolve_super(source, from_file)
+        } else if let Some(rest) = source.strip_prefix("self::") {
+            self.resolve_self(rest, from_file)
+        } else {
+            None
         }
-        let mod_candidate = self.root.join("src").join(&path).join("mod.rs");
-        if let Ok(abs) = mod_candidate.canonicalize() {
-            return strip_canonical_prefix(&abs, canonical_root);
-        }
-        None
     }
 }
 
@@ -92,78 +116,57 @@ impl Resolve for RustResolver {
     }
 }
 
-fn module_path_from_file(from_file: &str) -> Vec<String> {
-    let path = from_file.strip_prefix("src/").unwrap_or(from_file);
-    let stem = Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    let parent = Path::new(path).parent().unwrap_or(Path::new(""));
-
-    if stem == "lib" || stem == "main" {
-        return vec![];
-    }
-
-    let mut segments: Vec<String> = parent
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-
-    if stem != "mod" {
-        segments.push(stem.to_string());
-    }
-
-    segments
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
 
     // T-315: resolve_crate_basic
     #[test]
     fn resolve_crate_basic() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let foo = tmp.path().join("src").join("foo");
         fs::create_dir_all(&foo).unwrap();
         fs::write(foo.join("bar.rs"), "").unwrap();
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("crate::foo::bar", "src/lib.rs");
-        assert_eq!(result, Some("src/foo/bar.rs".to_string()));
+        assert_eq!(result, Some("src/foo/bar.rs".to_owned()));
     }
 
     // T-316: resolve_crate_nested
     #[test]
     fn resolve_crate_nested() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let abc = tmp.path().join("src").join("a").join("b");
         fs::create_dir_all(&abc).unwrap();
         fs::write(abc.join("c.rs"), "").unwrap();
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("crate::a::b::c", "src/lib.rs");
-        assert_eq!(result, Some("src/a/b/c.rs".to_string()));
+        assert_eq!(result, Some("src/a/b/c.rs".to_owned()));
     }
 
     // T-317: resolve_crate_mod_rs_fallback
     #[test]
     fn resolve_crate_mod_rs_fallback() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let foo = tmp.path().join("src").join("foo");
         fs::create_dir_all(&foo).unwrap();
         fs::write(foo.join("mod.rs"), "").unwrap();
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("crate::foo", "src/lib.rs");
-        assert_eq!(result, Some("src/foo/mod.rs".to_string()));
+        assert_eq!(result, Some("src/foo/mod.rs".to_owned()));
     }
 
     // T-318: resolve_super_sibling
     #[test]
     fn resolve_super_sibling() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let foo = tmp.path().join("src").join("foo");
         fs::create_dir_all(&foo).unwrap();
         fs::write(foo.join("bar.rs"), "").unwrap();
@@ -171,13 +174,13 @@ mod tests {
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("super::baz", "src/foo/bar.rs");
-        assert_eq!(result, Some("src/foo/baz.rs".to_string()));
+        assert_eq!(result, Some("src/foo/baz.rs".to_owned()));
     }
 
     // T-319: resolve_super_at_root_returns_none
     #[test]
     fn resolve_super_at_root_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("foo.rs"), "").unwrap();
@@ -190,7 +193,7 @@ mod tests {
     // T-320: resolve_self_submodule
     #[test]
     fn resolve_self_submodule() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let foo = tmp.path().join("src").join("foo");
         fs::create_dir_all(&foo).unwrap();
         fs::write(foo.join("mod.rs"), "").unwrap();
@@ -198,13 +201,13 @@ mod tests {
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("self::sub", "src/foo/mod.rs");
-        assert_eq!(result, Some("src/foo/sub.rs".to_string()));
+        assert_eq!(result, Some("src/foo/sub.rs".to_owned()));
     }
 
     // T-321: resolve_prefers_rs_over_mod_rs
     #[test]
     fn resolve_prefers_rs_over_mod_rs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         let foo_dir = src.join("foo");
         fs::create_dir_all(&foo_dir).unwrap();
@@ -213,13 +216,13 @@ mod tests {
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("crate::foo", "src/lib.rs");
-        assert_eq!(result, Some("src/foo.rs".to_string()));
+        assert_eq!(result, Some("src/foo.rs".to_owned()));
     }
 
     // T-322: resolve_missing_returns_none
     #[test]
     fn resolve_missing_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
 
@@ -231,7 +234,7 @@ mod tests {
     // T-323: resolve_super_from_mod_rs
     #[test]
     fn resolve_super_from_mod_rs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         let foo = src.join("foo");
         fs::create_dir_all(&foo).unwrap();
@@ -240,13 +243,13 @@ mod tests {
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("super::bar", "src/foo/mod.rs");
-        assert_eq!(result, Some("src/bar.rs".to_string()));
+        assert_eq!(result, Some("src/bar.rs".to_owned()));
     }
 
     // T-324: resolve_self_from_file
     #[test]
     fn resolve_self_from_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         let foo = src.join("foo");
         fs::create_dir_all(&foo).unwrap();
@@ -255,13 +258,13 @@ mod tests {
 
         let resolver = RustResolver::new(tmp.path());
         let result = resolver.resolve("self::bar", "src/foo.rs");
-        assert_eq!(result, Some("src/foo/bar.rs".to_string()));
+        assert_eq!(result, Some("src/foo/bar.rs".to_owned()));
     }
 
     // T-325: resolve_external_crate_returns_none
     #[test]
     fn resolve_external_crate_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("src")).unwrap();
 
         let resolver = RustResolver::new(tmp.path());
@@ -272,7 +275,7 @@ mod tests {
     // T-326: resolve_super_super_multi_level
     #[test]
     fn resolve_super_super_multi_level() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         let a = src.join("a");
         let deep = a.join("b");
@@ -283,6 +286,6 @@ mod tests {
         let resolver = RustResolver::new(tmp.path());
         // a::b::c → super → a::b → super → a → util → a::util
         let result = resolver.resolve("super::super::util", "src/a/b/c.rs");
-        assert_eq!(result, Some("src/a/util.rs".to_string()));
+        assert_eq!(result, Some("src/a/util.rs".to_owned()));
     }
 }

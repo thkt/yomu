@@ -1,8 +1,14 @@
+use std::fs;
+use std::path::Path;
+
 use super::*;
+use crate::resolver::Resolver;
+use crate::rust_resolver::RustResolver;
 
 use rurico::embed::{
     AlternatingEmbedder, FailingEmbedder, MismatchEmbedder, MockChunkedEmbedder, MockEmbedder,
 };
+use tempfile::{TempDir, tempdir};
 
 // T-362: file_hash_is_deterministic
 #[test]
@@ -98,17 +104,18 @@ fn enrich_for_embedding_with_name_and_parent() {
 // T-369: to_rel_path_outside_root
 #[test]
 fn to_rel_path_outside_root() {
-    let result = to_rel_path(std::path::Path::new("/a"), std::path::Path::new("/b/c.tsx"));
+    let result = to_rel_path(Path::new("/a"), Path::new("/b/c.tsx"));
     assert_eq!(result, "/b/c.tsx");
 }
 
 // T-370: read_source_too_large
+#[allow(clippy::cast_possible_truncation)]
 #[test]
 fn read_source_too_large() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let big_file = dir.path().join("big.ts");
     let content = "x".repeat(MAX_FILE_SIZE as usize + 1);
-    std::fs::write(&big_file, content).unwrap();
+    fs::write(&big_file, content).unwrap();
     let result = read_source(&big_file);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), FileAction::Skip));
@@ -117,13 +124,13 @@ fn read_source_too_large() {
 // T-371: read_source_nonexistent
 #[test]
 fn read_source_nonexistent() {
-    let result = read_source(std::path::Path::new("/nonexistent/file.ts"));
+    let result = read_source(Path::new("/nonexistent/file.ts"));
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), FileAction::Error));
 }
 
-fn test_db() -> (storage::Db, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+fn test_db() -> (storage::Db, TempDir) {
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     (conn, dir)
@@ -132,16 +139,16 @@ fn test_db() -> (storage::Db, tempfile::TempDir) {
 // T-372: run_index_with_mock_embedder
 #[test]
 fn run_index_with_mock_embedder() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
 
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
         src_dir.join("Button.tsx"),
         "function Button() { return <div/>; }",
     )
     .unwrap();
-    std::fs::write(
+    fs::write(
         src_dir.join("App.tsx"),
         "function App() { return <main/>; }",
     )
@@ -151,13 +158,7 @@ fn run_index_with_mock_embedder() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    let result = run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -171,11 +172,11 @@ fn run_index_with_mock_embedder() {
 // T-373: run_index_with_multi_chunk_embedder_keeps_first_only
 #[test]
 fn run_index_with_multi_chunk_embedder_keeps_first_only() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
 
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
         src_dir.join("App.tsx"),
         "function App() { return <main/>; }",
     )
@@ -186,13 +187,7 @@ fn run_index_with_multi_chunk_embedder_keeps_first_only() {
     let conn = Arc::new(Mutex::new(conn));
 
     // MockChunkedEmbedder returns 3 chunks per document; first_chunk keeps only the first.
-    let result = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockChunkedEmbedder::new(3),
-        false,
-    )
-    .unwrap();
+    let result = run_index(&conn, dir.path(), &MockChunkedEmbedder::new(3), false).unwrap();
 
     assert_eq!(result.files_processed, 1);
     assert_eq!(result.files_errored, 0);
@@ -205,33 +200,21 @@ fn run_index_with_multi_chunk_embedder_keeps_first_only() {
 // T-374: run_index_skips_unchanged_files
 #[test]
 fn run_index_skips_unchanged_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
     // First run: processes file
-    let r1 = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    let r1 = run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
     assert_eq!(r1.files_processed, 1);
 
     // Second run: skips unchanged file
-    let r2 = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    let r2 = run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
     assert_eq!(r2.files_processed, 0);
     assert_eq!(r2.files_skipped, 1);
 }
@@ -239,30 +222,18 @@ fn run_index_skips_unchanged_files() {
 // T-375: run_index_force_reindexes
 #[test]
 fn run_index_force_reindexes() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
 
-    let r2 = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        true,
-    )
-    .unwrap();
+    let r2 = run_index(&conn, dir.path(), &MockEmbedder::default(), true).unwrap();
     assert_eq!(r2.files_processed, 1);
     assert_eq!(r2.files_skipped, 0);
 }
@@ -270,24 +241,18 @@ fn run_index_force_reindexes() {
 // T-376: run_index_removes_deleted_file_chunks
 #[test]
 fn run_index_removes_deleted_file_chunks() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
-    std::fs::write(src_dir.join("B.tsx"), "function B() { return 2; }").unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("A.tsx"), "function A() { return 1; }").unwrap();
+    fs::write(src_dir.join("B.tsx"), "function B() { return 2; }").unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
     // Index both files
-    let r1 = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    let r1 = run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
     assert_eq!(r1.files_processed, 2);
     assert_eq!(
         storage::get_stats(&conn.lock().unwrap())
@@ -297,16 +262,10 @@ fn run_index_removes_deleted_file_chunks() {
     );
 
     // Delete B.tsx from disk
-    std::fs::remove_file(src_dir.join("B.tsx")).unwrap();
+    fs::remove_file(src_dir.join("B.tsx")).unwrap();
 
     // Re-index: should remove orphaned B.tsx chunks
-    run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
@@ -314,40 +273,40 @@ fn run_index_removes_deleted_file_chunks() {
 // T-377: build_references_named_import
 #[test]
 fn build_references_named_import() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir().unwrap();
     let src = tmp.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("B.tsx"), "").unwrap();
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("B.tsx"), "").unwrap();
 
-    let resolver = crate::resolver::Resolver::new(tmp.path());
+    let resolver = Resolver::new(tmp.path());
     let imports = vec![chunker::ParsedImport {
         specifiers: vec![chunker::ImportSpecifier {
-            name: "B".to_string(),
+            name: "B".to_owned(),
             alias: None,
             kind: chunker::ImportKind::Named,
         }],
-        source: "./B".to_string(),
+        source: "./B".to_owned(),
     }];
     let refs = build_references(&imports, "src/A.tsx", &resolver);
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].source_file, "src/A.tsx");
     assert_eq!(refs[0].target_file, "src/B.tsx");
-    assert_eq!(refs[0].symbol_name, Some("B".to_string()));
+    assert_eq!(refs[0].symbol_name, Some("B".to_owned()));
     assert_eq!(refs[0].ref_kind, RefKind::Named);
 }
 
 // T-378: build_references_side_effect_import
 #[test]
 fn build_references_side_effect_import() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir().unwrap();
     let src = tmp.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("styles.css"), "").unwrap();
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("styles.css"), "").unwrap();
 
-    let resolver = crate::resolver::Resolver::new(tmp.path());
+    let resolver = Resolver::new(tmp.path());
     let imports = vec![chunker::ParsedImport {
         specifiers: vec![],
-        source: "./styles.css".to_string(),
+        source: "./styles.css".to_owned(),
     }];
     let refs = build_references(&imports, "src/A.tsx", &resolver);
     assert_eq!(refs.len(), 1);
@@ -358,17 +317,17 @@ fn build_references_side_effect_import() {
 // T-379: build_references_unresolvable_returns_empty
 #[test]
 fn build_references_unresolvable_returns_empty() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
 
-    let resolver = crate::resolver::Resolver::new(tmp.path());
+    let resolver = Resolver::new(tmp.path());
     let imports = vec![chunker::ParsedImport {
         specifiers: vec![chunker::ImportSpecifier {
-            name: "useState".to_string(),
+            name: "useState".to_owned(),
             alias: None,
             kind: chunker::ImportKind::Named,
         }],
-        source: "react".to_string(),
+        source: "react".to_owned(),
     }];
     let refs = build_references(&imports, "src/A.tsx", &resolver);
     assert!(refs.is_empty());
@@ -377,36 +336,36 @@ fn build_references_unresolvable_returns_empty() {
 // T-380: build_references_rust_crate_import
 #[test]
 fn build_references_rust_crate_import() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir().unwrap();
     let src = tmp.path().join("src");
     let foo = src.join("foo");
-    std::fs::create_dir_all(&foo).unwrap();
-    std::fs::write(foo.join("bar.rs"), "").unwrap();
+    fs::create_dir_all(&foo).unwrap();
+    fs::write(foo.join("bar.rs"), "").unwrap();
 
-    let rust_resolver = crate::rust_resolver::RustResolver::new(tmp.path());
+    let rust_resolver = RustResolver::new(tmp.path());
     let imports = vec![chunker::ParsedImport {
         specifiers: vec![chunker::ImportSpecifier {
-            name: "Bar".to_string(),
+            name: "Bar".to_owned(),
             alias: None,
             kind: chunker::ImportKind::Named,
         }],
-        source: "crate::foo::bar".to_string(),
+        source: "crate::foo::bar".to_owned(),
     }];
     let refs = build_references(&imports, "src/lib.rs", &rust_resolver);
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].source_file, "src/lib.rs");
     assert_eq!(refs[0].target_file, "src/foo/bar.rs");
-    assert_eq!(refs[0].symbol_name, Some("Bar".to_string()));
+    assert_eq!(refs[0].symbol_name, Some("Bar".to_owned()));
     assert_eq!(refs[0].ref_kind, RefKind::Named);
 }
 
 // T-381: run_index_stores_imports_in_file_context
 #[test]
 fn run_index_stores_imports_in_file_context() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
         src_dir.join("App.tsx"),
         "import { useState } from 'react';\nimport { useAuth } from './useAuth';\nfunction App() { return <div/>; }",
     ).unwrap();
@@ -415,13 +374,7 @@ fn run_index_stores_imports_in_file_context() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
 
     let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
@@ -439,15 +392,15 @@ fn run_index_stores_imports_in_file_context() {
 // T-382: run_chunk_only_index_stores_chunks_without_embeddings
 #[test]
 fn run_chunk_only_index_stores_chunks_without_embeddings() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
         src_dir.join("App.tsx"),
         "import { Button } from './Button';\nfunction App() { return <Button/>; }",
     )
     .unwrap();
-    std::fs::write(
+    fs::write(
         src_dir.join("Button.tsx"),
         "export function Button() { return <div/>; }",
     )
@@ -457,7 +410,7 @@ fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
+    let result = run_chunk_only_index(&conn, dir.path()).unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -478,13 +431,12 @@ fn run_chunk_only_index_stores_chunks_without_embeddings() {
 // T-383: run_incremental_embed_empty_db_returns_zero
 #[test]
 fn run_incremental_embed_empty_db_returns_zero() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result =
-        run_incremental_embed(Arc::clone(&conn), &MockEmbedder::default(), 50, None).unwrap();
+    let result = run_incremental_embed(&conn, &MockEmbedder::default(), 50, None).unwrap();
 
     assert_eq!(result.chunks_embedded, 0);
     assert_eq!(result.files_completed, 0);
@@ -494,11 +446,11 @@ fn run_incremental_embed_empty_db_returns_zero() {
 // T-384: run_incremental_embed_within_budget
 #[test]
 fn run_incremental_embed_within_budget() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
     for name in ["A.tsx", "B.tsx", "C.tsx"] {
-        std::fs::write(
+        fs::write(
             src_dir.join(name),
             format!("function {}() {{ return 1; }}", &name[..1]),
         )
@@ -509,12 +461,11 @@ fn run_incremental_embed_within_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path()).unwrap();
     let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
-    let result =
-        run_incremental_embed(Arc::clone(&conn), &MockEmbedder::default(), 50, None).unwrap();
+    let result = run_incremental_embed(&conn, &MockEmbedder::default(), 50, None).unwrap();
 
     assert!(result.chunks_embedded >= 3);
     assert_eq!(result.files_completed, 3);
@@ -527,11 +478,11 @@ fn run_incremental_embed_within_budget() {
 // T-385: run_incremental_embed_exhausts_budget
 #[test]
 fn run_incremental_embed_exhausts_budget() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
     for i in 0..5 {
-        std::fs::write(
+        fs::write(
             src_dir.join(format!("F{i}.tsx")),
             format!("function F{i}() {{ return {i}; }}"),
         )
@@ -542,10 +493,9 @@ fn run_incremental_embed_exhausts_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path()).unwrap();
 
-    let result =
-        run_incremental_embed(Arc::clone(&conn), &MockEmbedder::default(), 2, None).unwrap();
+    let result = run_incremental_embed(&conn, &MockEmbedder::default(), 2, None).unwrap();
 
     assert!(result.budget_exhausted);
     assert!(result.chunks_embedded <= 2);
@@ -557,7 +507,7 @@ fn run_incremental_embed_exhausts_budget() {
 // T-386: run_incremental_embed_prioritizes_type_hints
 #[test]
 fn run_incremental_embed_prioritizes_type_hints() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -600,7 +550,7 @@ fn run_incremental_embed_prioritizes_type_hints() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_incremental_embed(
-        Arc::clone(&conn),
+        &conn,
         &MockEmbedder::default(),
         1,
         Some(&[storage::ChunkType::Hook]),
@@ -632,7 +582,7 @@ fn run_incremental_embed_prioritizes_type_hints() {
 // T-387: run_incremental_embed_none_hints_preserves_order
 #[test]
 fn run_incremental_embed_none_hints_preserves_order() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -673,8 +623,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result =
-        run_incremental_embed(Arc::clone(&conn), &MockEmbedder::default(), 50, None).unwrap();
+    let result = run_incremental_embed(&conn, &MockEmbedder::default(), 50, None).unwrap();
 
     assert_eq!(result.files_completed, 2);
     assert!(result.chunks_embedded >= 2);
@@ -684,7 +633,7 @@ fn run_incremental_embed_none_hints_preserves_order() {
 // T-388: run_incremental_embed_recovers_after_intermittent_failure
 #[test]
 fn run_incremental_embed_recovers_after_intermittent_failure() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -713,7 +662,7 @@ fn run_incremental_embed_recovers_after_intermittent_failure() {
 
     // AlternatingEmbedder: call 0 fails, 1 succeeds, 2 fails, 3 succeeds, ...
     // consecutive_errors resets to 0 on each success, so it never reaches MAX (5).
-    let result = run_incremental_embed(Arc::clone(&conn), &AlternatingEmbedder::new(), 50, None);
+    let result = run_incremental_embed(&conn, &AlternatingEmbedder::new(), 50, None);
 
     assert!(
         result.is_ok(),
@@ -729,7 +678,7 @@ fn run_incremental_embed_recovers_after_intermittent_failure() {
 // T-389: run_incremental_embed_aborts_after_consecutive_failures
 #[test]
 fn run_incremental_embed_aborts_after_consecutive_failures() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -755,12 +704,7 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
 
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_incremental_embed(
-        Arc::clone(&conn),
-        &FailingEmbedder::all_fail("mock failure"),
-        50,
-        None,
-    );
+    let result = run_incremental_embed(&conn, &FailingEmbedder::all_fail("mock failure"), 50, None);
 
     assert!(
         result.is_err(),
@@ -773,12 +717,12 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
 // T-390: embed_and_store_aborts_after_consecutive_failures
 #[test]
 fn embed_and_store_aborts_after_consecutive_failures() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
 
     for i in 0..6 {
-        std::fs::write(
+        fs::write(
             src_dir.join(format!("F{i}.tsx")),
             format!("function F{i}() {{ return {i}; }}"),
         )
@@ -790,7 +734,7 @@ fn embed_and_store_aborts_after_consecutive_failures() {
     let conn = Arc::new(Mutex::new(conn));
 
     let result = run_index(
-        Arc::clone(&conn),
+        &conn,
         dir.path(),
         &FailingEmbedder::all_fail("mock failure"),
         false,
@@ -822,9 +766,9 @@ fn order_files_for_embedding_most_imported_first() {
         "h1",
         "",
         &[storage::Reference {
-            source_file: "src/A.tsx".to_string(),
-            target_file: "src/B.tsx".to_string(),
-            symbol_name: Some("B".to_string()),
+            source_file: "src/A.tsx".to_owned(),
+            target_file: "src/B.tsx".to_owned(),
+            symbol_name: Some("B".to_owned()),
             ref_kind: storage::RefKind::Named,
         }],
         None,
@@ -930,8 +874,7 @@ fn run_incremental_embed_with_multi_chunk_embedder_keeps_first_only() {
     let conn = Arc::new(Mutex::new(conn));
 
     // MockChunkedEmbedder returns 3 chunks per document; first_chunk keeps only the first.
-    let result =
-        run_incremental_embed(Arc::clone(&conn), &MockChunkedEmbedder::new(3), 50, None).unwrap();
+    let result = run_incremental_embed(&conn, &MockChunkedEmbedder::new(3), 50, None).unwrap();
 
     assert_eq!(result.files_completed, 1);
     assert_eq!(result.chunks_embedded, 1);
@@ -972,12 +915,12 @@ fn order_files_for_embedding_empty_hints_no_reorder() {
 // T-395: embed_and_store_catches_count_mismatch_via_storage
 #[test]
 fn embed_and_store_catches_count_mismatch_via_storage() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
 
     // File with multiple top-level functions → multiple chunks
-    std::fs::write(
+    fs::write(
         src_dir.join("Multi.tsx"),
         "function A() { return 1; }\nfunction B() { return 2; }\nfunction C() { return 3; }",
     )
@@ -989,7 +932,7 @@ fn embed_and_store_catches_count_mismatch_via_storage() {
 
     // MismatchEmbedder returns 1 vector regardless of input count.
     // Storage layer catches embeddings.len() != chunks.len() via LengthMismatch.
-    let result = run_index(Arc::clone(&conn), dir.path(), &MismatchEmbedder, false);
+    let result = run_index(&conn, dir.path(), &MismatchEmbedder, false);
 
     if let Ok(outcome) = &result {
         let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
@@ -1010,7 +953,7 @@ fn embed_and_store_catches_count_mismatch_via_storage() {
 // T-396: run_incremental_embed_skips_count_mismatch
 #[test]
 fn run_incremental_embed_skips_count_mismatch() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
 
@@ -1070,7 +1013,7 @@ fn run_incremental_embed_skips_count_mismatch() {
         .unwrap();
     }
 
-    let result = run_incremental_embed(Arc::clone(&conn), &MismatchEmbedder, 50, None).unwrap();
+    let result = run_incremental_embed(&conn, &MismatchEmbedder, 50, None).unwrap();
 
     // Multi.tsx should be skipped (2 chunks, 1 embedding), single-chunk files should succeed
     assert!(
@@ -1089,10 +1032,10 @@ fn run_incremental_embed_skips_count_mismatch() {
 // T-397: run_chunk_only_index_handles_rust_files
 #[test]
 fn run_chunk_only_index_handles_rust_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
-    std::fs::write(
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
         src_dir.join("lib.rs"),
         "pub struct Config { name: String }\npub fn init() {}",
     )
@@ -1102,7 +1045,7 @@ fn run_chunk_only_index_handles_rust_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(Arc::clone(&conn), dir.path()).unwrap();
+    let result = run_chunk_only_index(&conn, dir.path()).unwrap();
 
     assert_eq!(result.files_processed, 1);
     assert_eq!(result.chunks_created, 2);
@@ -1122,32 +1065,26 @@ fn run_chunk_only_index_handles_rust_files() {
 fn run_index_counts_unreadable_files_as_errors() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let src_dir = dir.path().join("src");
-    std::fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&src_dir).unwrap();
 
     // Normal file
-    std::fs::write(src_dir.join("Good.tsx"), "function Good() { return 1; }").unwrap();
+    fs::write(src_dir.join("Good.tsx"), "function Good() { return 1; }").unwrap();
 
     // Unreadable file (permission 000)
     let bad_path = src_dir.join("Bad.tsx");
-    std::fs::write(&bad_path, "function Bad() { return 2; }").unwrap();
-    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    fs::write(&bad_path, "function Bad() { return 2; }").unwrap();
+    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o000)).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_index(
-        Arc::clone(&conn),
-        dir.path(),
-        &MockEmbedder::default(),
-        false,
-    )
-    .unwrap();
+    let result = run_index(&conn, dir.path(), &MockEmbedder::default(), false).unwrap();
 
     // Restore permissions for cleanup
-    std::fs::set_permissions(&bad_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(
         result.files_errored > 0,

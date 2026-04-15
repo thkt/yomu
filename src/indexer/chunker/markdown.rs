@@ -2,6 +2,49 @@ use crate::storage::ChunkType;
 
 use super::{RawChunk, chunk_fallback};
 
+fn parse_md_heading(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let level = trimmed.bytes().take_while(|&b| b == b'#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let rest = &trimmed[level..];
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    let title = rest.trim().trim_end_matches('#').trim();
+    Some(title.to_owned())
+}
+
+fn find_md_headings(lines: &[&str]) -> Vec<(usize, String)> {
+    let mut headings = Vec::new();
+    let mut in_fence = false;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if let Some(title) = parse_md_heading(line) {
+            headings.push((i, title));
+        }
+    }
+
+    if in_fence {
+        tracing::warn!("Unclosed code fence detected, headings after fence may be suppressed");
+    }
+
+    headings
+}
+
+#[allow(clippy::cast_possible_truncation)]
 pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
     let lines: Vec<&str> = source.lines().collect();
     if lines.is_empty() {
@@ -41,11 +84,7 @@ pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
             chunks.push(RawChunk {
                 chunk_type: ChunkType::MdSection,
                 parent_index: None,
-                name: if title.is_empty() {
-                    None
-                } else {
-                    Some(title.clone())
-                },
+                name: (!title.is_empty()).then(|| title.clone()),
                 content,
                 start_line: (*line_idx + 1) as u32,
                 end_line: end_idx as u32,
@@ -59,46 +98,4 @@ pub(super) fn chunk_markdown(source: &str) -> Vec<RawChunk> {
     }
 
     chunks
-}
-
-fn find_md_headings(lines: &[&str]) -> Vec<(usize, String)> {
-    let mut headings = Vec::new();
-    let mut in_fence = false;
-
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        if let Some(title) = parse_md_heading(line) {
-            headings.push((i, title));
-        }
-    }
-
-    if in_fence {
-        tracing::warn!("Unclosed code fence detected, headings after fence may be suppressed");
-    }
-
-    headings
-}
-
-fn parse_md_heading(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    if line.len() - trimmed.len() > 3 {
-        return None;
-    }
-    let level = trimmed.bytes().take_while(|&b| b == b'#').count();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    let rest = &trimmed[level..];
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        return None;
-    }
-    let title = rest.trim().trim_end_matches('#').trim();
-    Some(title.to_string())
 }

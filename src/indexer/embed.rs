@@ -106,9 +106,9 @@ fn run_embed_batch(
 
 fn store_file_data(
     conn: &Db,
-    pf: PendingFile,
-    embeddings: Vec<ChunkedEmbedding>,
-    refs: Vec<Reference>,
+    pf: &PendingFile,
+    embeddings: &[ChunkedEmbedding],
+    refs: &[Reference],
 ) -> Result<(), StorageError> {
     let new_chunks = pf.to_new_chunks();
     let data = storage::FileData {
@@ -116,12 +116,13 @@ fn store_file_data(
         chunks: &new_chunks,
         file_hash: &pf.hash,
         imports_text: &pf.imports_text,
-        refs: &refs,
+        refs,
         mtime_epoch: pf.mtime_epoch,
     };
-    storage::replace_file_chunks_with(conn, &data, &embeddings)
+    storage::replace_file_chunks_with(conn, &data, embeddings)
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub(super) fn embed_and_store(
     conn: &Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
@@ -180,7 +181,7 @@ pub(super) fn embed_and_store(
 
         {
             let conn = conn.lock().unwrap();
-            store_file_data(&conn, pf, embeddings, refs)?;
+            store_file_data(&conn, &pf, &embeddings, &refs)?;
         }
 
         chunks_created += n;
@@ -208,15 +209,8 @@ pub(super) fn order_files_for_embedding(
     {
         let hint_files = storage::get_files_with_chunk_types(conn, &files, hints)?;
         if !hint_files.is_empty() {
-            let mut prioritized: Vec<String> = Vec::new();
-            let mut rest: Vec<String> = Vec::new();
-            for f in files {
-                if hint_files.contains(&f) {
-                    prioritized.push(f);
-                } else {
-                    rest.push(f);
-                }
-            }
+            let (mut prioritized, rest): (Vec<_>, Vec<_>) =
+                files.into_iter().partition(|f| hint_files.contains(f));
             prioritized.extend(rest);
             files = prioritized;
         }
@@ -250,16 +244,17 @@ fn fetch_unembedded_file(
 }
 
 /// Embeds and stores chunks for a single file. Returns `Some(count)` on success, `None` on skip.
+#[allow(clippy::cast_possible_truncation)]
 fn embed_file_chunks(
     embedder: &(impl Embed + ?Sized),
     conn: &Arc<Mutex<Db>>,
     file_path: &str,
     chunk_ids: Vec<i64>,
-    texts: Vec<String>,
+    texts: &[String],
     consecutive_errors: &mut u32,
 ) -> Result<Option<u32>, IndexError> {
     let embeddings: Vec<ChunkedEmbedding> =
-        match run_embed_batch(embedder, &texts, consecutive_errors, file_path) {
+        match run_embed_batch(embedder, texts, consecutive_errors, file_path) {
             Ok(embs) => embs,
             Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
             Err(EmbedFailure::Contract) => {
@@ -301,8 +296,9 @@ fn embed_file_chunks(
     Ok(Some(n))
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn run_incremental_embed(
-    conn: Arc<Mutex<Db>>,
+    conn: &Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     max_chunks: u32,
     type_hints: Option<&[storage::ChunkType]>,
@@ -326,7 +322,7 @@ pub fn run_incremental_embed(
     let mut consecutive_errors = 0u32;
 
     for file_path in &ordered_files {
-        let (chunk_ids, texts) = fetch_unembedded_file(&conn, file_path)?;
+        let (chunk_ids, texts) = fetch_unembedded_file(conn, file_path)?;
         if texts.is_empty() {
             continue;
         }
@@ -336,16 +332,16 @@ pub fn run_incremental_embed(
             break;
         }
 
-        let n = match embed_file_chunks(
+        let Some(n) = embed_file_chunks(
             embedder,
-            &conn,
+            conn,
             file_path,
             chunk_ids,
-            texts,
+            &texts,
             &mut consecutive_errors,
-        )? {
-            Some(n) => n,
-            None => continue,
+        )?
+        else {
+            continue;
         };
 
         chunks_embedded += n;

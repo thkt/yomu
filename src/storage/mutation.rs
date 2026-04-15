@@ -3,6 +3,8 @@ use rusqlite::Connection;
 use rurico::embed::ChunkedEmbedding;
 use rurico::storage::f32_as_bytes;
 
+use crate::text::split_identifier;
+
 use super::{ChunkType, FileData, NewChunk, Reference, StorageError};
 
 pub(crate) fn insert_chunk_row(
@@ -32,7 +34,7 @@ pub(crate) fn insert_chunk_row(
 
     let fts_name = chunk
         .name
-        .map(|n| crate::text::split_identifier(n).join(" "))
+        .map(|n| split_identifier(n).join(" "))
         .unwrap_or_default();
     conn.prepare_cached(
         "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
@@ -112,6 +114,93 @@ fn write_file_metadata(
     Ok(())
 }
 
+fn resolve_parent(chunk: &NewChunk, inserted_ids: &[i64], current_index: usize) -> Option<i64> {
+    chunk.parent_index.and_then(|pi| {
+        if pi < current_index {
+            inserted_ids.get(pi).copied()
+        } else {
+            tracing::warn!(
+                parent_index = pi,
+                current_index,
+                "invalid parent_index, skipping"
+            );
+            None
+        }
+    })
+}
+
+/// Must be called within a transaction.
+pub(crate) fn delete_file_chunks_in(
+    conn: &Connection,
+    file_path: &str,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
+         DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM ids)",
+        [file_path],
+    )?;
+    conn.execute(
+        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
+         DELETE FROM vec_chunks WHERE rowid IN \
+         (SELECT vec_rowid FROM embedded_chunk_ids WHERE chunk_id IN (SELECT id FROM ids))",
+        [file_path],
+    )?;
+    conn.execute(
+        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
+         DELETE FROM embedded_chunk_ids WHERE chunk_id IN (SELECT id FROM ids)",
+        [file_path],
+    )?;
+    conn.execute("DELETE FROM chunks WHERE file_path = ?1", [file_path])?;
+    conn.execute("DELETE FROM file_context WHERE file_path = ?1", [file_path])?;
+    conn.execute(
+        "DELETE FROM file_references WHERE source_file = ?1",
+        [file_path],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn replace_file_data(
+    conn: &Connection,
+    data: &FileData,
+    embeddings: Option<&[ChunkedEmbedding]>,
+) -> Result<(), StorageError> {
+    let tx = conn.unchecked_transaction()?;
+    delete_file_chunks_in(&tx, data.file_path)?;
+
+    let mut inserted_ids: Vec<i64> = Vec::with_capacity(data.chunks.len());
+    let mut emb_idx = 0;
+
+    for (i, chunk) in data.chunks.iter().enumerate() {
+        let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
+        let is_embeddable = *chunk.chunk_type != ChunkType::InnerFn;
+        let id = if is_embeddable && let Some(embs) = embeddings {
+            let id = insert_chunk(
+                &tx,
+                data.file_path,
+                chunk,
+                data.file_hash,
+                &embs[emb_idx],
+                parent_chunk_id,
+            )?;
+            emb_idx += 1;
+            id
+        } else {
+            insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?
+        };
+        inserted_ids.push(id);
+    }
+
+    write_file_metadata(
+        &tx,
+        data.file_path,
+        data.imports_text,
+        data.refs,
+        data.mtime_epoch,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn replace_file_chunks_with(
     conn: &Connection,
     data: &FileData,
@@ -171,93 +260,6 @@ pub fn replace_file_chunks_only(
         mtime_epoch,
     };
     replace_file_data(conn, &data, None)
-}
-
-pub(crate) fn replace_file_data(
-    conn: &Connection,
-    data: &FileData,
-    embeddings: Option<&[ChunkedEmbedding]>,
-) -> Result<(), StorageError> {
-    let tx = conn.unchecked_transaction()?;
-    delete_file_chunks_in(&tx, data.file_path)?;
-
-    let mut inserted_ids: Vec<i64> = Vec::with_capacity(data.chunks.len());
-    let mut emb_idx = 0;
-
-    for (i, chunk) in data.chunks.iter().enumerate() {
-        let parent_chunk_id = resolve_parent(chunk, &inserted_ids, i);
-        let is_embeddable = *chunk.chunk_type != ChunkType::InnerFn;
-        let id = if is_embeddable && let Some(embs) = embeddings {
-            let id = insert_chunk(
-                &tx,
-                data.file_path,
-                chunk,
-                data.file_hash,
-                &embs[emb_idx],
-                parent_chunk_id,
-            )?;
-            emb_idx += 1;
-            id
-        } else {
-            insert_chunk_row(&tx, data.file_path, chunk, data.file_hash, parent_chunk_id)?
-        };
-        inserted_ids.push(id);
-    }
-
-    write_file_metadata(
-        &tx,
-        data.file_path,
-        data.imports_text,
-        data.refs,
-        data.mtime_epoch,
-    )?;
-    tx.commit()?;
-    Ok(())
-}
-
-fn resolve_parent(chunk: &NewChunk, inserted_ids: &[i64], current_index: usize) -> Option<i64> {
-    chunk.parent_index.and_then(|pi| {
-        if pi < current_index {
-            inserted_ids.get(pi).copied()
-        } else {
-            tracing::warn!(
-                parent_index = pi,
-                current_index,
-                "invalid parent_index, skipping"
-            );
-            None
-        }
-    })
-}
-
-/// Must be called within a transaction.
-pub(crate) fn delete_file_chunks_in(
-    conn: &Connection,
-    file_path: &str,
-) -> Result<(), StorageError> {
-    conn.execute(
-        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
-         DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM ids)",
-        [file_path],
-    )?;
-    conn.execute(
-        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
-         DELETE FROM vec_chunks WHERE rowid IN \
-         (SELECT vec_rowid FROM embedded_chunk_ids WHERE chunk_id IN (SELECT id FROM ids))",
-        [file_path],
-    )?;
-    conn.execute(
-        "WITH ids AS (SELECT id FROM chunks WHERE file_path = ?1)
-         DELETE FROM embedded_chunk_ids WHERE chunk_id IN (SELECT id FROM ids)",
-        [file_path],
-    )?;
-    conn.execute("DELETE FROM chunks WHERE file_path = ?1", [file_path])?;
-    conn.execute("DELETE FROM file_context WHERE file_path = ?1", [file_path])?;
-    conn.execute(
-        "DELETE FROM file_references WHERE source_file = ?1",
-        [file_path],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]

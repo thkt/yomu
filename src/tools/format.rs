@@ -58,6 +58,16 @@ pub(super) fn format_dependents_by_depth(
     }
 }
 
+fn format_semantic_section(output: &mut String, semantic_related: &[storage::SearchResult]) {
+    output.push_str("\n### Semantic related (embedding search)\n");
+    for r in semantic_related {
+        output.push_str(&format!(
+            "- {} (similarity: {:.2})\n",
+            r.chunk.file_path, r.score
+        ));
+    }
+}
+
 pub(super) fn format_impact_all(
     target: &str,
     dependents: &[storage::Dependent],
@@ -109,13 +119,89 @@ pub(super) fn format_impact_results(
     output
 }
 
-fn format_semantic_section(output: &mut String, semantic_related: &[storage::SearchResult]) {
-    output.push_str("\n### Semantic related (embedding search)\n");
-    for r in semantic_related {
+fn format_imports_line(imports: &HashMap<String, String>, file_path: &str) -> Option<String> {
+    let imports_text = imports.get(file_path)?;
+    let items: Vec<&str> = imports_text.split('\n').filter(|s| !s.is_empty()).collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some(format!("Imports: {}\n", items.join(", ")))
+}
+
+fn format_siblings_line(
+    siblings_map: &HashMap<String, Vec<storage::SiblingInfo>>,
+    file_path: &str,
+    result_ranges: &HashSet<(u32, u32)>,
+) -> Option<String> {
+    let siblings = siblings_map.get(file_path)?;
+    let filtered: Vec<String> = siblings
+        .iter()
+        .filter(|s| !result_ranges.contains(&(s.start_line, s.end_line)))
+        .map(|s| {
+            let name = s.name.as_deref().unwrap_or("(unnamed)");
+            format!("{} [{}]", name, s.chunk_type.as_str())
+        })
+        .collect();
+    if filtered.is_empty() {
+        return None;
+    }
+    Some(format!("Siblings: {}\n", filtered.join(", ")))
+}
+
+fn format_file_group(
+    output: &mut String,
+    file_path: &str,
+    chunks: &[(usize, &storage::SearchResult)],
+    ctx: &EnrichmentContext,
+    parent_chunks: &HashMap<i64, storage::Chunk>,
+    result_chunk_ids: &HashSet<i64>,
+) {
+    output.push_str(&format!("## {}\n", file_path));
+
+    if let Some(line) = format_imports_line(&ctx.imports, file_path) {
+        output.push_str(&line);
+    }
+
+    let result_ranges: HashSet<(u32, u32)> = chunks
+        .iter()
+        .map(|(_, r)| (r.chunk.start_line, r.chunk.end_line))
+        .collect();
+    if let Some(line) = format_siblings_line(&ctx.siblings, file_path, &result_ranges) {
+        output.push_str(&line);
+    }
+
+    output.push('\n');
+
+    for (rank, result) in chunks {
+        let chunk = &result.chunk;
+        let name = chunk.name.as_deref().unwrap_or("(unnamed)");
         output.push_str(&format!(
-            "- {} (similarity: {:.2})\n",
-            r.chunk.file_path, r.score
+            "{}. {} [{}] — {}:{} (similarity: {:.2})\n",
+            rank + 1,
+            name,
+            chunk.chunk_type.as_str(),
+            chunk.start_line,
+            chunk.end_line,
+            result.score,
         ));
+        output.push_str(&chunk.content);
+        output.push_str("\n\n");
+
+        if let Some(parent_id) = chunk.parent_chunk_id
+            && !result_chunk_ids.contains(&parent_id)
+            && let Some(parent) = parent_chunks.get(&parent_id)
+        {
+            let parent_name = parent.name.as_deref().unwrap_or("(unnamed)");
+            output.push_str(&format!(
+                "  Parent context: {} [{}] — {}:{}\n",
+                parent_name,
+                parent.chunk_type.as_str(),
+                parent.start_line,
+                parent.end_line,
+            ));
+            output.push_str(&parent.content);
+            output.push_str("\n\n");
+        }
     }
 }
 
@@ -157,35 +243,6 @@ pub(super) fn format_results_grouped(
         );
     }
     output
-}
-
-fn format_imports_line(imports: &HashMap<String, String>, file_path: &str) -> Option<String> {
-    let imports_text = imports.get(file_path)?;
-    let items: Vec<&str> = imports_text.split('\n').filter(|s| !s.is_empty()).collect();
-    if items.is_empty() {
-        return None;
-    }
-    Some(format!("Imports: {}\n", items.join(", ")))
-}
-
-fn format_siblings_line(
-    siblings_map: &HashMap<String, Vec<storage::SiblingInfo>>,
-    file_path: &str,
-    result_ranges: &HashSet<(u32, u32)>,
-) -> Option<String> {
-    let siblings = siblings_map.get(file_path)?;
-    let filtered: Vec<String> = siblings
-        .iter()
-        .filter(|s| !result_ranges.contains(&(s.start_line, s.end_line)))
-        .map(|s| {
-            let name = s.name.as_deref().unwrap_or("(unnamed)");
-            format!("{} [{}]", name, s.chunk_type.as_str())
-        })
-        .collect();
-    if filtered.is_empty() {
-        return None;
-    }
-    Some(format!("Siblings: {}\n", filtered.join(", ")))
 }
 
 #[derive(Serialize)]
@@ -232,7 +289,7 @@ pub(super) fn format_results_json(
     };
     serde_json::to_string(&response).unwrap_or_else(|e| {
         tracing::error!(error = %e, "JSON serialization failed");
-        r#"{"results":[],"degraded":true,"notes":[]}"#.to_string()
+        r#"{"results":[],"degraded":true,"notes":[]}"#.to_owned()
     })
 }
 
@@ -326,7 +383,7 @@ pub(super) fn format_embed_result(result: &indexer::EmbedResult, json: bool) -> 
         return serde_json::to_string(&resp).unwrap();
     }
     if result.chunks_embedded == 0 {
-        return "nothing to embed".to_string();
+        return "nothing to embed".to_owned();
     }
     let note = if result.budget_exhausted {
         " (budget reached; run again to embed more)"
@@ -405,61 +462,4 @@ pub(super) fn format_impact_json(
         total: dependents.len(),
     };
     serde_json::to_string(&resp).unwrap()
-}
-
-fn format_file_group(
-    output: &mut String,
-    file_path: &str,
-    chunks: &[(usize, &storage::SearchResult)],
-    ctx: &EnrichmentContext,
-    parent_chunks: &HashMap<i64, storage::Chunk>,
-    result_chunk_ids: &HashSet<i64>,
-) {
-    output.push_str(&format!("## {}\n", file_path));
-
-    if let Some(line) = format_imports_line(&ctx.imports, file_path) {
-        output.push_str(&line);
-    }
-
-    let result_ranges: HashSet<(u32, u32)> = chunks
-        .iter()
-        .map(|(_, r)| (r.chunk.start_line, r.chunk.end_line))
-        .collect();
-    if let Some(line) = format_siblings_line(&ctx.siblings, file_path, &result_ranges) {
-        output.push_str(&line);
-    }
-
-    output.push('\n');
-
-    for (rank, result) in chunks {
-        let chunk = &result.chunk;
-        let name = chunk.name.as_deref().unwrap_or("(unnamed)");
-        output.push_str(&format!(
-            "{}. {} [{}] — {}:{} (similarity: {:.2})\n",
-            rank + 1,
-            name,
-            chunk.chunk_type.as_str(),
-            chunk.start_line,
-            chunk.end_line,
-            result.score,
-        ));
-        output.push_str(&chunk.content);
-        output.push_str("\n\n");
-
-        if let Some(parent_id) = chunk.parent_chunk_id
-            && !result_chunk_ids.contains(&parent_id)
-            && let Some(parent) = parent_chunks.get(&parent_id)
-        {
-            let parent_name = parent.name.as_deref().unwrap_or("(unnamed)");
-            output.push_str(&format!(
-                "  Parent context: {} [{}] — {}:{}\n",
-                parent_name,
-                parent.chunk_type.as_str(),
-                parent.start_line,
-                parent.end_line,
-            ));
-            output.push_str(&parent.content);
-            output.push_str("\n\n");
-        }
-    }
 }

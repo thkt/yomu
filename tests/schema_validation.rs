@@ -1,13 +1,16 @@
+use rusqlite::Connection;
+use tempfile::tempdir;
+
 use yomu::storage::{StorageError, open_db};
 
 // T-526: open_db_detects_missing_column_in_stale_schema
 #[test]
 fn open_db_detects_missing_column_in_stale_schema() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("index.db");
 
     // Create a DB with old schema (no parent_chunk_id) and fake version = 5
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let conn = Connection::open(&db_path).unwrap();
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          CREATE TABLE chunks (
@@ -49,7 +52,7 @@ fn open_db_detects_missing_column_in_stale_schema() {
 // T-527: open_db_succeeds_with_current_schema
 #[test]
 fn open_db_succeeds_with_current_schema() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("index.db");
 
     let conn = open_db(&db_path);

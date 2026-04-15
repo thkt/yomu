@@ -1,23 +1,32 @@
+use std::env;
 use std::sync::Arc;
 
-use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
+use amici::model::embedder::try_load_embedder_with;
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, ModelId, cached_artifacts};
 
 pub(super) use amici::model::embedder::{DegradedReason, degraded_reason_user_note};
 
 use super::Yomu;
+
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
 pub(super) const DEFAULT_EMBED_BUDGET: u32 = 50;
 
 pub(super) fn record_embedder_warning(reason: DegradedReason, detail: &str) {
     tracing::warn!(reason = ?reason, detail, "Embedder unavailable, using text search only");
     #[cfg(test)]
-    RECORDED_WARNINGS.with(|w| w.borrow_mut().push((reason, detail.to_string())));
+    RECORDED_WARNINGS.with(|w| w.borrow_mut().push((reason, detail.to_owned())));
 }
 
 #[cfg(test)]
 thread_local! {
-    pub(super) static RECORDED_WARNINGS: std::cell::RefCell<Vec<(DegradedReason, String)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    pub(super) static RECORDED_WARNINGS: RefCell<Vec<(DegradedReason, String)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -37,10 +46,6 @@ impl Embed for NoOpEmbedder {
     fn embed_text(&self, _text: &str, _prefix: &str) -> Result<Vec<f32>, EmbedError> {
         Err(EmbedError::Inference("embedder not available".into()))
     }
-}
-
-pub(super) fn parse_embed_budget() -> u32 {
-    parse_budget_value(std::env::var("YOMU_EMBED_BUDGET").ok().as_deref())
 }
 
 pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
@@ -65,13 +70,17 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
     }
 }
 
+pub(super) fn parse_embed_budget() -> u32 {
+    parse_budget_value(env::var("YOMU_EMBED_BUDGET").ok().as_deref())
+}
+
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     if disabled {
         tracing::info!("Embedding disabled via YOMU_EMBED=0");
         return Err(DegradedReason::Disabled);
     }
-    let result = amici::model::embedder::try_load_embedder_with(
-        || rurico::embed::cached_artifacts(rurico::embed::ModelId::default()),
+    let result = try_load_embedder_with(
+        || cached_artifacts(ModelId::default()),
         |e| tracing::warn!(error = %e, "failed to delete corrupt model files"),
         |e| tracing::warn!(error = %e, "embedder probe failed"),
     );
@@ -108,43 +117,43 @@ impl Yomu {
     }
 
     pub(super) fn embedding_available(&self) -> bool {
-        self.embedder.get().is_some_and(|r| r.is_ok())
+        self.embedder.get().is_some_and(Result::is_ok)
     }
 }
 
 #[cfg(test)]
+use crate::storage::Db;
+
+#[cfg(test)]
 impl Yomu {
     pub(super) fn for_test_raw(
-        conn: crate::storage::Db,
-        root: std::path::PathBuf,
+        conn: Db,
+        root: PathBuf,
         state: Result<Arc<dyn Embed>, DegradedReason>,
     ) -> Self {
-        let embedder_lock = std::sync::OnceLock::new();
+        let embedder_lock = OnceLock::new();
         let _ = embedder_lock.set(state);
         Self {
-            conn: Arc::new(std::sync::Mutex::new(conn)),
+            conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
             rerank_enabled: false,
-            reranker: std::sync::OnceLock::new(),
+            reranker: OnceLock::new(),
         }
     }
 
     /// Exercises the real `try_load_embedder` path with `embed_disabled=true`.
-    pub(super) fn for_test_embed_disabled(
-        conn: crate::storage::Db,
-        root: std::path::PathBuf,
-    ) -> Self {
+    pub(super) fn for_test_embed_disabled(conn: Db, root: PathBuf) -> Self {
         Self {
-            conn: Arc::new(std::sync::Mutex::new(conn)),
-            embedder: std::sync::OnceLock::new(),
+            conn: Arc::new(Mutex::new(conn)),
+            embedder: OnceLock::new(),
             root,
             embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: true,
             rerank_enabled: false,
-            reranker: std::sync::OnceLock::new(),
+            reranker: OnceLock::new(),
         }
     }
 }

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
+use crate::text::split_identifier;
 use rurico::embed::{Embed, EmbedError};
 use rurico::reranker::Rerank;
 
@@ -22,8 +23,6 @@ pub struct SearchOutcome {
 }
 
 const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and", "or"];
-
-use crate::text::split_identifier;
 
 // Words ending in -ing that are not gerunds (stripping -ing produces a non-word).
 const ING_DENY: &[&str] = &[
@@ -85,7 +84,7 @@ pub fn extract_keywords(query: &str) -> Vec<String> {
         .iter()
         .filter_map(|kw| stem_keyword(kw))
         .filter(|s| !seen.contains(*s))
-        .map(|s| s.to_string())
+        .map(str::to_owned)
         .collect();
     let mut all = base;
     for s in stems {
@@ -305,6 +304,7 @@ pub fn rerank(
 
 const MAX_FROM_SUB_EMBEDDINGS: usize = 20;
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn search_from_file(
     conn: &Db,
     embedding_bytes: &[Vec<u8>],
@@ -338,7 +338,7 @@ pub fn search_from_file(
                 .collect()
         })
         .collect();
-    let emb_refs: Vec<&[f32]> = f32_vecs.iter().map(|v| v.as_slice()).collect();
+    let emb_refs: Vec<&[f32]> = f32_vecs.iter().map(Vec::as_slice).collect();
 
     // FR-004 / BR-002: min-distance merge across sub-embeddings.
     // Overfetch by (a) 3× when FTS will narrow candidates, and (b) source_ids.len() to survive
@@ -361,7 +361,7 @@ pub fn search_from_file(
     if let Some(q) = query {
         let keywords = extract_keywords(q);
         if !keywords.is_empty() {
-            let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
+            let keyword_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
             let knn_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
             let fts_hits = storage::search_by_fts(
                 conn,
@@ -401,7 +401,7 @@ fn search_pipeline(
 ) -> Result<Vec<SearchResult>, StorageError> {
     let keywords = extract_keywords(query);
     let type_hints = extract_type_hints(query);
-    let keyword_refs: Vec<&str> = keywords.iter().map(|s| s.as_str()).collect();
+    let keyword_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
 
     let stats = storage::get_stats(conn)?;
     let fetch_limit = if reranker.is_some() {
@@ -465,7 +465,7 @@ fn search_pipeline(
     }
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     if offset > 0 {
-        let skip = std::cmp::min(offset as usize, results.len());
+        let skip = (offset as usize).min(results.len());
         results.drain(..skip);
     }
     results.truncate(limit as usize);
@@ -474,7 +474,7 @@ fn search_pipeline(
 }
 
 pub fn search(
-    conn: Arc<Mutex<Db>>,
+    conn: &Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
     query: &str,
     limit: u32,

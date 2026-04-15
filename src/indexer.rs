@@ -3,8 +3,12 @@ mod embed;
 pub mod walker;
 
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
 
 use rurico::embed::{Embed, EmbedError};
 
@@ -25,7 +29,7 @@ pub enum IndexError {
     #[error("embedding error: {0}")]
     Embed(#[from] EmbedError),
     #[error("IO error during indexing: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     #[error("internal task failed: {0}")]
     Internal(String),
 }
@@ -102,7 +106,7 @@ fn to_rel_path(root: &Path, file_path: &Path) -> String {
 }
 
 fn read_source(file_path: &Path) -> Result<String, FileAction> {
-    let metadata = std::fs::metadata(file_path).map_err(|e| {
+    let metadata = fs::metadata(file_path).map_err(|e| {
         tracing::warn!(file = %file_path.display(), error = %e, "IO error, skipping file");
         FileAction::Error
     })?;
@@ -110,7 +114,7 @@ fn read_source(file_path: &Path) -> Result<String, FileAction> {
         tracing::warn!(file = %file_path.display(), size = metadata.len(), "Skipped (too large)");
         return Err(FileAction::Skip);
     }
-    std::fs::read_to_string(file_path).map_err(|e| {
+    fs::read_to_string(file_path).map_err(|e| {
         tracing::warn!(file = %file_path.display(), error = %e, "Read error, skipping file");
         FileAction::Error
     })
@@ -126,6 +130,16 @@ enum CheckResult {
     Changed(CheckedFile),
     Skip,
     Error,
+}
+
+fn file_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn check_file(
@@ -161,10 +175,10 @@ fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile>
         return None;
     }
 
-    let mtime_epoch = std::fs::metadata(file_path)
+    let mtime_epoch = fs::metadata(file_path)
         .ok()
         .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64);
 
     let imports_text = file_chunks.imports.join("\n");
@@ -184,6 +198,7 @@ enum FileOutcome {
     Errored,
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn process_file(
     conn: &Db,
     rel_path: String,
@@ -197,9 +212,8 @@ fn process_file(
         CheckResult::Skip => return Ok(FileOutcome::Skipped),
         CheckResult::Error => return Ok(FileOutcome::Errored),
     };
-    let pf = match prepare_chunks(checked, file_path) {
-        Some(pf) => pf,
-        None => return Ok(FileOutcome::Skipped),
+    let Some(pf) = prepare_chunks(checked, file_path) else {
+        return Ok(FileOutcome::Skipped);
     };
     let n = pf.raw_chunks.len() as u32;
     let new_chunks = pf.to_new_chunks();
@@ -224,19 +238,19 @@ struct CollectResult {
     pending: Vec<PendingFile>,
     files_skipped: u32,
     files_errored: u32,
-    rel_paths: std::collections::HashSet<String>,
+    rel_paths: HashSet<String>,
 }
 
 fn collect_pending_files(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
-    files: &[std::path::PathBuf],
+    files: &[PathBuf],
     force: bool,
 ) -> Result<CollectResult, IndexError> {
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
     let mut files_errored = 0u32;
-    let mut rel_paths = std::collections::HashSet::with_capacity(files.len());
+    let mut rel_paths = HashSet::with_capacity(files.len());
 
     for file_path in files {
         let rel_path = to_rel_path(root, file_path);
@@ -273,13 +287,13 @@ fn collect_pending_files(
 
 fn remove_orphans(
     conn: &Arc<Mutex<Db>>,
-    current_rel_paths: std::collections::HashSet<String>,
+    current_rel_paths: &HashSet<String>,
 ) -> Result<(), IndexError> {
     let conn = conn.lock().unwrap();
     let indexed_paths = storage::get_all_file_paths(&conn)?;
 
     let orphans: Vec<_> = indexed_paths
-        .difference(&current_rel_paths)
+        .difference(current_rel_paths)
         .cloned()
         .collect();
     if orphans.is_empty() {
@@ -315,7 +329,7 @@ fn build_references(
             let target = resolver.resolve(&import.source, source_path)?;
             if import.specifiers.is_empty() {
                 Some(vec![Reference {
-                    source_file: source_path.to_string(),
+                    source_file: source_path.to_owned(),
                     target_file: target,
                     symbol_name: None,
                     ref_kind: RefKind::SideEffect,
@@ -326,7 +340,7 @@ fn build_references(
                         .specifiers
                         .iter()
                         .map(|s| Reference {
-                            source_file: source_path.to_string(),
+                            source_file: source_path.to_owned(),
                             target_file: target.clone(),
                             symbol_name: Some(s.name.clone()),
                             ref_kind: import_kind_to_ref_kind(&s.kind),
@@ -339,8 +353,9 @@ fn build_references(
         .collect()
 }
 
+#[allow(clippy::cast_possible_truncation)]
 pub fn dry_run_index(
-    conn: Arc<Mutex<Db>>,
+    conn: &Arc<Mutex<Db>>,
     root: &Path,
     force: bool,
 ) -> Result<DryRunResult, IndexError> {
@@ -349,7 +364,7 @@ pub fn dry_run_index(
     let mut files_to_process = 0u32;
     let mut files_to_skip = 0u32;
     let mut files_errored = 0u32;
-    let mut current_rel_paths = std::collections::HashSet::with_capacity(files.len());
+    let mut current_rel_paths = HashSet::with_capacity(files.len());
 
     let conn_guard = conn.lock().unwrap();
     for file_path in &files {
@@ -378,19 +393,8 @@ pub fn dry_run_index(
     })
 }
 
-pub fn run_chunk_only_index(conn: Arc<Mutex<Db>>, root: &Path) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, false)
-}
-
-pub fn run_chunk_only_index_force(
-    conn: Arc<Mutex<Db>>,
-    root: &Path,
-) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, true)
-}
-
 fn run_chunk_only_index_inner(
-    conn: Arc<Mutex<Db>>,
+    conn: &Arc<Mutex<Db>>,
     root: &Path,
     force: bool,
 ) -> Result<IndexResult, IndexError> {
@@ -409,7 +413,7 @@ fn run_chunk_only_index_inner(
         let mut chunks_created = 0u32;
         let mut files_skipped = 0u32;
         let mut files_errored = 0u32;
-        let mut current_rel_paths = std::collections::HashSet::with_capacity(files.len());
+        let mut current_rel_paths = HashSet::with_capacity(files.len());
 
         let conn_guard = conn.lock().unwrap();
         let _automerge = storage::FtsAutomergeGuard::new(&conn_guard)?;
@@ -447,7 +451,7 @@ fn run_chunk_only_index_inner(
         )
     };
 
-    remove_orphans(&conn, current_rel_paths)?;
+    remove_orphans(conn, &current_rel_paths)?;
 
     tracing::info!(
         files_processed,
@@ -465,9 +469,20 @@ fn run_chunk_only_index_inner(
     })
 }
 
+pub fn run_chunk_only_index(conn: &Arc<Mutex<Db>>, root: &Path) -> Result<IndexResult, IndexError> {
+    run_chunk_only_index_inner(conn, root, false)
+}
+
+pub fn run_chunk_only_index_force(
+    conn: &Arc<Mutex<Db>>,
+    root: &Path,
+) -> Result<IndexResult, IndexError> {
+    run_chunk_only_index_inner(conn, root, true)
+}
+
 /// Per-file embed+store ensures partial progress survives embedding failures.
 pub fn run_index(
-    conn: Arc<Mutex<Db>>,
+    conn: &Arc<Mutex<Db>>,
     root: &Path,
     embedder: &(impl Embed + ?Sized),
     force: bool,
@@ -481,21 +496,16 @@ pub fn run_index(
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
 
-    let collected = collect_pending_files(&conn, root, &files, force)?;
+    let collected = collect_pending_files(conn, root, &files, force)?;
     let files_skipped = collected.files_skipped;
     let mut files_errored = collected.files_errored;
 
-    remove_orphans(&conn, collected.rel_paths)?;
+    remove_orphans(conn, &collected.rel_paths)?;
 
     let resolver = Resolver::new(root);
     let rust_resolver = RustResolver::new(root);
-    let embed_result = embed_and_store(
-        &conn,
-        embedder,
-        collected.pending,
-        &resolver,
-        &rust_resolver,
-    )?;
+    let embed_result =
+        embed_and_store(conn, embedder, collected.pending, &resolver, &rust_resolver)?;
     let files_processed = embed_result.files_processed;
     let chunks_created = embed_result.chunks_created;
     files_errored += embed_result.files_errored;
@@ -514,16 +524,6 @@ pub fn run_index(
         files_skipped,
         files_errored,
     })
-}
-
-fn file_hash(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 #[cfg(test)]

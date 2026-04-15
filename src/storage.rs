@@ -93,8 +93,11 @@ pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageE
 }
 
 #[cfg(test)]
-pub(crate) fn ce(v: Vec<f32>) -> rurico::embed::ChunkedEmbedding {
-    rurico::embed::ChunkedEmbedding { chunks: vec![v] }
+use rurico::embed::ChunkedEmbedding;
+
+#[cfg(test)]
+pub(crate) fn ce(v: Vec<f32>) -> ChunkedEmbedding {
+    ChunkedEmbedding { chunks: vec![v] }
 }
 
 #[cfg(test)]
