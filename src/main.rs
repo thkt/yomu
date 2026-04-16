@@ -9,10 +9,7 @@ use amici::cli::try_expand_shorthand;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::model_probe::handle_probe_if_needed;
-use yomu::tools::{
-    MAX_EMBED_BUDGET, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, MIN_EMBED_BUDGET,
-    Yomu, YomuError,
-};
+use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
@@ -75,11 +72,7 @@ enum Command {
     /// Show index statistics.
     Status,
     /// Embed pending chunks for semantic search.
-    Embed {
-        /// Max chunks to embed in this run (default: YOMU_EMBED_BUDGET or 50)
-        #[arg(long, value_parser = clap::value_parser!(u32).range(MIN_EMBED_BUDGET as i64..=MAX_EMBED_BUDGET as i64))]
-        budget: Option<u32>,
-    },
+    Embed,
     /// Manage the embedding model.
     #[command(
         subcommand_required = true,
@@ -142,7 +135,7 @@ fn main() -> ExitCode {
     // model subcommands do not require a project root or DB
     if let Command::Model { command } = &command {
         let result = match command {
-            ModelCommand::Download => run_model_download(json),
+            ModelCommand::Download => Yomu::model_download(json),
         };
         return match result {
             Ok(output) => {
@@ -232,7 +225,7 @@ fn main() -> ExitCode {
             semantic,
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
-        Command::Embed { budget } => yomu.embed(budget, json),
+        Command::Embed => yomu.embed(json),
         Command::Model { .. } => unreachable!("handled before Yomu::new()"),
     };
 
@@ -302,55 +295,6 @@ fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
     let stdin = io::stdin();
     let is_terminal = stdin.is_terminal();
     resolve_query_with(arg, &mut stdin.lock(), is_terminal)
-}
-
-fn run_model_download(json: bool) -> Result<String, YomuError> {
-    use amici::cli::Spinner;
-    use rurico::embed::{EmbedInitError, Embedder, ModelId, ProbeStatus, download_model};
-
-    let spinner = Spinner::new("Downloading model...");
-    let paths = match download_model(ModelId::default()) {
-        Ok(p) => p,
-        Err(e) => {
-            spinner.cancel();
-            tracing::error!(error = %e, "Model download failed");
-            return Err(YomuError::Internal(format!(
-                "Failed to download model: {e}"
-            )));
-        }
-    };
-    match Embedder::probe(&paths) {
-        Ok(ProbeStatus::Available) => {}
-        Ok(ProbeStatus::BackendUnavailable) => {
-            spinner.cancel();
-            return Err(YomuError::Internal(
-                "Model downloaded but MLX backend is unavailable".to_owned(),
-            ));
-        }
-        Err(e) => {
-            spinner.cancel();
-            if matches!(e, EmbedInitError::ModelCorrupt { .. })
-                && let Err(del_err) = paths.delete_files()
-            {
-                tracing::warn!(error = %del_err, "failed to delete corrupt model files");
-            }
-            return Err(YomuError::Internal(format!("Model probe failed: {e}")));
-        }
-    }
-    match Embedder::new(&paths) {
-        Ok(_) => {
-            spinner.finish("Model ready");
-            if json {
-                Ok(serde_json::json!({"status": "ok"}).to_string())
-            } else {
-                Ok("Model downloaded and verified".to_owned())
-            }
-        }
-        Err(e) => {
-            spinner.cancel();
-            Err(YomuError::Internal(format!("Failed to verify model: {e}")))
-        }
-    }
 }
 
 fn exit_code_for(e: &YomuError) -> ExitCode {
@@ -577,33 +521,5 @@ mod tests {
             }
             other => panic!("expected Search, got {other:?}"),
         }
-    }
-
-    // T-117: embed --budget <valid> parses
-    #[test]
-    fn embed_budget_valid_parses() {
-        let cli = parse_cli_args(["yomu", "embed", "--budget", "50"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Embed { budget } => assert_eq!(budget, Some(50)),
-            other => panic!("expected Embed, got {other:?}"),
-        }
-    }
-
-    // T-118: embed --budget 0 rejected (below MIN_EMBED_BUDGET=1)
-    #[test]
-    fn embed_budget_zero_is_rejected() {
-        assert!(
-            parse_cli_args(["yomu", "embed", "--budget", "0"]).is_err(),
-            "budget=0 should be rejected (below MIN_EMBED_BUDGET=1)"
-        );
-    }
-
-    // T-119: embed --budget 501 rejected (above MAX_EMBED_BUDGET=500)
-    #[test]
-    fn embed_budget_above_max_is_rejected() {
-        assert!(
-            parse_cli_args(["yomu", "embed", "--budget", "501"]).is_err(),
-            "budget=501 should be rejected (above MAX_EMBED_BUDGET=500)"
-        );
     }
 }

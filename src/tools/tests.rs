@@ -1,6 +1,6 @@
 use super::embedder::{
-    DegradedReason, RECORDED_WARNINGS, degraded_reason_user_note, get_recorded_warnings,
-    parse_budget_value, record_embedder_warning,
+    DegradedReason, RECORDED_WARNINGS, get_recorded_warnings, parse_budget_value,
+    record_embedder_warning,
 };
 use super::*;
 use std::collections::HashMap;
@@ -1832,24 +1832,6 @@ fn disabled_no_user_note_in_search() {
     );
 }
 
-// T-232: user_note_exact_values_for_all_variants
-#[test]
-fn user_note_exact_values_for_all_variants() {
-    assert_eq!(degraded_reason_user_note(DegradedReason::Disabled), None);
-    assert_eq!(
-        degraded_reason_user_note(DegradedReason::NotInstalled),
-        Some("embedding model not installed; results from text search only")
-    );
-    assert_eq!(
-        degraded_reason_user_note(DegradedReason::BackendUnavailable),
-        Some("embedding model unavailable; results from text search only")
-    );
-    assert_eq!(
-        degraded_reason_user_note(DegradedReason::ProbeFailed),
-        Some("embedding model unavailable; results from text search only")
-    );
-}
-
 // T-116: degraded_reason() returns the amici-provided DegradedReason type
 #[test]
 fn degraded_reason_returns_amici_type() {
@@ -1910,7 +1892,7 @@ fn embed_pending_chunks_returns_count() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
     indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
-    let text = y.embed(None, false).unwrap();
+    let text = y.embed(false).unwrap();
     assert!(
         text.starts_with("Embedded"),
         "expected result starting with 'Embedded': {text}"
@@ -1929,7 +1911,7 @@ fn embed_nothing_to_embed() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
     // No index run — no chunks to embed.
 
-    let text = y.embed(None, false).unwrap();
+    let text = y.embed(false).unwrap();
     assert_eq!(
         text, "nothing to embed",
         "expected 'nothing to embed': {text}"
@@ -1947,7 +1929,7 @@ fn embed_json_format() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
     indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
 
-    let json = y.embed(None, true).unwrap();
+    let json = y.embed(true).unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed.get("embedded").is_some(),
@@ -1962,14 +1944,15 @@ fn embed_json_format() {
 // T-112: embedder not installed → YomuError::EmbedderUnavailable
 #[test]
 fn embed_embedder_unavailable_returns_error() {
-    let (conn, dir) = setup_test_files(&[]);
+    let (conn, dir) = setup_test_files(&[("src/lib.rs", "pub fn hello() {}")]);
     let y = Yomu::for_test_raw(
         conn,
         dir.path().to_path_buf(),
         Err(DegradedReason::NotInstalled),
     );
+    y.index(false).unwrap();
 
-    let result = y.embed(None, false);
+    let result = y.embed(false);
     assert!(
         matches!(result, Err(YomuError::EmbedderUnavailable(_))),
         "expected EmbedderUnavailable error: {result:?}"
@@ -1979,14 +1962,15 @@ fn embed_embedder_unavailable_returns_error() {
 // T-120: embed() with Disabled reason → YomuError::EmbedderUnavailable
 #[test]
 fn embed_disabled_returns_embedder_unavailable() {
-    let (conn, dir) = setup_test_files(&[]);
+    let (conn, dir) = setup_test_files(&[("src/lib.rs", "pub fn hello() {}")]);
     let y = Yomu::for_test_raw(
         conn,
         dir.path().to_path_buf(),
         Err(DegradedReason::Disabled),
     );
+    y.index(false).unwrap();
 
-    let result = y.embed(None, false);
+    let result = y.embed(false);
     assert!(
         matches!(result, Err(YomuError::EmbedderUnavailable(_))),
         "expected EmbedderUnavailable for Disabled reason: {result:?}"

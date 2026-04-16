@@ -10,7 +10,7 @@ use super::{IndexError, PendingFile, build_references};
 
 pub(super) const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct EmbedResult {
     pub chunks_embedded: u32,
     pub files_completed: u32,
@@ -303,17 +303,25 @@ pub fn run_incremental_embed(
     max_chunks: u32,
     type_hints: Option<&[storage::ChunkType]>,
 ) -> Result<EmbedResult, IndexError> {
+    run_incremental_embed_with_progress(conn, embedder, max_chunks, type_hints, |_| {})
+}
+
+/// Like [`run_incremental_embed`] but calls `on_progress(chunks_embedded)` after each file.
+#[allow(clippy::cast_possible_truncation)]
+pub fn run_incremental_embed_with_progress(
+    conn: &Arc<Mutex<Db>>,
+    embedder: &(impl Embed + ?Sized),
+    max_chunks: u32,
+    type_hints: Option<&[storage::ChunkType]>,
+    mut on_progress: impl FnMut(u32),
+) -> Result<EmbedResult, IndexError> {
     let ordered_files = {
         let conn_guard = conn.lock().unwrap();
         order_files_for_embedding(&conn_guard, type_hints)?
     };
 
     if ordered_files.is_empty() {
-        return Ok(EmbedResult {
-            chunks_embedded: 0,
-            files_completed: 0,
-            budget_exhausted: false,
-        });
+        return Ok(EmbedResult::default());
     }
 
     let mut chunks_embedded = 0u32;
@@ -346,6 +354,7 @@ pub fn run_incremental_embed(
 
         chunks_embedded += n;
         files_completed += 1;
+        on_progress(chunks_embedded);
 
         if chunks_embedded >= max_chunks {
             budget_exhausted = true;

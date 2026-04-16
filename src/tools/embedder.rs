@@ -107,6 +107,15 @@ impl Yomu {
             .map_err(|r| *r)
     }
 
+    pub(super) fn try_embedder_arc(&self) -> Result<Arc<dyn Embed>, DegradedReason> {
+        let disabled = self.embed_disabled;
+        self.embedder
+            .get_or_init(|| try_load_embedder(disabled))
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(|r| *r)
+    }
+
     pub(super) fn get_embedder(&self) -> &dyn Embed {
         static NOOP: NoOpEmbedder = NoOpEmbedder;
         self.try_embedder().unwrap_or(&NOOP)
