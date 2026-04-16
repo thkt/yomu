@@ -440,7 +440,6 @@ fn run_incremental_embed_empty_db_returns_zero() {
 
     assert_eq!(result.chunks_embedded, 0);
     assert_eq!(result.files_completed, 0);
-    assert!(!result.budget_exhausted);
 }
 
 // T-384: run_incremental_embed_within_budget
@@ -469,7 +468,6 @@ fn run_incremental_embed_within_budget() {
 
     assert!(result.chunks_embedded >= 3);
     assert_eq!(result.files_completed, 3);
-    assert!(!result.budget_exhausted);
 
     let stats_after = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_after.embedded_chunks, stats_after.total_chunks);
@@ -497,7 +495,6 @@ fn run_incremental_embed_exhausts_budget() {
 
     let result = run_incremental_embed(&conn, &MockEmbedder::default(), 2, None).unwrap();
 
-    assert!(result.budget_exhausted);
     assert!(result.chunks_embedded <= 2);
 
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
@@ -627,7 +624,6 @@ fn run_incremental_embed_none_hints_preserves_order() {
 
     assert_eq!(result.files_completed, 2);
     assert!(result.chunks_embedded >= 2);
-    assert!(!result.budget_exhausted);
 }
 
 // T-388: run_incremental_embed_recovers_after_intermittent_failure

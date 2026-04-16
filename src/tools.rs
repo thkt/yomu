@@ -8,7 +8,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use amici::model::ModelLoad;
+use amici::cli::embed_with_spinners;
+use amici::model::{ModelLoad, download_and_verify_model};
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
@@ -35,8 +36,6 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
-pub const MIN_EMBED_BUDGET: u32 = 1;
-pub const MAX_EMBED_BUDGET: u32 = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum IndexState {
@@ -461,20 +460,45 @@ impl Yomu {
         ))
     }
 
-    pub fn embed(&self, budget: Option<u32>, json: bool) -> Result<String, YomuError> {
-        let embedder = self.try_embedder().map_err(|reason| {
-            let msg = match reason {
-                DegradedReason::Disabled => "embedding is disabled (YOMU_EMBED=0)",
-                DegradedReason::NotInstalled => "embedding model not installed",
-                DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
-                    "embedding model unavailable"
-                }
-            };
-            YomuError::EmbedderUnavailable(msg.to_owned())
+    pub fn embed(&self, json: bool) -> Result<String, YomuError> {
+        let pending = self.with_db(|conn| {
+            let stats = storage::get_stats(conn)?;
+            Ok(stats
+                .embeddable_chunks
+                .saturating_sub(stats.embedded_chunks))
         })?;
-        let max_chunks = budget.unwrap_or(self.embed_budget);
-        let result = indexer::run_incremental_embed(&self.conn, embedder, max_chunks, None)?;
-        Ok(format_embed_result(&result, json))
+
+        let result = embed_with_spinners(
+            pending,
+            |_| {
+                self.try_embedder_arc().map_err(|reason| {
+                    let msg = match reason {
+                        DegradedReason::Disabled => "embedding is disabled (YOMU_EMBED=0)",
+                        DegradedReason::NotInstalled => "embedding model not installed",
+                        DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
+                            "embedding model unavailable"
+                        }
+                    };
+                    YomuError::EmbedderUnavailable(msg.to_owned())
+                })
+            },
+            |r: &indexer::EmbedResult| format!("Embedded {} chunks", r.chunks_embedded),
+            |model: Arc<dyn Embed>, update| {
+                indexer::run_incremental_embed_with_progress(
+                    &self.conn,
+                    model.as_ref(),
+                    u32::MAX,
+                    None,
+                    |n| update(&format!("Embedding... {n}/{pending} chunks")),
+                )
+                .map_err(YomuError::from)
+            },
+        )?;
+
+        match result {
+            Some(r) => Ok(format_embed_result(&r, json)),
+            None => Ok(format_embed_result(&indexer::EmbedResult::default(), json)),
+        }
     }
 }
 
@@ -636,6 +660,15 @@ impl Yomu {
         let mut seen: HashSet<String> = HashSet::new();
         results.retain(|r| seen.insert(r.chunk.file_path.clone()));
         Ok(results)
+    }
+
+    pub fn model_download(json: bool) -> Result<String, YomuError> {
+        download_and_verify_model().map_err(|e| YomuError::Internal(e.to_string()))?;
+        if json {
+            Ok(serde_json::json!({"status": "ok"}).to_string())
+        } else {
+            Ok("Model downloaded and verified".to_owned())
+        }
     }
 }
 

@@ -18,7 +18,7 @@ use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
 
 use embed::embed_and_store;
-pub use embed::{EmbedResult, run_incremental_embed};
+pub use embed::{EmbedResult, run_incremental_embed, run_incremental_embed_with_progress};
 #[cfg(test)]
 use embed::{MAX_CONSECUTIVE_EMBED_ERRORS, enrich_for_embedding, order_files_for_embedding};
 
