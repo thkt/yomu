@@ -371,28 +371,21 @@ struct JsonStatus {
 #[derive(Serialize)]
 struct JsonEmbedResult {
     embedded: u32,
-    budget_exhausted: bool,
 }
 
 pub(super) fn format_embed_result(result: &indexer::EmbedResult, json: bool) -> String {
     if json {
         let resp = JsonEmbedResult {
             embedded: result.chunks_embedded,
-            budget_exhausted: result.budget_exhausted,
         };
         return serde_json::to_string(&resp).unwrap();
     }
     if result.chunks_embedded == 0 {
         return "nothing to embed".to_owned();
     }
-    let note = if result.budget_exhausted {
-        " (budget reached; run again to embed more)"
-    } else {
-        ""
-    };
     format!(
-        "Embedded {} chunks across {} files{}",
-        result.chunks_embedded, result.files_completed, note
+        "Embedded {} chunks across {} files",
+        result.chunks_embedded, result.files_completed
     )
 }
 

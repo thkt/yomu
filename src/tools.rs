@@ -36,8 +36,6 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
-pub const MIN_EMBED_BUDGET: u32 = 1;
-pub const MAX_EMBED_BUDGET: u32 = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum IndexState {

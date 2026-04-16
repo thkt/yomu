@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 pub(super) const DEFAULT_EMBED_BUDGET: u32 = 50;
+const MIN_EMBED_BUDGET: u32 = 1;
+const MAX_EMBED_BUDGET: u32 = 500;
 
 pub(super) fn record_embedder_warning(reason: DegradedReason, detail: &str) {
     tracing::warn!(reason = ?reason, detail, "Embedder unavailable, using text search only");
@@ -51,13 +53,13 @@ impl Embed for NoOpEmbedder {
 pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
     match value {
         Some(v) => match v.parse::<u32>() {
-            Ok(n) if (super::MIN_EMBED_BUDGET..=super::MAX_EMBED_BUDGET).contains(&n) => n,
+            Ok(n) if (MIN_EMBED_BUDGET..=MAX_EMBED_BUDGET).contains(&n) => n,
             Ok(n) => {
                 tracing::warn!(
                     value = n,
                     "YOMU_EMBED_BUDGET out of range ({}..={}), using default",
-                    super::MIN_EMBED_BUDGET,
-                    super::MAX_EMBED_BUDGET
+                    MIN_EMBED_BUDGET,
+                    MAX_EMBED_BUDGET
                 );
                 DEFAULT_EMBED_BUDGET
             }

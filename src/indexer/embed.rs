@@ -14,7 +14,6 @@ pub(super) const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 pub struct EmbedResult {
     pub chunks_embedded: u32,
     pub files_completed: u32,
-    pub budget_exhausted: bool,
 }
 
 pub(super) struct EmbedStoreResult {
@@ -326,7 +325,6 @@ pub fn run_incremental_embed_with_progress(
 
     let mut chunks_embedded = 0u32;
     let mut files_completed = 0u32;
-    let mut budget_exhausted = false;
     let mut consecutive_errors = 0u32;
 
     for file_path in &ordered_files {
@@ -336,7 +334,6 @@ pub fn run_incremental_embed_with_progress(
         }
 
         if chunks_embedded.saturating_add(texts.len() as u32) > max_chunks && chunks_embedded > 0 {
-            budget_exhausted = true;
             break;
         }
 
@@ -357,7 +354,6 @@ pub fn run_incremental_embed_with_progress(
         on_progress(chunks_embedded);
 
         if chunks_embedded >= max_chunks {
-            budget_exhausted = true;
             break;
         }
     }
@@ -365,14 +361,12 @@ pub fn run_incremental_embed_with_progress(
     tracing::info!(
         chunks_embedded,
         files_completed,
-        budget_exhausted,
         "Incremental embedding complete"
     );
 
     Ok(EmbedResult {
         chunks_embedded,
         files_completed,
-        budget_exhausted,
     })
 }
 

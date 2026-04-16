@@ -1918,7 +1918,7 @@ fn embed_nothing_to_embed() {
     );
 }
 
-// T-111: json=true produces {"embedded": N, "budget_exhausted": bool}
+// T-111: json=true produces {"embedded": N}
 #[test]
 fn embed_json_format() {
     let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
@@ -1934,10 +1934,6 @@ fn embed_json_format() {
     assert!(
         parsed.get("embedded").is_some(),
         "expected 'embedded' key in JSON: {json}"
-    );
-    assert!(
-        parsed.get("budget_exhausted").is_some(),
-        "expected 'budget_exhausted' key in JSON: {json}"
     );
 }
 
