@@ -22,7 +22,7 @@ strsim = "0.11"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tree-sitter = "0.25"
+tree-sitter = "0.26"
 tree-sitter-css = "0.25"
 tree-sitter-html = "0.23"
 tree-sitter-rust = "0.24"
