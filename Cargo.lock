@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=e5a73f1#e5a73f1bb0c2c0b0e5e26f596af8a9535926aeda"
+source = "git+https://github.com/thkt/amici?rev=466b4cb#466b4cb87cf68ae8768ec8a20571b3cd1aa376a8"
 dependencies = [
  "rurico",
  "rusqlite",
@@ -2055,7 +2055,7 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=0de6526#0de65266126ee94fbfa292964d68e6475ddae2d9"
+source = "git+https://github.com/thkt/rurico?rev=bc2ad90#bc2ad90c2cd36b421aaacdc23cffed98d4f51a19"
 dependencies = [
  "bytemuck",
  "hf-hub",
@@ -2072,7 +2072,7 @@ dependencies = [
 [[package]]
 name = "rurico-ffi"
 version = "0.1.0"
-source = "git+https://github.com/thkt/rurico?rev=0de6526#0de65266126ee94fbfa292964d68e6475ddae2d9"
+source = "git+https://github.com/thkt/rurico?rev=bc2ad90#bc2ad90c2cd36b421aaacdc23cffed98d4f51a19"
 dependencies = [
  "mlx-sys",
  "rusqlite",
