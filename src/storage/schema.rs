@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use amici::migration::notify_schema_change;
 use rurico::storage::ensure_sqlite_vec;
 use rusqlite::Connection;
 use rusqlite::ffi::{Error as FfiError, ErrorCode};
@@ -251,10 +252,8 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         // Without this, should_reindex() would skip every file whose content hasn't changed,
         // leaving embedded_chunk_ids permanently empty after the migration.
         conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
-        tracing::warn!(
-            path = %path.display(),
-            "schema upgraded to v8: embeddings cleared, please re-run `yomu index`"
-        );
+        let _span = tracing::info_span!("migration_v8", path = %path.display()).entered();
+        notify_schema_change("yomu", "embeddings", 0, "yomu index");
     }
 
     Ok(())
