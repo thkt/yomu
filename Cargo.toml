@@ -11,7 +11,7 @@ repository = "https://github.com/thkt/yomu"
 test-support = ["rurico/test-support"]
 
 [dependencies]
-amici = { git = "https://github.com/thkt/amici", rev = "466b4cb" }
+amici = { git = "https://github.com/thkt/amici", rev = "2dd9a52" }
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
 rurico = { git = "https://github.com/thkt/rurico", rev = "bc2ad90" }
