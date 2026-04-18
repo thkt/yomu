@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=2dd9a52#2dd9a5221b91de6215dade71dd9404ab8abbba22"
+source = "git+https://github.com/thkt/amici?rev=ae6ed39#ae6ed39f7a845ebd1aef40e9f126cc2c5dc5e308"
 dependencies = [
  "rurico",
  "rusqlite",
