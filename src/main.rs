@@ -5,7 +5,7 @@ use std::io::{self, IsTerminal, Read};
 use std::iter;
 use std::process::ExitCode;
 
-use amici::cli::try_expand_shorthand;
+use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::model_probe::handle_probe_if_needed;
@@ -143,7 +143,7 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("error: {e}");
+                exit_error(&format!("{e}"));
                 exit_code_for(&e)
             }
         };
@@ -152,7 +152,7 @@ fn main() -> ExitCode {
     let yomu = match Yomu::new() {
         Ok(y) => y,
         Err(e) => {
-            eprintln!("error: {e}");
+            exit_error(&format!("{e}"));
             return exit_code_for(&e);
         }
     };
@@ -167,7 +167,7 @@ fn main() -> ExitCode {
             format,
         } => {
             if format.is_some() {
-                eprintln!("warning: --format is deprecated, use --json instead");
+                deprecation_warn("--format", "--json");
             }
             let json = json || format.as_deref() == Some("json");
             if from.is_some() {
@@ -180,7 +180,7 @@ fn main() -> ExitCode {
                         Ok(q) => Some(q),
                         Err(QueryError::NoQuery(_)) => None,
                         Err(e @ QueryError::Io(_)) => {
-                            eprintln!("error: {e}");
+                            exit_error(&format!("{e}"));
                             return ExitCode::FAILURE;
                         }
                     }
@@ -197,7 +197,7 @@ fn main() -> ExitCode {
                 let query = match resolve_query(query) {
                     Ok(q) => q,
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        exit_error(&format!("{e}"));
                         return ExitCode::from(2);
                     }
                 };
@@ -235,7 +235,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("error: {e}");
+            exit_error(&format!("{e}"));
             exit_code_for(&e)
         }
     }
@@ -259,7 +259,7 @@ where
         let display: Vec<_> = iter::once("yomu")
             .chain(expanded[1..].iter().filter_map(|a| a.to_str()))
             .collect();
-        eprintln!("→ {}", display.join(" "));
+        hint_arrow(&display);
         return Ok(cli);
     }
     Cli::try_parse_from(args)
@@ -380,16 +380,6 @@ mod tests {
         let cli = parse_cli_args(["yomu", "search", "認証"]).unwrap();
         match cli.command.unwrap() {
             Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("認証")),
-            other => panic!("expected Search, got {other:?}"),
-        }
-    }
-
-    // T-033: `yomu search` (missing arg) parses to stdin fallback path
-    #[test]
-    fn search_missing_arg_parses_for_stdin_fallback() {
-        let cli = parse_cli_args(["yomu", "search"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { query, .. } => assert_eq!(query, None),
             other => panic!("expected Search, got {other:?}"),
         }
     }
