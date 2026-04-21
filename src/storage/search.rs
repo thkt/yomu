@@ -208,7 +208,7 @@ pub fn search_by_fts(
 
     let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| match prepare_match_query(conn, k) {
+        .filter_map(|k| match prepare_match_query(conn, k, "fts_chunks_vocab") {
             Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
             Err(e) if !k.trim().is_empty() => {
                 tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
