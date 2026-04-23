@@ -350,7 +350,7 @@ pub fn search_from_file(
     } else {
         limit.saturating_add(source_buf)
     };
-    let mut results = storage::vec_search_multi(conn, &emb_refs, fetch_limit, path_filter)?;
+    let mut results = storage::vec_search_multi(conn, &emb_refs, fetch_limit, None, path_filter)?;
 
     // FR-005 / BR-001
     results.retain(|r| !r.chunk_id.is_some_and(|id| source_chunk_ids.contains(&id)));
@@ -409,9 +409,17 @@ fn search_pipeline(
     } else {
         limit.saturating_add(offset)
     };
+    let type_filter = if type_hints.is_empty() {
+        None
+    } else {
+        Some(type_hints.as_slice())
+    };
+
     let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
-        Some(emb) if use_semantic => storage::vec_search(conn, emb, fetch_limit, path_filter)?,
+        Some(emb) if use_semantic => {
+            storage::vec_search(conn, emb, fetch_limit, type_filter, path_filter)?
+        }
         _ => Vec::new(),
     };
 
@@ -420,12 +428,6 @@ fn search_pipeline(
     let fallback_limit = limit.saturating_add(offset).saturating_mul(3);
 
     if !keywords.is_empty() {
-        let type_filter = if type_hints.is_empty() {
-            None
-        } else {
-            Some(type_hints.as_slice())
-        };
-
         let exclude_ids: HashSet<i64> = results.iter().filter_map(|r| r.chunk_id).collect();
         let fts_results = storage::search_by_fts(
             conn,
