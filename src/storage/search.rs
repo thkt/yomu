@@ -28,6 +28,10 @@ fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
 /// Appends a chunk-type `IN (...)` filter, treating both `None` and
 /// `Some(&[])` as "no filter". Contrast with [`append_in_filter`], which
 /// renders `Some(&[])` as `AND 1 = 0`.
+///
+/// Precondition: `sql` ends inside an open WHERE clause — callers anchor with
+/// `MATCH ?` (FTS path) or a trailing `IN (...)` (vec path) so the leading
+/// ` AND ` from amici helpers attaches cleanly.
 fn append_chunk_type_filter(
     sql: &mut String,
     params: &mut Vec<Box<dyn ToSql>>,
