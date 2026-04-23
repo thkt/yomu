@@ -108,6 +108,7 @@ pub fn vec_search(
     conn: &Connection,
     query_embedding: &[f32],
     limit: u32,
+    type_filter: Option<&[ChunkType]>,
     path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
     let query_bytes = f32_as_bytes(query_embedding);
@@ -155,6 +156,7 @@ pub fn vec_search(
         .map(|id| Box::new(*id) as Box<dyn ToSql>)
         .collect();
     append_path_filter(&mut sql, &mut params, "file_path", path_filter);
+    append_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
 
     let mut stmt2 = conn.prepare(&sql)?;
     let meta: HashMap<i64, Chunk> = stmt2
@@ -322,6 +324,7 @@ pub fn vec_search_multi(
     conn: &Connection,
     query_embeddings: &[&[f32]],
     limit: u32,
+    type_filter: Option<&[ChunkType]>,
     path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
     if query_embeddings.is_empty() {
@@ -330,7 +333,7 @@ pub fn vec_search_multi(
 
     let mut best: HashMap<i64, SearchResult> = HashMap::new();
     for emb in query_embeddings {
-        for result in vec_search(conn, emb, limit, path_filter)? {
+        for result in vec_search(conn, emb, limit, type_filter, path_filter)? {
             if let Some(chunk_id) = result.chunk_id {
                 best.entry(chunk_id)
                     .and_modify(|existing| {

@@ -395,7 +395,7 @@ fn vec_search_returns_ordered_results() {
     )
     .unwrap();
 
-    let results = vec_search(&conn, &emb_a, 10, &[]).unwrap();
+    let results = vec_search(&conn, &emb_a, 10, None, &[]).unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].chunk.name.as_deref(), Some("A"));
     assert!(results[0].distance <= results[1].distance);
@@ -1358,7 +1358,7 @@ fn vec_search_sets_semantic_match_source() {
     )
     .unwrap();
 
-    let results = vec_search(&conn, &emb, 10, &[]).unwrap();
+    let results = vec_search(&conn, &emb, 10, None, &[]).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].match_source, MatchSource::Semantic);
 }
@@ -1387,7 +1387,7 @@ fn vec_search_sets_initial_score() {
     )
     .unwrap();
 
-    let results = vec_search(&conn, &emb, 10, &[]).unwrap();
+    let results = vec_search(&conn, &emb, 10, None, &[]).unwrap();
     assert_eq!(results.len(), 1);
 
     // score should be initialized to 1.0 / (1.0 + distance)
@@ -2721,6 +2721,105 @@ fn search_by_fts_respects_type_filter() {
     assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
 }
 
+// T-562: vec_search_respects_type_filter
+#[test]
+fn vec_search_respects_type_filter() {
+    let (conn, _dir) = test_db();
+    let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
+    emb[0] = 1.0;
+
+    // Hook chunk → passes Some(&[Hook]) filter
+    insert_chunk(
+        &conn,
+        "src/hook.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "hook body",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    // Component chunk with identical embedding → violates Some(&[Hook]) filter
+    insert_chunk(
+        &conn,
+        "src/comp.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("AuthBtn"),
+            content: "component body",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h2",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let results = vec_search(&conn, &emb, 10, Some(&[ChunkType::Hook]), &[]).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "type_filter should limit to hooks, got {:?}",
+        results.iter().map(|r| &r.chunk.name).collect::<Vec<_>>()
+    );
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
+}
+
+// T-563: vec_search_multi_respects_type_filter
+#[test]
+fn vec_search_multi_respects_type_filter() {
+    let (conn, _dir) = test_db();
+    let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
+    emb[0] = 1.0;
+
+    insert_chunk(
+        &conn,
+        "src/hook.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Hook,
+            name: Some("useAuth"),
+            content: "hook body",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h1",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/comp.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("AuthBtn"),
+            content: "component body",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h2",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let embs: Vec<&[f32]> = vec![emb.as_slice()];
+    let results = vec_search_multi(&conn, &embs, 10, Some(&[ChunkType::Hook]), &[]).unwrap();
+    assert_eq!(results.len(), 1, "type_filter should limit to hooks");
+    assert_eq!(results[0].chunk.name.as_deref(), Some("useAuth"));
+}
+
 // T-561: search_by_fts_excludes_ids
 #[test]
 fn search_by_fts_excludes_ids() {
@@ -3037,7 +3136,7 @@ fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
     // query_a = exact match to target (distance ≈ 0)
     // query_b = far from target (distance ≈ √2)
     // min-distance merge should keep distance ≈ 0 for target
-    let results = vec_search_multi(&conn, &[&emb_target, &emb_other], 10, &[]).unwrap();
+    let results = vec_search_multi(&conn, &[&emb_target, &emb_other], 10, None, &[]).unwrap();
     let target = results
         .iter()
         .find(|r| r.chunk.name.as_deref() == Some("target"))
@@ -3150,7 +3249,7 @@ fn vec_search_multi_returns_union() {
     )
     .unwrap();
 
-    let results = vec_search_multi(&conn, &[&emb_a, &emb_b], 10, &[]).unwrap();
+    let results = vec_search_multi(&conn, &[&emb_a, &emb_b], 10, None, &[]).unwrap();
     assert_eq!(results.len(), 2);
     let names: Vec<_> = results
         .iter()
