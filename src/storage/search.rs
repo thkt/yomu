@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use amici::storage::filter::{
+    append_exclude_ids, append_in_filter, append_include_ids, append_like_prefix_filter,
+};
 use rurico::storage::{fts_quote, prepare_match_query};
 use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter, types::ToSql};
 
@@ -22,86 +25,24 @@ fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
     })
 }
 
-fn append_type_filter(
+/// Appends a chunk-type `IN (...)` filter, treating both `None` and
+/// `Some(&[])` as "no filter". Contrast with [`append_in_filter`], which
+/// renders `Some(&[])` as `AND 1 = 0`.
+///
+/// Precondition: `sql` ends inside an open WHERE clause — callers anchor with
+/// `MATCH ?` (FTS path) or a trailing `IN (...)` (vec path) so the leading
+/// ` AND ` from amici helpers attaches cleanly.
+fn append_chunk_type_filter(
     sql: &mut String,
     params: &mut Vec<Box<dyn ToSql>>,
-    column: &str,
+    column: &'static str,
     types: Option<&[ChunkType]>,
 ) {
-    if let Some(types) = types
-        && !types.is_empty()
-    {
-        sql.push_str(&format!(
-            " AND {column} IN ({})",
-            anon_placeholders(types.len())
-        ));
-        for t in types {
-            params.push(Box::new(t.as_str().to_owned()));
-        }
-    }
-}
-
-fn append_exclude_ids(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn ToSql>>,
-    column: &str,
-    exclude_ids: &HashSet<i64>,
-) {
-    if !exclude_ids.is_empty() {
-        sql.push_str(&format!(
-            " AND {column} NOT IN ({})",
-            anon_placeholders(exclude_ids.len())
-        ));
-        for id in exclude_ids {
-            params.push(Box::new(*id));
-        }
-    }
-}
-
-fn append_include_ids(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn ToSql>>,
-    column: &str,
-    include_ids: Option<&HashSet<i64>>,
-) {
-    if let Some(ids) = include_ids {
-        if ids.is_empty() {
-            sql.push_str(" AND 1 = 0");
-        } else {
-            sql.push_str(&format!(
-                " AND {column} IN ({})",
-                anon_placeholders(ids.len())
-            ));
-            for id in ids {
-                params.push(Box::new(*id));
-            }
-        }
-    }
-}
-
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-fn append_path_filter(
-    sql: &mut String,
-    params: &mut Vec<Box<dyn ToSql>>,
-    column: &str,
-    paths: &[String],
-) {
-    if paths.is_empty() {
+    let Some(types) = types.filter(|t| !t.is_empty()) else {
         return;
-    }
-    let conditions: Vec<String> = paths
-        .iter()
-        .map(|_| format!("{column} LIKE ? ESCAPE '\\'"))
-        .collect();
-    sql.push_str(&format!(" AND ({})", conditions.join(" OR ")));
-    for path in paths {
-        params.push(Box::new(format!("{}%", escape_like(path))));
-    }
+    };
+    let strings: Vec<String> = types.iter().map(|c| c.as_str().to_owned()).collect();
+    append_in_filter(sql, params, column, Some(&strings));
 }
 
 pub fn vec_search(
@@ -155,8 +96,8 @@ pub fn vec_search(
         .iter()
         .map(|id| Box::new(*id) as Box<dyn ToSql>)
         .collect();
-    append_path_filter(&mut sql, &mut params, "file_path", path_filter);
-    append_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
+    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
+    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
 
     let mut stmt2 = conn.prepare(&sql)?;
     let meta: HashMap<i64, Chunk> = stmt2
@@ -238,10 +179,10 @@ pub fn search_by_fts(
     let mut params: Vec<Box<dyn ToSql>> = Vec::new();
     params.push(Box::new(fts_query));
 
-    append_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
+    append_chunk_type_filter(&mut sql, &mut params, "c.chunk_type", type_filter);
     append_exclude_ids(&mut sql, &mut params, "c.id", exclude_ids);
     append_include_ids(&mut sql, &mut params, "c.id", include_ids);
-    append_path_filter(&mut sql, &mut params, "c.file_path", path_filter);
+    append_like_prefix_filter(&mut sql, &mut params, "c.file_path", path_filter);
     sql.push_str(&format!(" ORDER BY {BM25_EXPR} LIMIT ?"));
     params.push(Box::new(limit));
 
