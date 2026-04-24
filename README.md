@@ -179,6 +179,34 @@ Real output from vercel/ai. One call replaces manually tracing imports.
 
 Options: `--symbol` (optional, filter to specific export), `--depth` (default: 3, max: 10)
 
+`--json` returns a structured response. `dependents[].references` is populated for direct (depth=1) edges and lists every `(ref_kind, via_symbol)` pair from the source file. Transitive (depth>=2) dependents reach the target through intermediate files, so their `references` is `[]`:
+
+```json
+{
+  "target": "src/storage.rs",
+  "in_index": true,
+  "dependents": [
+    {
+      "file_path": "src/indexer.rs",
+      "depth": 1,
+      "references": [
+        {"ref_kind": "named", "via_symbol": "Db"},
+        {"ref_kind": "named", "via_symbol": "open_db"}
+      ]
+    },
+    {
+      "file_path": "src/main.rs",
+      "depth": 2,
+      "references": []
+    }
+  ],
+  "symbol_refs": [],
+  "total": 2
+}
+```
+
+`ref_kind` is one of `named` / `default` / `namespace` / `type_only` / `side_effect`. `via_symbol` is `null` for namespace/side-effect imports where no individual symbol is named at the import site.
+
 ### `yomu index` / `yomu rebuild` / `yomu status`
 
 | Command   | Details                                                                                                |

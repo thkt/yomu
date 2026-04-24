@@ -403,9 +403,18 @@ pub(super) fn format_status_json(stats: &storage::IndexStatus, ref_count: u32) -
 }
 
 #[derive(Serialize)]
+struct JsonReference<'a> {
+    ref_kind: &'a str,
+    via_symbol: Option<&'a str>,
+}
+
+#[derive(Serialize)]
 struct JsonDependent<'a> {
     file_path: &'a str,
     depth: u32,
+    /// Populated only for `depth == 1`. Transitive (depth >= 2) dependents are
+    /// reached through intermediate files, so no direct edge data exists.
+    references: Vec<JsonReference<'a>>,
 }
 
 #[derive(Serialize)]
@@ -429,14 +438,30 @@ pub(super) fn format_impact_json(
     target: &str,
     file_in_index: bool,
     dependents: &[storage::Dependent],
+    direct_refs: &HashMap<String, Vec<storage::DirectReference>>,
     symbol_refs: &[String],
     semantic_related: &[storage::SearchResult],
 ) -> String {
     let deps: Vec<JsonDependent> = dependents
         .iter()
-        .map(|d| JsonDependent {
-            file_path: &d.file_path,
-            depth: d.depth,
+        .map(|d| {
+            let references = if d.depth == 1
+                && let Some(refs) = direct_refs.get(&d.file_path)
+            {
+                refs.iter()
+                    .map(|r| JsonReference {
+                        ref_kind: r.ref_kind.as_str(),
+                        via_symbol: r.via_symbol.as_deref(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            JsonDependent {
+                file_path: &d.file_path,
+                depth: d.depth,
+                references,
+            }
         })
         .collect();
     let sem: Vec<JsonSemanticRelated> = semantic_related

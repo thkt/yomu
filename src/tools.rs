@@ -403,14 +403,19 @@ impl Yomu {
         let fp = file_path.to_owned();
         let sym_owned = symbol_filter.map(str::to_owned);
 
-        let (file_in_index, dependents, symbol_refs) = self.with_db(move |conn| {
+        let (file_in_index, dependents, symbol_refs, direct_refs) = self.with_db(move |conn| {
             let exists = storage::file_exists_in_index(conn, &fp)?;
             let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
             let refs = match &sym_owned {
                 Some(sym) => storage::get_symbol_dependents(conn, &fp, sym)?,
                 None => vec![],
             };
-            Ok((exists, dependents, refs))
+            let direct = storage::get_direct_references(conn, &fp)?;
+            let mut grouped: HashMap<String, Vec<storage::DirectReference>> = HashMap::new();
+            for r in direct {
+                grouped.entry(r.source_file.clone()).or_default().push(r);
+            }
+            Ok((exists, dependents, refs, grouped))
         })?;
 
         let semantic_related = if semantic {
@@ -425,6 +430,7 @@ impl Yomu {
                 target,
                 file_in_index,
                 &dependents,
+                &direct_refs,
                 &symbol_refs,
                 &semantic_related,
             ));

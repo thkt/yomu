@@ -800,6 +800,56 @@ fn json_flag_with_impact() {
     assert!(parsed.get("total").is_some(), "should have total: {stdout}");
 }
 
+// T-572: impact_json_includes_direct_references_with_kind_and_symbol
+#[test]
+fn impact_json_includes_direct_references_with_kind_and_symbol() {
+    let dir = setup_project();
+    let src = dir.path().join("src");
+    fs::write(
+        src.join("App.tsx"),
+        "import { Button } from './Button';\nexport function App() { return <Button/>; }\n",
+    )
+    .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "re-index failed");
+
+    let output = yomu_cmd()
+        .args(["--json", "impact", "src/Button.tsx"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "impact failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    let app_dep = parsed["dependents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("dependents should be array: {stdout}"))
+        .iter()
+        .find(|d| d["file_path"] == "src/App.tsx")
+        .unwrap_or_else(|| panic!("App.tsx should be a dependent: {stdout}"));
+    assert_eq!(app_dep["depth"], 1, "App.tsx is direct dependent: {stdout}");
+    let refs = app_dep["references"]
+        .as_array()
+        .unwrap_or_else(|| panic!("should have references array: {stdout}"));
+    assert!(
+        refs.iter().any(|r| r["via_symbol"] == "Button"),
+        "should include via_symbol=Button: {stdout}"
+    );
+    assert!(
+        refs.iter().all(|r| r["ref_kind"].is_string()),
+        "every reference should carry ref_kind: {stdout}"
+    );
+}
+
 // T-550: probe_embed_flag_rejected
 #[test]
 fn probe_embed_flag_rejected() {

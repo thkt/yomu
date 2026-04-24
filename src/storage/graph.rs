@@ -4,12 +4,24 @@ use rusqlite::Connection;
 
 #[cfg(test)]
 use super::Reference;
-use super::{ChunkType, StorageError, as_sql_params, in_placeholders};
+use super::{ChunkType, RefKind, StorageError, as_sql_params, in_placeholders};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
     pub file_path: String,
     pub depth: u32,
+}
+
+/// One reference edge from `source_file` to a target file, retaining the
+/// `ref_kind` (named/default/...) and the symbol that triggered it.
+///
+/// `via_symbol` is `None` for namespace/side-effect imports where no
+/// individual symbol is named at the import site.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectReference {
+    pub source_file: String,
+    pub ref_kind: RefKind,
+    pub via_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +75,38 @@ pub fn get_transitive_dependents(
         Ok(Dependent {
             file_path: row.get(0)?,
             depth: row.get(1)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Returns every direct (depth=1) reference edge that points at `target_file`.
+///
+/// Each row is one `(source_file, ref_kind, via_symbol)` triple. Rows are
+/// distinct on that triple — duplicate parses of the same import collapse to
+/// a single row, but a file that imports the target twice with different
+/// symbols or kinds still produces multiple rows.
+pub fn get_direct_references(
+    conn: &Connection,
+    target_file: &str,
+) -> Result<Vec<DirectReference>, StorageError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT source_file, ref_kind, symbol_name
+         FROM file_references
+         WHERE target_file = ?1
+         ORDER BY source_file, ref_kind, symbol_name",
+    )?;
+    let rows = stmt.query_map([target_file], |row| {
+        let ref_kind = RefKind::from_db(row.get::<_, String>(1)?.as_ref());
+        let symbol: Option<String> = row.get(2)?;
+        let via_symbol = match ref_kind {
+            RefKind::Namespace | RefKind::SideEffect => None,
+            _ => symbol,
+        };
+        Ok(DirectReference {
+            source_file: row.get(0)?,
+            ref_kind,
+            via_symbol,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
