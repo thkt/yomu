@@ -46,6 +46,25 @@ impl RustResolver {
         None
     }
 
+    fn probe_crate_root(&self) -> Option<String> {
+        let canonical_root = self.canonical_root.as_deref();
+        for name in ["lib.rs", "main.rs"] {
+            let candidate = self.root.join("src").join(name);
+            if let Ok(abs) = candidate.canonicalize() {
+                return strip_canonical_prefix(&abs, canonical_root);
+            }
+        }
+        None
+    }
+
+    fn probe_module_or_crate_root(&self, module_path: &[String]) -> Option<String> {
+        if module_path.is_empty() {
+            return self.probe_crate_root();
+        }
+        let segments: Vec<&str> = module_path.iter().map(String::as_str).collect();
+        self.probe_module(&segments)
+    }
+
     fn probe_with_symbol_fallback(&self, segments: &[&str], min_len: usize) -> Option<String> {
         self.probe_module(segments).or_else(|| {
             (segments.len() > min_len)
@@ -55,6 +74,9 @@ impl RustResolver {
     }
 
     fn resolve_crate(&self, rest: &str) -> Option<String> {
+        if rest.is_empty() {
+            return self.probe_crate_root();
+        }
         let segments: Vec<&str> = rest.split("::").collect();
         self.probe_with_symbol_fallback(&segments, 1)
     }
@@ -62,14 +84,24 @@ impl RustResolver {
     fn resolve_super(&self, source: &str, from_file: &str) -> Option<String> {
         let mut module_path = module_path_from_file(from_file);
         let mut rest = source;
-        while let Some(after) = rest.strip_prefix("super::") {
+        loop {
+            let next = if let Some(after) = rest.strip_prefix("super::") {
+                after
+            } else if rest == "super" {
+                ""
+            } else {
+                break;
+            };
             if module_path.is_empty() {
                 return None;
             }
             module_path.pop();
-            rest = after;
+            rest = next;
         }
-        let min_len = module_path.len() + 1;
+        if rest.is_empty() {
+            return self.probe_module_or_crate_root(&module_path);
+        }
+        let min_len = module_path.len();
         let segments: Vec<&str> = module_path
             .iter()
             .map(String::as_str)
@@ -80,7 +112,10 @@ impl RustResolver {
 
     fn resolve_self(&self, rest: &str, from_file: &str) -> Option<String> {
         let module_path = module_path_from_file(from_file);
-        let min_len = module_path.len() + 1;
+        if rest.is_empty() {
+            return self.probe_module_or_crate_root(&module_path);
+        }
+        let min_len = module_path.len();
         let segments: Vec<&str> = module_path
             .iter()
             .map(String::as_str)
@@ -98,14 +133,12 @@ impl RustResolver {
     }
 
     pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
-        if let Some(rest) = source.strip_prefix("crate::") {
-            self.resolve_crate(rest)
-        } else if source.starts_with("super::") {
-            self.resolve_super(source, from_file)
-        } else if let Some(rest) = source.strip_prefix("self::") {
-            self.resolve_self(rest, from_file)
-        } else {
-            None
+        let (head, rest) = source.split_once("::").unwrap_or((source, ""));
+        match head {
+            "crate" => self.resolve_crate(rest),
+            "super" => self.resolve_super(source, from_file),
+            "self" => self.resolve_self(rest, from_file),
+            _ => None,
         }
     }
 }
@@ -287,5 +320,105 @@ mod tests {
         // a::b::c → super → a::b → super → a → util → a::util
         let result = resolver.resolve("super::super::util", "src/a/b/c.rs");
         assert_eq!(result, Some("src/a/util.rs".to_owned()));
+    }
+
+    // T-327: resolve_super_symbol_fallback
+    #[test]
+    fn resolve_super_symbol_fallback() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let tools = src.join("tools");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(src.join("tools.rs"), "").unwrap();
+        fs::write(tools.join("reranker.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // `use super::Yomu` from src/tools/reranker.rs → parent module src/tools.rs
+        let result = resolver.resolve("super::Yomu", "src/tools/reranker.rs");
+        assert_eq!(result, Some("src/tools.rs".to_owned()));
+    }
+
+    // T-328: resolve_self_symbol_fallback
+    #[test]
+    fn resolve_self_symbol_fallback() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("foo.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // `use self::Symbol` from src/foo.rs → current module src/foo.rs
+        let result = resolver.resolve("self::Symbol", "src/foo.rs");
+        assert_eq!(result, Some("src/foo.rs".to_owned()));
+    }
+
+    // T-329: resolve_bare_super
+    #[test]
+    fn resolve_bare_super() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let tools = src.join("tools");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(src.join("tools.rs"), "").unwrap();
+        fs::write(tools.join("reranker.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // parser emits source="super" for `use super::Yomu;`
+        let result = resolver.resolve("super", "src/tools/reranker.rs");
+        assert_eq!(result, Some("src/tools.rs".to_owned()));
+    }
+
+    // T-330: resolve_bare_self
+    #[test]
+    fn resolve_bare_self() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("foo.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // parser emits source="self" for `use self::Symbol;`
+        let result = resolver.resolve("self", "src/foo.rs");
+        assert_eq!(result, Some("src/foo.rs".to_owned()));
+    }
+
+    // T-331: resolve_bare_crate_to_lib_rs
+    #[test]
+    fn resolve_bare_crate_to_lib_rs() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("lib.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        // parser emits source="crate" for `use crate::Yomu;`
+        let result = resolver.resolve("crate", "src/lib.rs");
+        assert_eq!(result, Some("src/lib.rs".to_owned()));
+    }
+
+    // T-332: resolve_bare_crate_to_main_rs
+    #[test]
+    fn resolve_bare_crate_to_main_rs() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("main.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        let result = resolver.resolve("crate", "src/main.rs");
+        assert_eq!(result, Some("src/main.rs".to_owned()));
+    }
+
+    // T-333: resolve_bare_super_at_root_returns_none
+    #[test]
+    fn resolve_bare_super_at_root_returns_none() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("lib.rs"), "").unwrap();
+
+        let resolver = RustResolver::new(tmp.path());
+        let result = resolver.resolve("super", "src/lib.rs");
+        assert_eq!(result, None);
     }
 }
