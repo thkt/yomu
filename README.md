@@ -135,11 +135,12 @@ Returns ranked results with full context. Each result includes:
 
 Options:
 
-| Flag      | Default | Description                                                              |
-| --------- | ------- | ------------------------------------------------------------------------ |
-| `--limit` | 10      | Max results (max: 100)                                                   |
-| `--offset`| 0       | Pagination offset (max: 500)                                             |
-| `--from`  | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
+| Flag         | Default | Description                                                              |
+| ------------ | ------- | ------------------------------------------------------------------------ |
+| `--limit`    | 10      | Max results (max: 100)                                                   |
+| `--offset`   | 0       | Pagination offset (max: 500)                                             |
+| `--from`     | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
+| `--no-embed` | false   | Skip embedding lookups; use FTS5 only. Same effect as `YOMU_EMBED=0`     |
 
 `--from` uses the stored embeddings of the target — no re-embedding needed:
 
@@ -218,7 +219,7 @@ Other files fall back to character-based chunking with overlap.
 | SCSS/Sass not supported   | Only plain CSS                                                                              |
 | Cold start                | First `search` call takes a few seconds for chunking + initial embedding                    |
 | Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
-| `YOMU_EMBED=0`            | Set this env var to disable embedding entirely; `search` falls back to text-only mode       |
+| Embedding opt-out         | Pass `--no-embed` to `yomu search`, or set `YOMU_EMBED=0`; `search` falls back to text-only mode |
 
 ## Architecture
 

@@ -1257,7 +1257,7 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
 #[test]
 fn with_root_creates_db_and_returns_yomu() {
     let dir = tempdir().unwrap();
-    let result = Yomu::with_root(dir.path().to_path_buf());
+    let result = Yomu::with_root(dir.path().to_path_buf(), Default::default());
     assert!(
         result.is_ok(),
         "with_root should succeed: {:?}",

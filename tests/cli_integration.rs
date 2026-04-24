@@ -818,3 +818,82 @@ fn probe_embed_flag_rejected() {
         "should show unrecognized flag error, got: {stderr}"
     );
 }
+
+// T-568: search_no_embed_flag_runs_text_only
+#[test]
+fn search_no_embed_flag_runs_text_only() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["search", "--no-embed", "button"])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "search --no-embed failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("Button"),
+        "expected Button in results: {stdout}"
+    );
+}
+
+// T-570: search_no_embed_with_from_is_rejected
+//
+// `--from` requires stored sub-embeddings to perform similarity search; combining
+// it with `--no-embed` would silently fall through to the vector path, breaking
+// the FTS5-only contract. clap rejects the combination at parse time.
+#[test]
+fn search_no_embed_with_from_is_rejected() {
+    let output = yomu_cmd()
+        .args(["search", "--no-embed", "--from", "src/Button.tsx"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "--no-embed + --from should be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--from") || stderr.contains("conflict"),
+        "should report --from conflict: {stderr}"
+    );
+}
+
+// T-569: search_no_embed_flag_marks_json_degraded
+//
+// `--no-embed` is an explicit caller opt-out, so amici intentionally returns
+// `None` from `degraded_reason_user_note(Disabled)` to avoid a redundant note.
+// The structured `degraded: true` flag is the contract callers rely on.
+#[test]
+fn search_no_embed_flag_marks_json_degraded() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["search", "--no-embed", "button", "--json"])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "json --no-embed failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    assert_eq!(
+        parsed["degraded"],
+        serde_json::Value::Bool(true),
+        "expected degraded=true: {stdout}"
+    );
+    assert!(
+        parsed["results"].as_array().is_some_and(|r| !r.is_empty()),
+        "should still return FTS5 results: {stdout}"
+    );
+}

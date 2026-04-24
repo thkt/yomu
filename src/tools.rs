@@ -80,6 +80,17 @@ pub(crate) fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
     (target, None)
 }
 
+/// Runtime options for [`Yomu::new`] / [`Yomu::with_root`].
+///
+/// Each field is OR-merged with the corresponding env var, so either source
+/// can opt in.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct YomuOptions {
+    /// Disable embedding-based search; falls back to FTS5 only.
+    /// OR-merged with `YOMU_EMBED=0`.
+    pub no_embed: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum YomuError {
     #[error("storage error: {0}")]
@@ -109,18 +120,18 @@ pub struct Yomu {
 }
 
 impl Yomu {
-    pub fn new() -> Result<Self, YomuError> {
+    pub fn new(options: YomuOptions) -> Result<Self, YomuError> {
         let cwd = env::current_dir()?;
         let root = config::detect_root(&cwd);
-        Self::with_root(root)
+        Self::with_root(root, options)
     }
 
-    pub fn with_root(root: PathBuf) -> Result<Self, YomuError> {
+    pub fn with_root(root: PathBuf, options: YomuOptions) -> Result<Self, YomuError> {
         tracing::info!(root = %root.display(), "Detected project root");
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let embed_disabled = env::var("YOMU_EMBED").as_deref() == Ok("0");
+        let embed_disabled = options.no_embed || env::var("YOMU_EMBED").as_deref() == Ok("0");
         let rerank_enabled = env::var("YOMU_RERANK").as_deref() == Ok("1");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -473,7 +484,9 @@ impl Yomu {
             |_| {
                 self.try_embedder_arc().map_err(|reason| {
                     let msg = match reason {
-                        DegradedReason::Disabled => "embedding is disabled (YOMU_EMBED=0)",
+                        DegradedReason::Disabled => {
+                            "embedding is disabled (--no-embed or YOMU_EMBED=0)"
+                        }
                         DegradedReason::NotInstalled => "embedding model not installed",
                         DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
                             "embedding model unavailable"
