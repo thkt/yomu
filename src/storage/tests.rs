@@ -688,6 +688,69 @@ fn replace_file_references_replaces_existing() {
     assert_eq!(dependents[0].file_path, "src/A.tsx");
 }
 
+// T-571: get_direct_references_returns_kind_and_symbol_per_edge
+#[test]
+fn get_direct_references_returns_kind_and_symbol_per_edge() {
+    let (conn, _dir) = test_db();
+    let a_refs = vec![
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: Some("Db".into()),
+            ref_kind: RefKind::Named,
+        },
+        Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: Some("open_db".into()),
+            ref_kind: RefKind::Named,
+        },
+    ];
+    // Parser stores `*` for `import * as X from ...`; the read path must
+    // normalize this to `None` so the JSON contract for namespace imports
+    // (`via_symbol: null`) holds.
+    let c_refs = vec![Reference {
+        source_file: "src/C.tsx".into(),
+        target_file: "src/B.tsx".into(),
+        symbol_name: Some("*".into()),
+        ref_kind: RefKind::Namespace,
+    }];
+    let unrelated = vec![Reference {
+        source_file: "src/B.tsx".into(),
+        target_file: "src/D.tsx".into(),
+        symbol_name: None,
+        ref_kind: RefKind::SideEffect,
+    }];
+    replace_file_references(&conn, "src/A.tsx", &a_refs).unwrap();
+    replace_file_references(&conn, "src/C.tsx", &c_refs).unwrap();
+    replace_file_references(&conn, "src/B.tsx", &unrelated).unwrap();
+
+    let direct = get_direct_references(&conn, "src/B.tsx").unwrap();
+    assert_eq!(
+        direct.len(),
+        3,
+        "expected three edges to src/B.tsx: {direct:?}"
+    );
+    assert!(
+        direct.iter().any(|r| r.source_file == "src/A.tsx"
+            && r.ref_kind == RefKind::Named
+            && r.via_symbol.as_deref() == Some("Db")),
+        "missing A→B (Db, named): {direct:?}"
+    );
+    assert!(
+        direct.iter().any(|r| r.source_file == "src/A.tsx"
+            && r.ref_kind == RefKind::Named
+            && r.via_symbol.as_deref() == Some("open_db")),
+        "missing A→B (open_db, named): {direct:?}"
+    );
+    assert!(
+        direct.iter().any(|r| r.source_file == "src/C.tsx"
+            && r.ref_kind == RefKind::Namespace
+            && r.via_symbol.is_none()),
+        "missing C→B (namespace, no symbol): {direct:?}"
+    );
+}
+
 // T-141: delete_file_chunks_also_removes_references
 #[test]
 fn delete_file_chunks_also_removes_references() {

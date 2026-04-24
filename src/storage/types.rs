@@ -172,6 +172,23 @@ impl RefKind {
             Self::SideEffect => "side_effect",
         }
     }
+
+    pub fn from_db(s: &str) -> Self {
+        match s {
+            "named" => Self::Named,
+            "default" => Self::Default,
+            "namespace" => Self::Namespace,
+            "type_only" => Self::TypeOnly,
+            "side_effect" => Self::SideEffect,
+            other => {
+                tracing::warn!(
+                    ref_kind = other,
+                    "Unknown ref_kind in DB, defaulting to Named"
+                );
+                Self::Named
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
