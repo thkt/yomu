@@ -78,7 +78,7 @@ pub(super) fn parse_embed_budget() -> u32 {
 
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     if disabled {
-        tracing::info!("Embedding disabled via YOMU_EMBED=0");
+        tracing::info!("Embedding disabled via --no-embed or YOMU_EMBED=0");
         return Err(DegradedReason::Disabled);
     }
     let result = try_load_embedder_with(

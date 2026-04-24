@@ -9,7 +9,9 @@ use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand}
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::model_probe::handle_probe_if_needed;
-use yomu::tools::{MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError};
+use yomu::tools::{
+    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,
+};
 
 #[derive(Parser)]
 #[command(name = "yomu", version, about = "Frontend code search for AI agents")]
@@ -42,6 +44,10 @@ enum Command {
         /// Deprecated: use global --json instead
         #[arg(long, hide = true)]
         format: Option<String>,
+        /// Skip embedding lookups; use FTS5 only. Same effect as YOMU_EMBED=0.
+        /// Conflicts with `--from` (similarity search requires stored embeddings).
+        #[arg(long, conflicts_with = "from")]
+        no_embed: bool,
     },
     /// Update chunk index incrementally. No API calls.
     Index {
@@ -149,7 +155,14 @@ fn main() -> ExitCode {
         };
     }
 
-    let yomu = match Yomu::new() {
+    let yomu_options = match &command {
+        Command::Search { no_embed, .. } => YomuOptions {
+            no_embed: *no_embed,
+        },
+        _ => YomuOptions::default(),
+    };
+
+    let yomu = match Yomu::new(yomu_options) {
         Ok(y) => y,
         Err(e) => {
             exit_error(&format!("{e}"));
@@ -165,6 +178,7 @@ fn main() -> ExitCode {
             path,
             from,
             format,
+            no_embed: _,
         } => {
             if format.is_some() {
                 deprecation_warn("--format", "--json");
