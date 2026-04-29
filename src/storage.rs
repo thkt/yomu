@@ -23,6 +23,14 @@ pub type Db = Connection;
 
 pub use rurico::embed::EMBEDDING_DIMS;
 pub use rurico::storage::f32_as_bytes;
+pub(crate) use rurico::storage::{QueryNormalizationConfig, normalize_for_fts};
+
+/// FTS normalization shared by index INSERT and query MATCH paths.
+/// Both sides must use the same config — otherwise queries normalize while
+/// indexed text doesn't, and matches silently miss (rurico T-069-001).
+pub(crate) fn fts_normalization() -> QueryNormalizationConfig {
+    QueryNormalizationConfig::default()
+}
 
 pub(crate) use amici::storage::{anon_placeholders, as_sql_params, in_placeholders};
 
@@ -97,7 +105,7 @@ use rurico::embed::ChunkedEmbedding;
 
 #[cfg(test)]
 pub(crate) fn ce(v: Vec<f32>) -> ChunkedEmbedding {
-    ChunkedEmbedding { chunks: vec![v] }
+    ChunkedEmbedding::new(vec![v])
 }
 
 #[cfg(test)]

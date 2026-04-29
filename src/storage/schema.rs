@@ -10,7 +10,7 @@ use rusqlite::ffi::{Error as FfiError, ErrorCode};
 
 use crate::text::split_identifier;
 
-use super::{EMBEDDING_DIMS, StorageError};
+use super::{EMBEDDING_DIMS, StorageError, fts_normalization, normalize_for_fts};
 
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     ensure_sqlite_vec().map_err(|e| StorageError::Io(io::Error::other(e)))?;
@@ -271,6 +271,7 @@ fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
         let mut insert = conn.prepare(
             "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
         )?;
+        let normalization = fts_normalization();
         while let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
             let path: String = row.get(1)?;
@@ -280,7 +281,12 @@ fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
                 .as_deref()
                 .map(|n| split_identifier(n).join(" "))
                 .unwrap_or_default();
-            insert.execute(rusqlite::params![id, fts_name, content, path])?;
+            insert.execute(rusqlite::params![
+                id,
+                normalize_for_fts(&fts_name, &normalization),
+                normalize_for_fts(&content, &normalization),
+                normalize_for_fts(&path, &normalization),
+            ])?;
         }
     }
 
