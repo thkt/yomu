@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::resolver::{Resolve, strip_canonical_prefix};
@@ -5,6 +6,7 @@ use crate::resolver::{Resolve, strip_canonical_prefix};
 pub struct RustResolver {
     root: PathBuf,
     canonical_root: Option<PathBuf>,
+    crate_name: Option<String>,
 }
 
 fn module_path_from_file(from_file: &str) -> Vec<String> {
@@ -126,10 +128,16 @@ impl RustResolver {
 
     pub fn new(root: &Path) -> Self {
         let canonical_root = root.canonicalize().ok();
+        let crate_name = read_crate_name(root);
         Self {
             root: root.to_path_buf(),
             canonical_root,
+            crate_name,
         }
+    }
+
+    pub(crate) fn crate_name(&self) -> Option<&str> {
+        self.crate_name.as_deref()
     }
 
     pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
@@ -138,6 +146,7 @@ impl RustResolver {
             "crate" => self.resolve_crate(rest),
             "super" => self.resolve_super(source, from_file),
             "self" => self.resolve_self(rest, from_file),
+            name if Some(name) == self.crate_name.as_deref() => self.resolve_crate(rest),
             _ => None,
         }
     }
@@ -145,6 +154,28 @@ impl RustResolver {
     pub fn resolve_mod_decl(&self, name: &str, from_file: &str) -> Option<String> {
         self.resolve(&format!("self::{name}"), from_file)
     }
+}
+
+fn read_crate_name(root: &Path) -> Option<String> {
+    let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let mut in_package = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_package = section.trim() == "package";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("name") {
+            let after_eq = rest.trim_start().strip_prefix('=')?.trim();
+            let stripped = after_eq.strip_prefix('"')?;
+            let end = stripped.find('"')?;
+            return Some(stripped[..end].replace('-', "_"));
+        }
+    }
+    None
 }
 
 impl Resolve for RustResolver {
