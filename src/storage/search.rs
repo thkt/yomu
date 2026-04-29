@@ -8,7 +8,7 @@ use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter
 
 use super::{
     Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, f32_as_bytes,
-    in_placeholders,
+    fts_normalization, in_placeholders,
 };
 
 const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
@@ -149,16 +149,19 @@ pub fn search_by_fts(
         return Ok(Vec::new());
     }
 
+    let normalization = fts_normalization();
     let parts: Vec<String> = keywords
         .iter()
-        .filter_map(|k| match prepare_match_query(conn, k, "fts_chunks_vocab") {
-            Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
-            Err(e) if !k.trim().is_empty() => {
-                tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
-                Some(fts_quote(k))
-            }
-            _ => None,
-        })
+        .filter_map(
+            |k| match prepare_match_query(conn, k, "fts_chunks_vocab", &normalization) {
+                Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
+                Err(e) if !k.trim().is_empty() => {
+                    tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
+                    Some(fts_quote(k))
+                }
+                _ => None,
+            },
+        )
         .collect();
     if parts.is_empty() {
         return Ok(Vec::new());

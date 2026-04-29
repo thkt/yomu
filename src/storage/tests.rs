@@ -2497,8 +2497,8 @@ fn fts_stores_split_identifier_name() {
         .unwrap();
 
     assert_eq!(
-        fts_name, "use Auth Provider",
-        "FTS name column should contain split-identifier output"
+        fts_name, "use auth provider",
+        "FTS name column should contain split-identifier output (NFKC + ASCII lowercase via rurico Phase 5 normalization)"
     );
 }
 
@@ -2651,8 +2651,8 @@ fn migration_populates_fts_name_with_split_identifier() {
         )
         .unwrap();
     assert_eq!(
-        fts_name, "get User Name",
-        "migration should populate FTS name with split_identifier output"
+        fts_name, "get user name",
+        "migration should populate FTS name with split_identifier output (NFKC + ASCII lowercase via rurico Phase 5 normalization)"
     );
 }
 

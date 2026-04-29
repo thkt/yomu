@@ -5,7 +5,9 @@ use rurico::storage::f32_as_bytes;
 
 use crate::text::split_identifier;
 
-use super::{ChunkType, FileData, NewChunk, Reference, StorageError};
+use super::{
+    ChunkType, FileData, NewChunk, Reference, StorageError, fts_normalization, normalize_for_fts,
+};
 
 pub(crate) fn insert_chunk_row(
     conn: &Connection,
@@ -36,14 +38,15 @@ pub(crate) fn insert_chunk_row(
         .name
         .map(|n| split_identifier(n).join(" "))
         .unwrap_or_default();
+    let normalization = fts_normalization();
     conn.prepare_cached(
         "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
     )?
     .execute(rusqlite::params![
         chunk_id,
-        fts_name,
-        chunk.content,
-        file_path
+        normalize_for_fts(&fts_name, &normalization),
+        normalize_for_fts(chunk.content, &normalization),
+        normalize_for_fts(file_path, &normalization),
     ])?;
 
     Ok(chunk_id)
