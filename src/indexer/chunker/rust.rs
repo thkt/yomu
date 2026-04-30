@@ -7,9 +7,9 @@ use super::{
     chunk_fallback, extract_name, make_chunk, make_parser, other_or_skip,
 };
 
-fn is_internal_path(path: &str) -> bool {
+fn is_internal_path(path: &str, crate_name: Option<&str>) -> bool {
     let prefix = path.split("::").next().unwrap_or("");
-    matches!(prefix, "crate" | "super" | "self")
+    matches!(prefix, "crate" | "super" | "self") || Some(prefix) == crate_name
 }
 
 fn classify_rust_node(node: &Node, source: &str) -> Option<RawChunk> {
@@ -106,11 +106,15 @@ fn collect_use_list_imports(base_path: &str, list: &Node, source: &str) -> Vec<P
     extra_imports
 }
 
-fn parse_scoped_identifier(node: &Node, source: &str) -> Option<ParsedImport> {
+fn parse_scoped_identifier(
+    node: &Node,
+    source: &str,
+    crate_name: Option<&str>,
+) -> Option<ParsedImport> {
     let path_node = node.child_by_field_name("path")?;
     let name_node = node.child_by_field_name("name")?;
     let path = &source[path_node.byte_range()];
-    if !is_internal_path(path) {
+    if !is_internal_path(path, crate_name) {
         return None;
     }
     Some(ParsedImport {
@@ -123,7 +127,7 @@ fn parse_scoped_identifier(node: &Node, source: &str) -> Option<ParsedImport> {
     })
 }
 
-fn parse_scoped_use_list(node: &Node, source: &str) -> Vec<ParsedImport> {
+fn parse_scoped_use_list(node: &Node, source: &str, crate_name: Option<&str>) -> Vec<ParsedImport> {
     let (Some(path_node), Some(list_node)) = (
         node.child_by_field_name("path"),
         node.child_by_field_name("list"),
@@ -131,19 +135,19 @@ fn parse_scoped_use_list(node: &Node, source: &str) -> Vec<ParsedImport> {
         return vec![];
     };
     let base_path = &source[path_node.byte_range()];
-    if !is_internal_path(base_path) {
+    if !is_internal_path(base_path, crate_name) {
         return vec![];
     }
     collect_use_list_imports(base_path, &list_node, source)
 }
 
-fn parse_use_wildcard(node: &Node, source: &str) -> Option<ParsedImport> {
+fn parse_use_wildcard(node: &Node, source: &str, crate_name: Option<&str>) -> Option<ParsedImport> {
     let mut cursor = node.walk();
     let path_node = node
         .children(&mut cursor)
         .find(tree_sitter::Node::is_named)?;
     let path = &source[path_node.byte_range()];
-    if !is_internal_path(path) {
+    if !is_internal_path(path, crate_name) {
         return None;
     }
     Some(ParsedImport {
@@ -156,14 +160,18 @@ fn parse_use_wildcard(node: &Node, source: &str) -> Option<ParsedImport> {
     })
 }
 
-fn parse_use_as_clause(node: &Node, source: &str) -> Option<ParsedImport> {
+fn parse_use_as_clause(
+    node: &Node,
+    source: &str,
+    crate_name: Option<&str>,
+) -> Option<ParsedImport> {
     let path_node = node.child_by_field_name("path")?;
     let alias_node = node.child_by_field_name("alias")?;
     if path_node.kind() == "scoped_identifier" {
         let inner_path = path_node.child_by_field_name("path")?;
         let inner_name = path_node.child_by_field_name("name")?;
         let path = &source[inner_path.byte_range()];
-        if !is_internal_path(path) {
+        if !is_internal_path(path, crate_name) {
             return None;
         }
         Some(ParsedImport {
@@ -179,17 +187,40 @@ fn parse_use_as_clause(node: &Node, source: &str) -> Option<ParsedImport> {
     }
 }
 
-fn parse_rust_use(node: &Node, source: &str) -> Vec<ParsedImport> {
+/// `mod foo;` (body-less) を ParsedImport として返す。
+/// `mod foo { ... }` (body 有) や名前不在の場合は None を返し、
+/// 呼び出し側で通常の chunk 経路に委譲する。
+fn parse_mod_decl(node: &Node, source: &str) -> Option<ParsedImport> {
+    if node.child_by_field_name("body").is_some() {
+        return None;
+    }
+    let name_node = node.child_by_field_name("name")?;
+    let name = source[name_node.byte_range()].to_owned();
+    Some(ParsedImport {
+        source: name.clone(),
+        specifiers: vec![ImportSpecifier {
+            name,
+            alias: None,
+            kind: ImportKind::ModDecl,
+        }],
+    })
+}
+
+fn parse_rust_use(node: &Node, source: &str, crate_name: Option<&str>) -> Vec<ParsedImport> {
     let Some(argument) = node.child_by_field_name("argument") else {
         return vec![];
     };
     match argument.kind() {
-        "scoped_identifier" => parse_scoped_identifier(&argument, source)
+        "scoped_identifier" => parse_scoped_identifier(&argument, source, crate_name)
             .into_iter()
             .collect(),
-        "scoped_use_list" => parse_scoped_use_list(&argument, source),
-        "use_wildcard" => parse_use_wildcard(&argument, source).into_iter().collect(),
-        "use_as_clause" => parse_use_as_clause(&argument, source).into_iter().collect(),
+        "scoped_use_list" => parse_scoped_use_list(&argument, source, crate_name),
+        "use_wildcard" => parse_use_wildcard(&argument, source, crate_name)
+            .into_iter()
+            .collect(),
+        "use_as_clause" => parse_use_as_clause(&argument, source, crate_name)
+            .into_iter()
+            .collect(),
         _ => vec![],
     }
 }
@@ -210,7 +241,7 @@ fn extract_rust_impl_name(node: &Node, source: &str) -> Option<String> {
     }
 }
 
-pub(super) fn chunk_rust(source: &str) -> FileChunks {
+pub(super) fn chunk_rust(source: &str, crate_name: Option<&str>) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_rust::LANGUAGE.into()) else {
         return FileChunks::chunks_only(chunk_fallback(source));
     };
@@ -228,8 +259,19 @@ pub(super) fn chunk_rust(source: &str) -> FileChunks {
         match node.kind() {
             "use_declaration" => {
                 imports.push(source[node.byte_range()].to_owned());
-                parsed_imports.extend(parse_rust_use(&node, source));
+                parsed_imports.extend(parse_rust_use(&node, source, crate_name));
                 pending_comments.clear();
+            }
+            "mod_item" => {
+                if let Some(import) = parse_mod_decl(&node, source) {
+                    parsed_imports.push(import);
+                    pending_comments.clear();
+                } else if let Some(mut chunk) = classify_rust_node(&node, source) {
+                    attach_pending_comments(&mut chunk, &mut pending_comments, source);
+                    chunks.push(chunk);
+                } else {
+                    pending_comments.clear();
+                }
             }
             "line_comment" | "block_comment" => {
                 pending_comments.push(node);

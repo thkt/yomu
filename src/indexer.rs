@@ -167,9 +167,13 @@ fn check_file(
     }))
 }
 
-fn prepare_chunks(checked: CheckedFile, file_path: &Path) -> Option<PendingFile> {
+fn prepare_chunks(
+    checked: CheckedFile,
+    file_path: &Path,
+    crate_name: Option<&str>,
+) -> Option<PendingFile> {
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let file_chunks = chunker::chunk_file(&checked.source, ext);
+    let file_chunks = chunker::chunk_file_with_crate_name(&checked.source, ext, crate_name);
     if file_chunks.chunks.is_empty() {
         tracing::debug!(file = %checked.rel_path, "Skipped (no chunks)");
         return None;
@@ -212,7 +216,7 @@ fn process_file(
         CheckResult::Skip => return Ok(FileOutcome::Skipped),
         CheckResult::Error => return Ok(FileOutcome::Errored),
     };
-    let Some(pf) = prepare_chunks(checked, file_path) else {
+    let Some(pf) = prepare_chunks(checked, file_path, rust_resolver.crate_name()) else {
         return Ok(FileOutcome::Skipped);
     };
     let n = pf.raw_chunks.len() as u32;
@@ -246,6 +250,7 @@ fn collect_pending_files(
     root: &Path,
     files: &[PathBuf],
     force: bool,
+    crate_name: Option<&str>,
 ) -> Result<CollectResult, IndexError> {
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut files_skipped = 0u32;
@@ -269,7 +274,7 @@ fn collect_pending_files(
                 }
             }
         };
-        match prepare_chunks(checked, file_path) {
+        match prepare_chunks(checked, file_path, crate_name) {
             Some(pf) => pending.push(pf),
             None => {
                 files_skipped += 1;
@@ -315,7 +320,49 @@ fn import_kind_to_ref_kind(kind: &chunker::ImportKind) -> RefKind {
         chunker::ImportKind::Default => RefKind::Default,
         chunker::ImportKind::Namespace => RefKind::Namespace,
         chunker::ImportKind::TypeOnly => RefKind::TypeOnly,
+        chunker::ImportKind::ModDecl => RefKind::ModDecl,
     }
+}
+
+fn resolve_target(
+    import: &ParsedImport,
+    source_path: &str,
+    resolver: &impl Resolve,
+) -> Option<String> {
+    let is_mod_decl = import
+        .specifiers
+        .first()
+        .is_some_and(|s| s.kind == chunker::ImportKind::ModDecl);
+    if is_mod_decl {
+        resolver.resolve_mod_decl(&import.source, source_path)
+    } else {
+        resolver.resolve(&import.source, source_path)
+    }
+}
+
+fn import_to_references(
+    import: &ParsedImport,
+    source_path: &str,
+    target: String,
+) -> Vec<Reference> {
+    if import.specifiers.is_empty() {
+        return vec![Reference {
+            source_file: source_path.to_owned(),
+            target_file: target,
+            symbol_name: None,
+            ref_kind: RefKind::SideEffect,
+        }];
+    }
+    import
+        .specifiers
+        .iter()
+        .map(|s| Reference {
+            source_file: source_path.to_owned(),
+            target_file: target.clone(),
+            symbol_name: Some(s.name.clone()),
+            ref_kind: import_kind_to_ref_kind(&s.kind),
+        })
+        .collect()
 }
 
 fn build_references(
@@ -326,28 +373,8 @@ fn build_references(
     imports
         .iter()
         .filter_map(|import| {
-            let target = resolver.resolve(&import.source, source_path)?;
-            if import.specifiers.is_empty() {
-                Some(vec![Reference {
-                    source_file: source_path.to_owned(),
-                    target_file: target,
-                    symbol_name: None,
-                    ref_kind: RefKind::SideEffect,
-                }])
-            } else {
-                Some(
-                    import
-                        .specifiers
-                        .iter()
-                        .map(|s| Reference {
-                            source_file: source_path.to_owned(),
-                            target_file: target.clone(),
-                            symbol_name: Some(s.name.clone()),
-                            ref_kind: import_kind_to_ref_kind(&s.kind),
-                        })
-                        .collect(),
-                )
-            }
+            let target = resolve_target(import, source_path, resolver)?;
+            Some(import_to_references(import, source_path, target))
         })
         .flatten()
         .collect()
@@ -496,14 +523,14 @@ pub fn run_index(
     }
     tracing::info!(file_count = files.len(), force, "Starting indexing");
 
-    let collected = collect_pending_files(conn, root, &files, force)?;
+    let resolver = Resolver::new(root);
+    let rust_resolver = RustResolver::new(root);
+
+    let collected = collect_pending_files(conn, root, &files, force, rust_resolver.crate_name())?;
     let files_skipped = collected.files_skipped;
     let mut files_errored = collected.files_errored;
 
     remove_orphans(conn, &collected.rel_paths)?;
-
-    let resolver = Resolver::new(root);
-    let rust_resolver = RustResolver::new(root);
     let embed_result =
         embed_and_store(conn, embedder, collected.pending, &resolver, &rust_resolver)?;
     let files_processed = embed_result.files_processed;

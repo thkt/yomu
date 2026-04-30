@@ -13,6 +13,7 @@ use amici::model::{ModelLoad, download_and_verify_model};
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
+use crate::brief;
 use crate::config;
 use crate::indexer;
 use crate::query::{self, QueryError};
@@ -36,6 +37,7 @@ const MAX_QUERY_LENGTH: usize = 2000;
 pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
+const BRIEF_MAX_INFERRED_SEEDS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum IndexState {
@@ -518,6 +520,74 @@ impl Yomu {
             Some(r) => Ok(format_embed_result(&r, json)),
             None => Ok(format_embed_result(&indexer::EmbedResult::default(), json)),
         }
+    }
+
+    fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> Result<Vec<String>, DegradedReason> {
+        let embedder = self.try_embedder_arc()?;
+        let task_emb = embedder
+            .embed_query(task)
+            .map_err(|_| DegradedReason::ProbeFailed)?;
+        let conn = self
+            .conn
+            .lock()
+            .expect("brief seed inference: lock poisoned");
+        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[])
+            .map_err(|_| DegradedReason::ProbeFailed)?;
+        drop(conn);
+
+        let cap = max_seeds as usize;
+        let mut paths = Vec::with_capacity(cap);
+        let mut seen = HashSet::new();
+        for r in results {
+            if !seen.insert(r.chunk.file_path.clone()) {
+                continue;
+            }
+            paths.push(r.chunk.file_path);
+            if paths.len() >= cap {
+                break;
+            }
+        }
+        Ok(paths)
+    }
+
+    pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
+        if task.task.trim().is_empty() {
+            return Err(YomuError::InvalidInput("task must not be empty".into()));
+        }
+        if task
+            .seeds
+            .iter()
+            .any(|s| matches!(s.kind, brief::SeedKind::Symbol))
+        {
+            return Err(YomuError::InvalidInput(
+                "--seed-symbol is not yet implemented; use --seed-file".into(),
+            ));
+        }
+
+        let mut effective = task.clone();
+        let mut degraded = false;
+        if effective.seeds.is_empty() {
+            match self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS) {
+                Ok(paths) => {
+                    effective.seeds = paths
+                        .into_iter()
+                        .map(|value| brief::Seed {
+                            kind: brief::SeedKind::File,
+                            value,
+                        })
+                        .collect();
+                }
+                Err(_) => degraded = true,
+            }
+        }
+
+        let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
+        output.degraded |= degraded;
+        Ok(if json {
+            brief::render_json(&output)
+        } else {
+            brief::render_plain(&output)
+        })
     }
 }
 

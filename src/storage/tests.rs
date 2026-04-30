@@ -864,6 +864,107 @@ fn get_transitive_dependents_circular() {
     );
 }
 
+// T-572: get_transitive_dependencies_chain
+#[test]
+fn get_transitive_dependencies_chain() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/C.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/C.tsx",
+        &[Reference {
+            source_file: "src/C.tsx".into(),
+            target_file: "src/D.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies(&conn, "src/A.tsx", 2).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/A.tsx".into(),
+                depth: 0
+            },
+            Dependent {
+                file_path: "src/B.tsx".into(),
+                depth: 1
+            },
+            Dependent {
+                file_path: "src/C.tsx".into(),
+                depth: 2
+            },
+        ]
+    );
+}
+
+// T-573: get_transitive_dependencies_circular
+#[test]
+fn get_transitive_dependencies_circular() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/A.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies(&conn, "src/A.tsx", 10).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/A.tsx".into(),
+                depth: 0
+            },
+            Dependent {
+                file_path: "src/B.tsx".into(),
+                depth: 1
+            },
+        ]
+    );
+}
+
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")
@@ -3112,6 +3213,89 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
 
     let rows = get_chunks_for_from_target(&conn, "src/x.rs", Some("baz")).unwrap();
     assert!(rows.is_empty());
+}
+
+// T-574: get_chunks_for_files_returns_all_chunks_sorted
+#[test]
+fn get_chunks_for_files_returns_all_chunks_sorted() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    let new_chunk = |name: &'static str, start: u32| NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some(name),
+        content: "fn body() {}",
+        start_line: start,
+        end_line: start + 2,
+        parent_index: None,
+    };
+
+    insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_chunk("a1", 10),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_chunk("a2", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/b.rs",
+        &new_chunk("b1", 5),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/c.rs",
+        &new_chunk("c1", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/skip.rs",
+        &new_chunk("skip", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let chunks = get_chunks_for_files(&conn, &["src/a.rs", "src/b.rs", "src/c.rs"]).unwrap();
+
+    assert_eq!(chunks.len(), 4, "src/skip.rs must not be included");
+    assert!(
+        chunks.iter().all(|c| !c.content.is_empty()),
+        "every chunk must include body content"
+    );
+    let order: Vec<(&str, u32)> = chunks
+        .iter()
+        .map(|c| (c.file_path.as_str(), c.start_line))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            ("src/a.rs", 1),
+            ("src/a.rs", 10),
+            ("src/b.rs", 5),
+            ("src/c.rs", 1),
+        ]
+    );
 }
 
 // T-541: get_sub_embeddings_for_chunks returns correct byte length

@@ -1355,3 +1355,68 @@ fn non_component_no_subchunks() {
         );
     }
 }
+
+// T-573 [Spec T-001]: chunk_rust_emits_pub_mod_declarations
+//
+// FR-001: pub mod / mod declarations must produce ParsedImport entries with
+// source = the module name (no `crate::` / `self::` prefix). This test
+// expects two entries (foo, bar) from a file that mixes pub mod and a fn.
+#[test]
+fn chunk_rust_emits_pub_mod_declarations() {
+    let source = "pub mod foo;\npub mod bar;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    let sources: Vec<&str> = result
+        .parsed_imports
+        .iter()
+        .map(|p| p.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"foo"),
+        "expected source=foo in parsed_imports, got: {sources:?}"
+    );
+    assert!(
+        sources.contains(&"bar"),
+        "expected source=bar in parsed_imports, got: {sources:?}"
+    );
+}
+
+// T-574 [Spec T-001]: chunk_rust_emits_private_mod_declarations
+//
+// FR-001: bare `mod xxx;` (without `pub`) must also produce a ParsedImport.
+// This guards the common `mod tests;` case used inside library files.
+#[test]
+fn chunk_rust_emits_private_mod_declarations() {
+    let source = "mod tests;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(
+        result.parsed_imports.iter().any(|p| p.source == "tests"),
+        "expected source=tests in parsed_imports, got: {:?}",
+        result
+            .parsed_imports
+            .iter()
+            .map(|p| p.source.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+// T-575: chunk_rust_treats_crate_name_prefix_as_internal
+#[test]
+fn chunk_rust_treats_crate_name_prefix_as_internal() {
+    let source = "use myapp::foo::Bar;\nfn run() {}";
+    let with_name = chunk_file_with_crate_name(source, "rs", Some("myapp"));
+    assert_eq!(
+        with_name.parsed_imports.len(),
+        1,
+        "expected 1 internal ParsedImport when crate_name matches, got: {:?}",
+        with_name.parsed_imports
+    );
+    assert_eq!(with_name.parsed_imports[0].source, "myapp::foo");
+    assert_eq!(with_name.parsed_imports[0].specifiers[0].name, "Bar");
+
+    let without_name = chunk_file(source, "rs");
+    assert!(
+        without_name.parsed_imports.is_empty(),
+        "expected no parsed_imports when crate_name is None, got: {:?}",
+        without_name.parsed_imports
+    );
+}

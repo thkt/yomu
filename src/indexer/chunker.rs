@@ -15,6 +15,10 @@ pub enum ImportKind {
     Default,
     Namespace,
     TypeOnly,
+    /// `mod foo;` declaration. `ParsedImport.source` carries the bare module
+    /// name (`"foo"`) without `crate::` / `self::` prefix; the resolver applies
+    /// sibling-module probing under the declaring file's module path.
+    ModDecl,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,10 +71,18 @@ impl FileChunks {
 }
 
 pub fn chunk_file(source: &str, extension: &str) -> FileChunks {
+    chunk_file_with_crate_name(source, extension, None)
+}
+
+pub fn chunk_file_with_crate_name(
+    source: &str,
+    extension: &str,
+    crate_name: Option<&str>,
+) -> FileChunks {
     match extension {
         "tsx" | "jsx" => ts::chunk_tsx(source),
         "ts" | "js" | "mjs" => ts::chunk_ts(source),
-        "rs" => rust::chunk_rust(source),
+        "rs" => rust::chunk_rust(source, crate_name),
         "css" => FileChunks::chunks_only(css_html::chunk_css(source)),
         "html" => FileChunks::chunks_only(css_html::chunk_html(source)),
         "md" => FileChunks::chunks_only(markdown::chunk_markdown(source)),

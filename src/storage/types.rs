@@ -160,6 +160,7 @@ pub enum RefKind {
     Namespace,
     TypeOnly,
     SideEffect,
+    ModDecl,
 }
 
 impl RefKind {
@@ -170,6 +171,7 @@ impl RefKind {
             Self::Namespace => "namespace",
             Self::TypeOnly => "type_only",
             Self::SideEffect => "side_effect",
+            Self::ModDecl => "mod_decl",
         }
     }
 
@@ -180,6 +182,7 @@ impl RefKind {
             "namespace" => Self::Namespace,
             "type_only" => Self::TypeOnly,
             "side_effect" => Self::SideEffect,
+            "mod_decl" => Self::ModDecl,
             other => {
                 tracing::warn!(
                     ref_kind = other,
