@@ -318,3 +318,54 @@ fn resolve_mod_decl_in_submodule() {
     let result = resolver.resolve_mod_decl("graph", "src/storage.rs");
     assert_eq!(result, Some("src/storage/graph.rs".to_owned()));
 }
+
+// T-337: read_crate_name_normalizes_hyphen_to_underscore
+#[test]
+fn read_crate_name_normalizes_hyphen_to_underscore() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"foo-bar\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let resolver = RustResolver::new(tmp.path());
+    assert_eq!(resolver.crate_name(), Some("foo_bar"));
+}
+
+// T-338: resolve_crate_self_reference_via_package_name
+#[test]
+fn resolve_crate_self_reference_via_package_name() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("foo.rs"), "").unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let resolver = RustResolver::new(tmp.path());
+    let result = resolver.resolve("myapp::foo::Bar", "src/main.rs");
+    assert_eq!(result, Some("src/foo.rs".to_owned()));
+}
+
+// T-339: resolve_without_cargo_toml_falls_through
+#[test]
+fn resolve_without_cargo_toml_falls_through() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("foo.rs"), "").unwrap();
+
+    let resolver = RustResolver::new(tmp.path());
+    assert_eq!(resolver.crate_name(), None);
+    assert_eq!(resolver.resolve("myapp::foo", "src/main.rs"), None);
+    assert_eq!(
+        resolver.resolve("crate::foo", "src/main.rs"),
+        Some("src/foo.rs".to_owned()),
+        "crate:: must keep working when crate_name is None"
+    );
+}

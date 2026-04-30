@@ -1398,3 +1398,25 @@ fn chunk_rust_emits_private_mod_declarations() {
             .collect::<Vec<_>>()
     );
 }
+
+// T-575: chunk_rust_treats_crate_name_prefix_as_internal
+#[test]
+fn chunk_rust_treats_crate_name_prefix_as_internal() {
+    let source = "use myapp::foo::Bar;\nfn run() {}";
+    let with_name = chunk_file_with_crate_name(source, "rs", Some("myapp"));
+    assert_eq!(
+        with_name.parsed_imports.len(),
+        1,
+        "expected 1 internal ParsedImport when crate_name matches, got: {:?}",
+        with_name.parsed_imports
+    );
+    assert_eq!(with_name.parsed_imports[0].source, "myapp::foo");
+    assert_eq!(with_name.parsed_imports[0].specifiers[0].name, "Bar");
+
+    let without_name = chunk_file(source, "rs");
+    assert!(
+        without_name.parsed_imports.is_empty(),
+        "expected no parsed_imports when crate_name is None, got: {:?}",
+        without_name.parsed_imports
+    );
+}
