@@ -249,6 +249,26 @@ Other files fall back to character-based chunking with overlap.
 | Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
 | Embedding opt-out         | Pass `--no-embed` to `yomu search`, or set `YOMU_EMBED=0`; `search` falls back to text-only mode |
 
+## Development
+
+### Setup
+
+Run once after cloning:
+
+```sh
+git config --local core.hooksPath .githooks
+```
+
+This installs a pre-commit hook that runs `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` before each commit. Violations abort the commit. To skip for one commit: `git commit --no-verify`.
+
+### Common commands
+
+```sh
+cargo test                                                # all tests
+cargo clippy --all-targets --all-features -- -D warnings  # lint (matches CI)
+cargo fmt -- --check                                      # format check
+```
+
 ## Architecture
 
 ```text
