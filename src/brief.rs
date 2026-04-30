@@ -283,11 +283,15 @@ pub fn render_json(output: &BriefOutput) -> String {
     serde_json::to_string(&json).expect("BriefOutput JSON serialization is infallible")
 }
 
-/// Plain CLI rendering (FR-011): each chunk becomes
+const DEGRADED_NOTE: &str = "Note: degraded mode — FTS-only seed selection";
+
+/// Plain CLI rendering (FR-011 + FR-014): each chunk becomes
 /// `<file_path>:<start_line>-<end_line>\n<content>`, separated by `\n---\n`.
-/// Empty BriefOutput renders to an empty string.
+/// When `output.degraded` is true, prepends an advisory line so the caller
+/// knows seed selection fell back to FTS-only. Empty + non-degraded renders
+/// to an empty string.
 pub fn render_plain(output: &BriefOutput) -> String {
-    output
+    let body = output
         .chunks
         .iter()
         .map(|c| {
@@ -297,7 +301,12 @@ pub fn render_plain(output: &BriefOutput) -> String {
             )
         })
         .collect::<Vec<_>>()
-        .join("\n---\n")
+        .join("\n---\n");
+    match (output.degraded, body.is_empty()) {
+        (true, true) => DEGRADED_NOTE.to_owned(),
+        (true, false) => format!("{DEGRADED_NOTE}\n{body}"),
+        (false, _) => body,
+    }
 }
 
 #[allow(clippy::cast_possible_truncation)]

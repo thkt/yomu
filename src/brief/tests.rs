@@ -195,6 +195,48 @@ fn render_plain_returns_empty_string_for_empty_output() {
     assert_eq!(render_plain(&output), "");
 }
 
+// T-606: render_plain_prepends_degraded_note [Spec FR-014]
+#[test]
+fn render_plain_prepends_degraded_note() {
+    let output = BriefOutput {
+        chunks: vec![BriefChunk {
+            file_path: "src/foo.rs".to_owned(),
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::RustFn,
+            content: "fn foo() {}".to_owned(),
+            included_reason: ChunkInclusionReason::Seed,
+        }],
+        degraded: true,
+        total_chunks: 1,
+        total_bytes: 11,
+    };
+    let rendered = render_plain(&output);
+    assert!(
+        rendered.starts_with("Note: degraded mode — FTS-only seed selection\n"),
+        "expected degraded note prefix, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("src/foo.rs:1-3\nfn foo() {}"),
+        "chunk body must follow the note, got: {rendered}"
+    );
+}
+
+// T-607: render_plain_empty_degraded_returns_only_note
+#[test]
+fn render_plain_empty_degraded_returns_only_note() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded: true,
+        total_chunks: 0,
+        total_bytes: 0,
+    };
+    assert_eq!(
+        render_plain(&output),
+        "Note: degraded mode — FTS-only seed selection"
+    );
+}
+
 // T-602: topo_sort_orders_dependencies_first
 #[test]
 fn topo_sort_orders_dependencies_first() {
