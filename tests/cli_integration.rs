@@ -7,6 +7,47 @@ fn yomu_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_yomu"))
 }
 
+fn setup_brief_chain_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("lib.rs"), "pub mod a;\npub mod b;\npub mod c;\n").unwrap();
+    fs::write(
+        src.join("a.rs"),
+        "use crate::b;\npub fn run() { b::work(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("b.rs"),
+        "use crate::c;\npub fn work() { c::utility(); }\n",
+    )
+    .unwrap();
+    fs::write(src.join("c.rs"), "pub fn utility() {}\n").unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"gt_chain\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
 // T-495: version_flag
 #[test]
 fn version_flag() {
@@ -945,5 +986,92 @@ fn search_no_embed_flag_marks_json_degraded() {
     assert!(
         parsed["results"].as_array().is_some_and(|r| !r.is_empty()),
         "should still return FTS5 results: {stdout}"
+    );
+}
+
+// T-610: brief_integration_includes_forward_closure [Spec FR-015 minimal GT]
+#[test]
+fn brief_integration_includes_forward_closure() {
+    let dir = setup_brief_chain_project();
+    let output = yomu_cmd()
+        .args([
+            "brief",
+            "find utility",
+            "--seed-file",
+            "src/a.rs",
+            "--depth",
+            "2",
+            "--no-embed",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "brief failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in ["src/a.rs", "src/b.rs", "src/c.rs"] {
+        assert!(
+            stdout.contains(expected),
+            "forward closure recall: expected {expected} in output, got: {stdout}"
+        );
+    }
+}
+
+// T-611: brief_integration_rejects_empty_task [Spec FR-010b]
+#[test]
+fn brief_integration_rejects_empty_task() {
+    let dir = setup_brief_chain_project();
+    let output = yomu_cmd()
+        .args(["brief", ""])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "empty task must fail, got success with: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "empty task must exit 2, got: {:?} (stderr: {})",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// T-612: brief_integration_json_output_includes_chunks [Spec FR-012]
+#[test]
+fn brief_integration_json_output_includes_chunks() {
+    let dir = setup_brief_chain_project();
+    let output = yomu_cmd()
+        .args([
+            "--json",
+            "brief",
+            "anything",
+            "--seed-file",
+            "src/a.rs",
+            "--no-embed",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "brief --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("expected JSON output, parse error {e}: {stdout}"));
+    assert!(parsed["chunks"].is_array(), "expected .chunks array");
+    assert!(
+        parsed["chunks"].as_array().unwrap().len() >= 1,
+        "expected at least seed chunk, got: {stdout}"
     );
 }
