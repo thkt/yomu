@@ -12,12 +12,6 @@ pub struct Dependent {
     pub depth: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Dependency {
-    pub file_path: String,
-    pub depth: u32,
-}
-
 /// One reference edge from `source_file` to a target file, retaining the
 /// `ref_kind` (named/default/...) and the symbol that triggered it.
 ///
@@ -112,12 +106,13 @@ pub fn get_edges_among_files(
 
 /// Forward closure: files that `seed` transitively depends on, ordered by
 /// distance ascending. `seed` itself is included at depth 0 so brief output
-/// can group seed chunks alongside their forward dependencies.
+/// can group seed chunks alongside their forward dependencies. Reuses
+/// `Dependent` for shape; direction is implicit from the function name.
 pub fn get_transitive_dependencies(
     conn: &Connection,
     seed: &str,
     max_depth: u32,
-) -> Result<Vec<Dependency>, StorageError> {
+) -> Result<Vec<Dependent>, StorageError> {
     let max_depth = max_depth.min(10);
     let mut stmt = conn.prepare_cached(
         "WITH RECURSIVE deps(file_path, depth, visited) AS (
@@ -134,7 +129,7 @@ pub fn get_transitive_dependencies(
         FROM deps GROUP BY file_path ORDER BY depth, file_path",
     )?;
     let rows = stmt.query_map(rusqlite::params![seed, max_depth], |row| {
-        Ok(Dependency {
+        Ok(Dependent {
             file_path: row.get(0)?,
             depth: row.get(1)?,
         })

@@ -906,15 +906,15 @@ fn get_transitive_dependencies_chain() {
     assert_eq!(
         deps,
         vec![
-            Dependency {
+            Dependent {
                 file_path: "src/A.tsx".into(),
                 depth: 0
             },
-            Dependency {
+            Dependent {
                 file_path: "src/B.tsx".into(),
                 depth: 1
             },
-            Dependency {
+            Dependent {
                 file_path: "src/C.tsx".into(),
                 depth: 2
             },
@@ -953,11 +953,11 @@ fn get_transitive_dependencies_circular() {
     assert_eq!(
         deps,
         vec![
-            Dependency {
+            Dependent {
                 file_path: "src/A.tsx".into(),
                 depth: 0
             },
-            Dependency {
+            Dependent {
                 file_path: "src/B.tsx".into(),
                 depth: 1
             },
