@@ -179,6 +179,25 @@ fn parse_use_as_clause(node: &Node, source: &str) -> Option<ParsedImport> {
     }
 }
 
+/// `mod foo;` (body-less) を ParsedImport として返す。
+/// `mod foo { ... }` (body 有) や名前不在の場合は None を返し、
+/// 呼び出し側で通常の chunk 経路に委譲する。
+fn parse_mod_decl(node: &Node, source: &str) -> Option<ParsedImport> {
+    if node.child_by_field_name("body").is_some() {
+        return None;
+    }
+    let name_node = node.child_by_field_name("name")?;
+    let name = source[name_node.byte_range()].to_owned();
+    Some(ParsedImport {
+        source: name.clone(),
+        specifiers: vec![ImportSpecifier {
+            name,
+            alias: None,
+            kind: ImportKind::ModDecl,
+        }],
+    })
+}
+
 fn parse_rust_use(node: &Node, source: &str) -> Vec<ParsedImport> {
     let Some(argument) = node.child_by_field_name("argument") else {
         return vec![];
@@ -230,6 +249,17 @@ pub(super) fn chunk_rust(source: &str) -> FileChunks {
                 imports.push(source[node.byte_range()].to_owned());
                 parsed_imports.extend(parse_rust_use(&node, source));
                 pending_comments.clear();
+            }
+            "mod_item" => {
+                if let Some(import) = parse_mod_decl(&node, source) {
+                    parsed_imports.push(import);
+                    pending_comments.clear();
+                } else if let Some(mut chunk) = classify_rust_node(&node, source) {
+                    attach_pending_comments(&mut chunk, &mut pending_comments, source);
+                    chunks.push(chunk);
+                } else {
+                    pending_comments.clear();
+                }
             }
             "line_comment" | "block_comment" => {
                 pending_comments.push(node);

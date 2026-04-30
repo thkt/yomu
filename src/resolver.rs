@@ -135,6 +135,9 @@ impl Resolver {
 
 pub trait Resolve {
     fn resolve(&self, source: &str, from_file: &str) -> Option<String>;
+    fn resolve_mod_decl(&self, _name: &str, _from_file: &str) -> Option<String> {
+        None
+    }
 }
 
 impl Resolve for Resolver {

@@ -15,6 +15,10 @@ pub enum ImportKind {
     Default,
     Namespace,
     TypeOnly,
+    /// `mod foo;` declaration. `ParsedImport.source` carries the bare module
+    /// name (`"foo"`) without `crate::` / `self::` prefix; the resolver applies
+    /// sibling-module probing under the declaring file's module path.
+    ModDecl,
 }
 
 #[derive(Debug, Clone, PartialEq)]

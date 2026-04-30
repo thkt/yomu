@@ -1355,3 +1355,46 @@ fn non_component_no_subchunks() {
         );
     }
 }
+
+// T-573 [Spec T-001]: chunk_rust_emits_pub_mod_declarations
+//
+// FR-001: pub mod / mod declarations must produce ParsedImport entries with
+// source = the module name (no `crate::` / `self::` prefix). This test
+// expects two entries (foo, bar) from a file that mixes pub mod and a fn.
+#[test]
+fn chunk_rust_emits_pub_mod_declarations() {
+    let source = "pub mod foo;\npub mod bar;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    let sources: Vec<&str> = result
+        .parsed_imports
+        .iter()
+        .map(|p| p.source.as_str())
+        .collect();
+    assert!(
+        sources.contains(&"foo"),
+        "expected source=foo in parsed_imports, got: {sources:?}"
+    );
+    assert!(
+        sources.contains(&"bar"),
+        "expected source=bar in parsed_imports, got: {sources:?}"
+    );
+}
+
+// T-574 [Spec T-001]: chunk_rust_emits_private_mod_declarations
+//
+// FR-001: bare `mod xxx;` (without `pub`) must also produce a ParsedImport.
+// This guards the common `mod tests;` case used inside library files.
+#[test]
+fn chunk_rust_emits_private_mod_declarations() {
+    let source = "mod tests;\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(
+        result.parsed_imports.iter().any(|p| p.source == "tests"),
+        "expected source=tests in parsed_imports, got: {:?}",
+        result
+            .parsed_imports
+            .iter()
+            .map(|p| p.source.as_str())
+            .collect::<Vec<_>>()
+    );
+}

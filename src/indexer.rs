@@ -315,7 +315,49 @@ fn import_kind_to_ref_kind(kind: &chunker::ImportKind) -> RefKind {
         chunker::ImportKind::Default => RefKind::Default,
         chunker::ImportKind::Namespace => RefKind::Namespace,
         chunker::ImportKind::TypeOnly => RefKind::TypeOnly,
+        chunker::ImportKind::ModDecl => RefKind::ModDecl,
     }
+}
+
+fn resolve_target(
+    import: &ParsedImport,
+    source_path: &str,
+    resolver: &impl Resolve,
+) -> Option<String> {
+    let is_mod_decl = import
+        .specifiers
+        .first()
+        .is_some_and(|s| s.kind == chunker::ImportKind::ModDecl);
+    if is_mod_decl {
+        resolver.resolve_mod_decl(&import.source, source_path)
+    } else {
+        resolver.resolve(&import.source, source_path)
+    }
+}
+
+fn import_to_references(
+    import: &ParsedImport,
+    source_path: &str,
+    target: String,
+) -> Vec<Reference> {
+    if import.specifiers.is_empty() {
+        return vec![Reference {
+            source_file: source_path.to_owned(),
+            target_file: target,
+            symbol_name: None,
+            ref_kind: RefKind::SideEffect,
+        }];
+    }
+    import
+        .specifiers
+        .iter()
+        .map(|s| Reference {
+            source_file: source_path.to_owned(),
+            target_file: target.clone(),
+            symbol_name: Some(s.name.clone()),
+            ref_kind: import_kind_to_ref_kind(&s.kind),
+        })
+        .collect()
 }
 
 fn build_references(
@@ -326,28 +368,8 @@ fn build_references(
     imports
         .iter()
         .filter_map(|import| {
-            let target = resolver.resolve(&import.source, source_path)?;
-            if import.specifiers.is_empty() {
-                Some(vec![Reference {
-                    source_file: source_path.to_owned(),
-                    target_file: target,
-                    symbol_name: None,
-                    ref_kind: RefKind::SideEffect,
-                }])
-            } else {
-                Some(
-                    import
-                        .specifiers
-                        .iter()
-                        .map(|s| Reference {
-                            source_file: source_path.to_owned(),
-                            target_file: target.clone(),
-                            symbol_name: Some(s.name.clone()),
-                            ref_kind: import_kind_to_ref_kind(&s.kind),
-                        })
-                        .collect(),
-                )
-            }
+            let target = resolve_target(import, source_path, resolver)?;
+            Some(import_to_references(import, source_path, target))
         })
         .flatten()
         .collect()
