@@ -49,6 +49,57 @@ fn insert_test_chunk(conn: &Connection, file_path: &str, name: &'static str, sta
     .unwrap();
 }
 
+fn make_brief_chunk(file_path: &str, content: &str) -> BriefChunk {
+    BriefChunk {
+        file_path: file_path.to_owned(),
+        start_line: 1,
+        end_line: 3,
+        chunk_type: ChunkType::RustFn,
+        content: content.to_owned(),
+        included_reason: ChunkInclusionReason::Forward(1),
+    }
+}
+
+// T-601: apply_cap_drops_high_depth_low_incoming_first
+#[test]
+fn apply_cap_drops_high_depth_low_incoming_first() {
+    let chunks = vec![
+        make_brief_chunk("src/a.rs", "a"),
+        make_brief_chunk("src/b.rs", "b"),
+        make_brief_chunk("src/c.rs", "c"),
+        make_brief_chunk("src/d.rs", "d"),
+    ];
+    let depth_by_path: std::collections::HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 0),
+        ("src/b.rs".to_owned(), 1),
+        ("src/c.rs".to_owned(), 1),
+        ("src/d.rs".to_owned(), 2),
+    ]
+    .into_iter()
+    .collect();
+    let incoming_counts: std::collections::HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 10),
+        ("src/b.rs".to_owned(), 5),
+        ("src/c.rs".to_owned(), 2),
+        ("src/d.rs".to_owned(), 1),
+    ]
+    .into_iter()
+    .collect();
+
+    let kept = apply_cap(chunks, &depth_by_path, &incoming_counts, 2, u32::MAX);
+
+    assert_eq!(kept.len(), 2);
+    let kept_paths: Vec<&str> = kept.iter().map(|c| c.file_path.as_str()).collect();
+    assert!(
+        kept_paths.contains(&"src/a.rs"),
+        "seed (depth=0) must survive cap, got: {kept_paths:?}"
+    );
+    assert!(
+        kept_paths.contains(&"src/b.rs"),
+        "depth=1 incoming=5 must survive over depth=1 incoming=2, got: {kept_paths:?}"
+    );
+}
+
 // T-600: expand_plan_returns_seed_and_forward_chunks
 #[test]
 fn expand_plan_returns_seed_and_forward_chunks() {
