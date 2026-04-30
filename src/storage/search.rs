@@ -240,6 +240,24 @@ pub fn get_chunks_by_ids(
         .map_err(Into::into)
 }
 
+/// Bulk-fetch every Chunk (with body content) belonging to the given files.
+/// Output is sorted by `(file_path, start_line)` so brief expansion can apply
+/// topological ordering on top without an extra sort pass.
+pub fn get_chunks_for_files(conn: &Connection, paths: &[&str]) -> Result<Vec<Chunk>, StorageError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = in_placeholders(paths.len());
+    let sql = format!(
+        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
+         FROM chunks WHERE file_path IN ({placeholders})
+         ORDER BY file_path, start_line"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(paths.iter()), |row| chunk_from_row(row, 0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
 pub fn get_keyword_doc_frequencies(
     conn: &Connection,
     keywords: &[&str],

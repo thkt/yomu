@@ -3215,6 +3215,89 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
     assert!(rows.is_empty());
 }
 
+// T-574: get_chunks_for_files_returns_all_chunks_sorted
+#[test]
+fn get_chunks_for_files_returns_all_chunks_sorted() {
+    let (conn, _dir) = test_db();
+    let emb = vec![0.0_f32; EMBEDDING_DIMS];
+
+    let new_chunk = |name: &'static str, start: u32| NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some(name),
+        content: "fn body() {}",
+        start_line: start,
+        end_line: start + 2,
+        parent_index: None,
+    };
+
+    insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_chunk("a1", 10),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_chunk("a2", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/b.rs",
+        &new_chunk("b1", 5),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/c.rs",
+        &new_chunk("c1", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    insert_chunk(
+        &conn,
+        "src/skip.rs",
+        &new_chunk("skip", 1),
+        "h",
+        &ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+
+    let chunks = get_chunks_for_files(&conn, &["src/a.rs", "src/b.rs", "src/c.rs"]).unwrap();
+
+    assert_eq!(chunks.len(), 4, "src/skip.rs must not be included");
+    assert!(
+        chunks.iter().all(|c| !c.content.is_empty()),
+        "every chunk must include body content"
+    );
+    let order: Vec<(&str, u32)> = chunks
+        .iter()
+        .map(|c| (c.file_path.as_str(), c.start_line))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            ("src/a.rs", 1),
+            ("src/a.rs", 10),
+            ("src/b.rs", 5),
+            ("src/c.rs", 1),
+        ]
+    );
+}
+
 // T-541: get_sub_embeddings_for_chunks returns correct byte length
 #[allow(clippy::cast_possible_truncation)]
 #[test]
