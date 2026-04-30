@@ -2464,3 +2464,111 @@ fn search_from_json_output_has_results_key() {
         "expected 'results' to be an array, got: {json}"
     );
 }
+
+fn seed_brief_chunks(conn: &storage::Db) {
+    let emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
+    let new_chunk = |name: &'static str, start: u32| storage::NewChunk {
+        chunk_type: &storage::ChunkType::RustFn,
+        name: Some(name),
+        content: "fn body() {}",
+        start_line: start,
+        end_line: start + 2,
+        parent_index: None,
+    };
+    storage::insert_chunk(
+        conn,
+        "src/a.rs",
+        &new_chunk("a", 1),
+        "h",
+        &storage::ce(emb.clone()),
+        None,
+    )
+    .unwrap();
+    storage::insert_chunk(
+        conn,
+        "src/b.rs",
+        &new_chunk("b", 1),
+        "h",
+        &storage::ce(emb),
+        None,
+    )
+    .unwrap();
+    storage::replace_file_references(
+        conn,
+        "src/a.rs",
+        &[storage::Reference {
+            source_file: "src/a.rs".into(),
+            target_file: "src/b.rs".into(),
+            symbol_name: None,
+            ref_kind: storage::RefKind::Named,
+        }],
+    )
+    .unwrap();
+}
+
+fn brief_task(seed_file: &str) -> brief::TaskBrief {
+    brief::TaskBrief {
+        task: "find body".to_owned(),
+        seeds: vec![brief::Seed {
+            kind: brief::SeedKind::File,
+            value: seed_file.to_owned(),
+        }],
+        depth: 1,
+        max_chunks: 80,
+        max_bytes: 80_000,
+    }
+}
+
+// T-568: yomu_brief_returns_plain_format
+#[test]
+fn yomu_brief_returns_plain_format() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let output = yomu.brief(&brief_task("src/a.rs"), false).unwrap();
+
+    assert!(
+        output.contains("src/a.rs:1-3"),
+        "expected header for src/a.rs, got: {output}"
+    );
+    assert!(
+        output.contains("src/b.rs:1-3"),
+        "expected header for src/b.rs, got: {output}"
+    );
+    assert!(
+        output.contains("\n---\n"),
+        "expected chunk separator, got: {output}"
+    );
+}
+
+// T-569: yomu_brief_with_json_returns_valid_json
+#[test]
+fn yomu_brief_with_json_returns_valid_json() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let output = yomu.brief(&brief_task("src/a.rs"), true).unwrap();
+    let parsed = parse_json(&output);
+
+    assert_eq!(parsed["degraded"], false);
+    assert!(parsed["chunks"].is_array());
+    assert!(
+        parsed["chunks"].as_array().unwrap().len() >= 2,
+        "expected at least seed + forward chunks, got: {output}"
+    );
+}
+
+// T-570: yomu_brief_rejects_empty_task [Spec FR-010b prep]
+#[test]
+fn yomu_brief_rejects_empty_task() {
+    let (yomu, _dir) = test_yomu();
+    let mut task = brief_task("src/a.rs");
+    task.task = "   ".to_owned();
+    let err = yomu.brief(&task, false).unwrap_err();
+    assert!(
+        matches!(err, YomuError::InvalidInput(_)),
+        "expected InvalidInput, got: {err:?}"
+    );
+}

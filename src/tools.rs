@@ -13,6 +13,7 @@ use amici::model::{ModelLoad, download_and_verify_model};
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
+use crate::brief;
 use crate::config;
 use crate::indexer;
 use crate::query::{self, QueryError};
@@ -518,6 +519,18 @@ impl Yomu {
             Some(r) => Ok(format_embed_result(&r, json)),
             None => Ok(format_embed_result(&indexer::EmbedResult::default(), json)),
         }
+    }
+
+    pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
+        if task.task.trim().is_empty() {
+            return Err(YomuError::InvalidInput("task must not be empty".into()));
+        }
+        let output = self.with_db(|conn| brief::expand_plan(conn, task))?;
+        Ok(if json {
+            brief::render_json(&output)
+        } else {
+            brief::render_plain(&output)
+        })
     }
 }
 
