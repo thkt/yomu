@@ -554,6 +554,15 @@ impl Yomu {
         if task.task.trim().is_empty() {
             return Err(YomuError::InvalidInput("task must not be empty".into()));
         }
+        if task
+            .seeds
+            .iter()
+            .any(|s| matches!(s.kind, brief::SeedKind::Symbol))
+        {
+            return Err(YomuError::InvalidInput(
+                "--seed-symbol is not yet implemented; use --seed-file".into(),
+            ));
+        }
 
         let mut effective = task.clone();
         let mut degraded = false;
@@ -573,7 +582,7 @@ impl Yomu {
         }
 
         let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
-        output.degraded = degraded;
+        output.degraded |= degraded;
         Ok(if json {
             brief::render_json(&output)
         } else {

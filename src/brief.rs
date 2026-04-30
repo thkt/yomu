@@ -110,7 +110,14 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
     chunks
         .into_iter()
         .map(|c| {
-            let depth = depth_by_path.get(&c.file_path).copied().unwrap_or(0);
+            let depth = depth_by_path.get(&c.file_path).copied().unwrap_or_else(|| {
+                debug_assert!(
+                    false,
+                    "chunk file_path not in depth_by_path: {}",
+                    c.file_path
+                );
+                0
+            });
             BriefChunk {
                 file_path: c.file_path,
                 start_line: c.start_line,
@@ -127,7 +134,8 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
 fn under_cap(chunks: &[BriefChunk], max_chunks: u32, max_bytes: u32) -> bool {
     let count = chunks.len() as u32;
     let bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
-    count <= max_chunks && bytes as u32 <= max_bytes
+    let bytes_capped = u32::try_from(bytes).unwrap_or(u32::MAX);
+    count <= max_chunks && bytes_capped <= max_bytes
 }
 
 fn deletion_priority(
