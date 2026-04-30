@@ -2560,6 +2560,35 @@ fn yomu_brief_with_json_returns_valid_json() {
     );
 }
 
+// T-571: brief_falls_back_to_degraded_when_no_embedder
+#[test]
+fn brief_falls_back_to_degraded_when_no_embedder() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let task = brief::TaskBrief {
+        task: "infer something".to_owned(),
+        seeds: vec![],
+        depth: 1,
+        max_chunks: 80,
+        max_bytes: 80_000,
+    };
+
+    let output = yomu.brief(&task, true).unwrap();
+    let parsed = parse_json(&output);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "no embedder + empty seeds must mark degraded, got: {output}"
+    );
+    assert_eq!(
+        parsed["chunks"].as_array().unwrap().len(),
+        0,
+        "without seeds the closure is empty, got: {output}"
+    );
+}
+
 // T-570: yomu_brief_rejects_empty_task [Spec FR-010b prep]
 #[test]
 fn yomu_brief_rejects_empty_task() {
