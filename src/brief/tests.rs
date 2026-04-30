@@ -100,6 +100,61 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     );
 }
 
+// T-605: render_json_emits_spec_shape
+#[test]
+fn render_json_emits_spec_shape() {
+    let output = BriefOutput {
+        chunks: vec![BriefChunk {
+            file_path: "src/foo.rs".to_owned(),
+            start_line: 10,
+            end_line: 12,
+            chunk_type: ChunkType::RustFn,
+            content: "fn foo() {}".to_owned(),
+            included_reason: ChunkInclusionReason::Forward(2),
+        }],
+        degraded: true,
+        total_chunks: 1,
+        total_bytes: 11,
+    };
+
+    let rendered = render_json(&output);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(parsed["degraded"], true);
+    assert_eq!(parsed["chunks"][0]["file_path"], "src/foo.rs");
+    assert_eq!(parsed["chunks"][0]["start_line"], 10);
+    assert_eq!(parsed["chunks"][0]["end_line"], 12);
+    assert_eq!(parsed["chunks"][0]["chunk_type"], "rust_fn");
+    assert_eq!(parsed["chunks"][0]["content"], "fn foo() {}");
+    assert_eq!(parsed["chunks"][0]["included_reason"], "forward-2");
+}
+
+#[test]
+fn render_json_includes_seed_and_modkinds() {
+    let chunk = |reason: ChunkInclusionReason| BriefChunk {
+        file_path: "x".to_owned(),
+        start_line: 1,
+        end_line: 1,
+        chunk_type: ChunkType::Other,
+        content: "".to_owned(),
+        included_reason: reason,
+    };
+    let output = BriefOutput {
+        chunks: vec![
+            chunk(ChunkInclusionReason::Seed),
+            chunk(ChunkInclusionReason::Sibling),
+            chunk(ChunkInclusionReason::ModDecl),
+        ],
+        degraded: false,
+        total_chunks: 3,
+        total_bytes: 0,
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&render_json(&output)).unwrap();
+    assert_eq!(parsed["chunks"][0]["included_reason"], "seed");
+    assert_eq!(parsed["chunks"][1]["included_reason"], "sibling");
+    assert_eq!(parsed["chunks"][2]["included_reason"], "mod-decl");
+}
+
 // T-604: render_plain_outputs_separator_and_header
 #[test]
 fn render_plain_outputs_separator_and_header() {

@@ -6,6 +6,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use rusqlite::Connection;
+use serde::Serialize;
 
 use crate::storage::{
     Chunk, ChunkType, StorageError, get_chunks_for_files, get_edges_among_files, get_import_counts,
@@ -232,6 +233,54 @@ pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<Bri
         )
     });
     sorted
+}
+
+fn inclusion_reason_str(reason: &ChunkInclusionReason) -> String {
+    match reason {
+        ChunkInclusionReason::Seed => "seed".to_owned(),
+        ChunkInclusionReason::Forward(n) => format!("forward-{n}"),
+        ChunkInclusionReason::Sibling => "sibling".to_owned(),
+        ChunkInclusionReason::ModDecl => "mod-decl".to_owned(),
+    }
+}
+
+#[derive(Serialize)]
+struct JsonOutput<'a> {
+    degraded: bool,
+    chunks: Vec<JsonChunk<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonChunk<'a> {
+    file_path: &'a str,
+    start_line: u32,
+    end_line: u32,
+    chunk_type: &'static str,
+    content: &'a str,
+    included_reason: String,
+}
+
+/// JSON CLI rendering (FR-012): emits
+/// `{"degraded": bool, "chunks": [{"file_path", "start_line", "end_line",
+/// "chunk_type", "content", "included_reason"}]}`. Compact (no pretty),
+/// suitable for `jq` piping.
+pub fn render_json(output: &BriefOutput) -> String {
+    let json = JsonOutput {
+        degraded: output.degraded,
+        chunks: output
+            .chunks
+            .iter()
+            .map(|c| JsonChunk {
+                file_path: &c.file_path,
+                start_line: c.start_line,
+                end_line: c.end_line,
+                chunk_type: c.chunk_type.as_str(),
+                content: &c.content,
+                included_reason: inclusion_reason_str(&c.included_reason),
+            })
+            .collect(),
+    };
+    serde_json::to_string(&json).expect("BriefOutput JSON serialization is infallible")
 }
 
 /// Plain CLI rendering (FR-011): each chunk becomes
