@@ -100,6 +100,46 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     );
 }
 
+// T-604: render_plain_outputs_separator_and_header
+#[test]
+fn render_plain_outputs_separator_and_header() {
+    let chunk = |path: &str, content: &str, start: u32, end: u32| BriefChunk {
+        file_path: path.to_owned(),
+        start_line: start,
+        end_line: end,
+        chunk_type: ChunkType::RustFn,
+        content: content.to_owned(),
+        included_reason: ChunkInclusionReason::Seed,
+    };
+    let output = BriefOutput {
+        chunks: vec![
+            chunk("src/foo.rs", "fn foo() {}", 10, 12),
+            chunk("src/bar.rs", "fn bar() {}", 20, 22),
+        ],
+        degraded: false,
+        total_chunks: 2,
+        total_bytes: 0,
+    };
+
+    let rendered = render_plain(&output);
+
+    assert_eq!(
+        rendered,
+        "src/foo.rs:10-12\nfn foo() {}\n---\nsrc/bar.rs:20-22\nfn bar() {}"
+    );
+}
+
+#[test]
+fn render_plain_returns_empty_string_for_empty_output() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded: false,
+        total_chunks: 0,
+        total_bytes: 0,
+    };
+    assert_eq!(render_plain(&output), "");
+}
+
 // T-602: topo_sort_orders_dependencies_first
 #[test]
 fn topo_sort_orders_dependencies_first() {

@@ -234,6 +234,23 @@ pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<Bri
     sorted
 }
 
+/// Plain CLI rendering (FR-011): each chunk becomes
+/// `<file_path>:<start_line>-<end_line>\n<content>`, separated by `\n---\n`.
+/// Empty BriefOutput renders to an empty string.
+pub fn render_plain(output: &BriefOutput) -> String {
+    output
+        .chunks
+        .iter()
+        .map(|c| {
+            format!(
+                "{}:{}-{}\n{}",
+                c.file_path, c.start_line, c.end_line, c.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+
 #[allow(clippy::cast_possible_truncation)]
 pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, StorageError> {
     let seeds = collect_seed_paths(task);
