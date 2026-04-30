@@ -1,0 +1,21 @@
+#!/bin/sh
+# yomu pre-commit hook: enforce fmt + clippy --all-targets before commit.
+#
+# Install (one-time per clone):
+#   git config --local core.hooksPath .githooks
+#
+# Skip for one commit:
+#   git commit --no-verify
+
+set -e
+
+# Only run when Rust / config / CI files are staged (covers add, modify, delete, rename).
+if git diff --cached --name-only | grep -qE '\.rs$|Cargo\.(toml|lock)$|\.github/'; then
+    echo "▶ pre-commit: cargo fmt -- --check"
+    cargo fmt -- --check
+
+    echo "▶ pre-commit: cargo clippy --all-targets --all-features -- -D warnings"
+    cargo clippy --all-targets --all-features -- -D warnings
+
+    echo "✔ pre-commit checks passed"
+fi
