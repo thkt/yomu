@@ -319,11 +319,7 @@ fn resolve_mod_decl_in_submodule() {
     assert_eq!(result, Some("src/storage/graph.rs".to_owned()));
 }
 
-// T-337 [Spec T-004 / BR-005]: read_crate_name_normalizes_hyphen_to_underscore
-//
-// BR-005: Cargo.toml `name = "foo-bar"` is normalized to `foo_bar` so that
-// `use foo_bar::xxx` (the actual import path Rust generates) matches the
-// crate identifier stored on RustResolver.
+// T-337: read_crate_name_normalizes_hyphen_to_underscore
 #[test]
 fn read_crate_name_normalizes_hyphen_to_underscore() {
     let tmp = tempdir().unwrap();
@@ -338,11 +334,7 @@ fn read_crate_name_normalizes_hyphen_to_underscore() {
     assert_eq!(resolver.crate_name(), Some("foo_bar"));
 }
 
-// T-338 [Spec T-004]: resolve_crate_self_reference_via_package_name
-//
-// FR-004: when Cargo.toml declares `name = "myapp"`, `use myapp::foo::Bar`
-// resolves to src/foo.rs the same way `use crate::foo::Bar` would. Without
-// the package name (no Cargo.toml), the same path returns None (external).
+// T-338: resolve_crate_self_reference_via_package_name
 #[test]
 fn resolve_crate_self_reference_via_package_name() {
     let tmp = tempdir().unwrap();
@@ -360,11 +352,7 @@ fn resolve_crate_self_reference_via_package_name() {
     assert_eq!(result, Some("src/foo.rs".to_owned()));
 }
 
-// T-339 [Spec T-004]: resolve_without_cargo_toml_falls_through
-//
-// FR-004 / AS-002 fallback: when no Cargo.toml is present (workspace-only or
-// missing), crate_name is None and `use myapp::xxx` returns None instead of
-// panicking. Other resolve paths (`crate::`, `self::`) keep working.
+// T-339: resolve_without_cargo_toml_falls_through
 #[test]
 fn resolve_without_cargo_toml_falls_through() {
     let tmp = tempdir().unwrap();

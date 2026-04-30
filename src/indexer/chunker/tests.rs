@@ -1399,11 +1399,7 @@ fn chunk_rust_emits_private_mod_declarations() {
     );
 }
 
-// T-575 [Spec T-004]: chunk_rust_treats_crate_name_prefix_as_internal
-//
-// FR-004: when `crate_name = Some("myapp")` is supplied, `use myapp::foo::Bar;`
-// must be emitted as a ParsedImport (treated as internal). Without crate_name,
-// the same path is dropped as external (regression-guarded by T-469).
+// T-575: chunk_rust_treats_crate_name_prefix_as_internal
 #[test]
 fn chunk_rust_treats_crate_name_prefix_as_internal() {
     let source = "use myapp::foo::Bar;\nfn run() {}";
