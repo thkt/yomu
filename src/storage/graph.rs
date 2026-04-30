@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params_from_iter};
 
 #[cfg(test)]
 use super::Reference;
-use super::{ChunkType, RefKind, StorageError, as_sql_params, in_placeholders};
+use super::{ChunkType, RefKind, StorageError, anon_placeholders, as_sql_params, in_placeholders};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
@@ -82,6 +82,30 @@ pub fn get_transitive_dependents(
             file_path: row.get(0)?,
             depth: row.get(1)?,
         })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Returns every `(source_file, target_file)` edge where both endpoints are
+/// in `paths`. Used by brief topo sort to build a dependency graph
+/// restricted to the in-scope chunk set.
+pub fn get_edges_among_files(
+    conn: &Connection,
+    paths: &[&str],
+) -> Result<Vec<(String, String)>, StorageError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = anon_placeholders(paths.len());
+    let sql = format!(
+        "SELECT DISTINCT source_file, target_file FROM file_references
+         WHERE source_file IN ({placeholders}) AND target_file IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<&str> = paths.to_vec();
+    params.extend_from_slice(paths);
+    let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }

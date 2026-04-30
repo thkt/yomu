@@ -100,6 +100,29 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     );
 }
 
+// T-602: topo_sort_orders_dependencies_first
+#[test]
+fn topo_sort_orders_dependencies_first() {
+    let chunks = vec![
+        make_brief_chunk("src/a.rs", "a"),
+        make_brief_chunk("src/b.rs", "b"),
+        make_brief_chunk("src/c.rs", "c"),
+    ];
+    let edges = vec![
+        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
+        ("src/b.rs".to_owned(), "src/c.rs".to_owned()),
+    ];
+
+    let sorted = topo_sort(chunks, &edges);
+
+    let order: Vec<&str> = sorted.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["src/c.rs", "src/b.rs", "src/a.rs"],
+        "BR-002: dependencies (depended-upon) come first"
+    );
+}
+
 // T-600: expand_plan_returns_seed_and_forward_chunks
 #[test]
 fn expand_plan_returns_seed_and_forward_chunks() {
@@ -137,4 +160,43 @@ fn expand_plan_returns_seed_and_forward_chunks() {
         by_path["src/b.rs"].included_reason,
         ChunkInclusionReason::Forward(1)
     );
+}
+
+// T-603: expand_plan_is_deterministic [Spec T-008]
+#[test]
+fn expand_plan_is_deterministic() {
+    let (conn, _dir) = test_db();
+    insert_test_chunk(&conn, "src/a.rs", "a", 1);
+    insert_test_chunk(&conn, "src/b.rs", "b", 1);
+    insert_test_chunk(&conn, "src/c.rs", "c", 1);
+    let edge = |source: &str, target: &str| Reference {
+        source_file: source.into(),
+        target_file: target.into(),
+        symbol_name: None,
+        ref_kind: RefKind::Named,
+    };
+    replace_file_references(&conn, "src/a.rs", &[edge("src/a.rs", "src/b.rs")]).unwrap();
+    replace_file_references(&conn, "src/b.rs", &[edge("src/b.rs", "src/c.rs")]).unwrap();
+
+    let task = task_with_seeds(vec![seed_file("src/a.rs")], 2);
+    let signature = |o: &BriefOutput| -> Vec<(String, u32, u32, String)> {
+        o.chunks
+            .iter()
+            .map(|c| {
+                (
+                    c.file_path.clone(),
+                    c.start_line,
+                    c.end_line,
+                    c.content.clone(),
+                )
+            })
+            .collect()
+    };
+
+    let first = expand_plan(&conn, &task).unwrap();
+    let second = expand_plan(&conn, &task).unwrap();
+
+    assert_eq!(signature(&first), signature(&second));
+    assert_eq!(first.total_chunks, second.total_chunks);
+    assert_eq!(first.total_bytes, second.total_bytes);
 }

@@ -3,12 +3,12 @@
 //! Phase 1c-3 scaffold. cap (BR-001) and topo sort (BR-002) are deferred to
 //! follow-up commits in this phase.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use rusqlite::Connection;
 
 use crate::storage::{
-    Chunk, ChunkType, StorageError, get_chunks_for_files, get_import_counts,
+    Chunk, ChunkType, StorageError, get_chunks_for_files, get_edges_among_files, get_import_counts,
     get_transitive_dependencies,
 };
 
@@ -166,6 +166,74 @@ pub fn apply_cap(
         .collect()
 }
 
+type DepGraph = (HashMap<String, u32>, HashMap<String, Vec<String>>);
+
+fn build_dep_graph(chunks: &[BriefChunk], edges: &[(String, String)]) -> DepGraph {
+    let in_scope: HashSet<&str> = chunks.iter().map(|c| c.file_path.as_str()).collect();
+    let mut out_degree: HashMap<String, u32> =
+        in_scope.iter().map(|p| ((*p).to_owned(), 0)).collect();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+    for (src, tgt) in edges {
+        if src != tgt && in_scope.contains(src.as_str()) && in_scope.contains(tgt.as_str()) {
+            *out_degree.entry(src.clone()).or_insert(0) += 1;
+            dependents.entry(tgt.clone()).or_default().push(src.clone());
+        }
+    }
+    (out_degree, dependents)
+}
+
+fn kahn_positions(graph: DepGraph) -> HashMap<String, usize> {
+    let (mut out_degree, dependents) = graph;
+    let mut available: BTreeSet<String> = out_degree
+        .iter()
+        .filter(|(_, d)| **d == 0)
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut positions: HashMap<String, usize> = HashMap::new();
+    let mut idx = 0;
+    while let Some(p) = available.iter().next().cloned() {
+        available.remove(&p);
+        positions.insert(p.clone(), idx);
+        idx += 1;
+        if let Some(deps) = dependents.get(&p) {
+            for dep in deps {
+                if let Some(d) = out_degree.get_mut(dep) {
+                    *d -= 1;
+                    if *d == 0 {
+                        available.insert(dep.clone());
+                    }
+                }
+            }
+        }
+    }
+    let mut leftover: Vec<&String> = out_degree
+        .keys()
+        .filter(|p| !positions.contains_key(*p))
+        .collect();
+    leftover.sort();
+    for p in leftover {
+        positions.insert(p.clone(), idx);
+        idx += 1;
+    }
+    positions
+}
+
+/// Applies BR-002 topological order: dependencies first (depended-upon files
+/// come before their dependents), tie-breaking by file_path lex order.
+/// Within the same file, chunks keep their `start_line` ordering. Cycles
+/// degrade to lex order at the tail of the result.
+pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<BriefChunk> {
+    let positions = kahn_positions(build_dep_graph(&chunks, edges));
+    let mut sorted = chunks;
+    sorted.sort_by_key(|c| {
+        (
+            positions.get(&c.file_path).copied().unwrap_or(usize::MAX),
+            c.start_line,
+        )
+    });
+    sorted
+}
+
 #[allow(clippy::cast_possible_truncation)]
 pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, StorageError> {
     let seeds = collect_seed_paths(task);
@@ -184,11 +252,14 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
         task.max_bytes,
     );
 
-    let total_chunks = capped.len() as u32;
-    let total_bytes: u32 = capped.iter().map(|c| c.content.len() as u32).sum();
+    let edges = get_edges_among_files(conn, &paths)?;
+    let ordered = topo_sort(capped, &edges);
+
+    let total_chunks = ordered.len() as u32;
+    let total_bytes: u32 = ordered.iter().map(|c| c.content.len() as u32).sum();
 
     Ok(BriefOutput {
-        chunks: capped,
+        chunks: ordered,
         degraded: false,
         total_chunks,
         total_bytes,
