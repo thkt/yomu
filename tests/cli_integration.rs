@@ -1071,7 +1071,7 @@ fn brief_integration_json_output_includes_chunks() {
         .unwrap_or_else(|e| panic!("expected JSON output, parse error {e}: {stdout}"));
     assert!(parsed["chunks"].is_array(), "expected .chunks array");
     assert!(
-        parsed["chunks"].as_array().unwrap().len() >= 1,
+        !parsed["chunks"].as_array().unwrap().is_empty(),
         "expected at least seed chunk, got: {stdout}"
     );
 }

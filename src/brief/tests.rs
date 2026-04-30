@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use tempfile::{TempDir, tempdir};
 
@@ -69,7 +71,7 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
         make_brief_chunk("src/c.rs", "c"),
         make_brief_chunk("src/d.rs", "d"),
     ];
-    let depth_by_path: std::collections::HashMap<String, u32> = [
+    let depth_by_path: HashMap<String, u32> = [
         ("src/a.rs".to_owned(), 0),
         ("src/b.rs".to_owned(), 1),
         ("src/c.rs".to_owned(), 1),
@@ -77,7 +79,7 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     ]
     .into_iter()
     .collect();
-    let incoming_counts: std::collections::HashMap<String, u32> = [
+    let incoming_counts: HashMap<String, u32> = [
         ("src/a.rs".to_owned(), 10),
         ("src/b.rs".to_owned(), 5),
         ("src/c.rs".to_owned(), 2),
@@ -284,7 +286,7 @@ fn expand_plan_returns_seed_and_forward_chunks() {
     assert_eq!(output.chunks.len(), 2);
     assert!(!output.degraded);
 
-    let by_path: std::collections::HashMap<&str, &BriefChunk> = output
+    let by_path: HashMap<&str, &BriefChunk> = output
         .chunks
         .iter()
         .map(|c| (c.file_path.as_str(), c))
