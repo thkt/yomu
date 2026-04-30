@@ -9,6 +9,7 @@ use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand}
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::model_probe::handle_probe_if_needed;
+use yomu::brief;
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,
 };
@@ -79,6 +80,29 @@ enum Command {
     Status,
     /// Embed pending chunks for semantic search.
     Embed,
+    /// Bundle forward-closure code for an agent (recall-complete brief).
+    Brief {
+        /// Free-form task description (must not be empty)
+        task: String,
+        /// Seed file path (repeatable)
+        #[arg(long)]
+        seed_file: Vec<String>,
+        /// Seed symbol name (repeatable)
+        #[arg(long)]
+        seed_symbol: Vec<String>,
+        /// Forward closure depth (1..=10)
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=10))]
+        depth: u32,
+        /// Maximum chunks in output (1..=1000)
+        #[arg(long, default_value_t = 80, value_parser = clap::value_parser!(u32).range(1..=1000))]
+        max_chunks: u32,
+        /// Maximum bytes in output (1000..=10000000)
+        #[arg(long, default_value_t = 80_000, value_parser = clap::value_parser!(u32).range(1000..=10_000_000))]
+        max_bytes: u32,
+        /// Skip embedding lookups; use FTS5 only.
+        #[arg(long)]
+        no_embed: bool,
+    },
     /// Manage the embedding model.
     #[command(
         subcommand_required = true,
@@ -156,7 +180,7 @@ fn main() -> ExitCode {
     }
 
     let yomu_options = match &command {
-        Command::Search { no_embed, .. } => YomuOptions {
+        Command::Search { no_embed, .. } | Command::Brief { no_embed, .. } => YomuOptions {
             no_embed: *no_embed,
         },
         _ => YomuOptions::default(),
@@ -240,6 +264,38 @@ fn main() -> ExitCode {
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
         Command::Embed => yomu.embed(json),
+        Command::Brief {
+            task,
+            seed_file,
+            seed_symbol,
+            depth,
+            max_chunks,
+            max_bytes,
+            no_embed: _,
+        } => {
+            let mut seeds: Vec<brief::Seed> =
+                Vec::with_capacity(seed_file.len() + seed_symbol.len());
+            for value in seed_file {
+                seeds.push(brief::Seed {
+                    kind: brief::SeedKind::File,
+                    value,
+                });
+            }
+            for value in seed_symbol {
+                seeds.push(brief::Seed {
+                    kind: brief::SeedKind::Symbol,
+                    value,
+                });
+            }
+            let task_brief = brief::TaskBrief {
+                task,
+                seeds,
+                depth,
+                max_chunks,
+                max_bytes,
+            };
+            yomu.brief(&task_brief, json)
+        }
         Command::Model { .. } => unreachable!("handled before Yomu::new()"),
     };
 
@@ -256,7 +312,7 @@ fn main() -> ExitCode {
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "search", "index", "rebuild", "impact", "status", "embed", "model",
+    "search", "index", "rebuild", "impact", "status", "embed", "brief", "model",
 ];
 const GLOBAL_FLAGS: &[&str] = &["--json"];
 
@@ -511,6 +567,85 @@ mod tests {
                 assert!(!semantic, "expected semantic=false by default");
             }
             other => panic!("expected Impact, got {other:?}"),
+        }
+    }
+
+    // T-565: brief_parses_with_required_task
+    #[test]
+    fn brief_parses_with_required_task() {
+        let cli = parse_cli_args(["yomu", "brief", "implement search"]).unwrap();
+        match cli.command.unwrap() {
+            Command::Brief {
+                task,
+                seed_file,
+                seed_symbol,
+                depth,
+                max_chunks,
+                max_bytes,
+                ..
+            } => {
+                assert_eq!(task, "implement search");
+                assert!(seed_file.is_empty());
+                assert!(seed_symbol.is_empty());
+                assert_eq!(depth, 3);
+                assert_eq!(max_chunks, 80);
+                assert_eq!(max_bytes, 80_000);
+            }
+            other => panic!("expected Brief, got {other:?}"),
+        }
+    }
+
+    // T-566: brief_rejects_depth_out_of_range [Spec FR-005b]
+    #[test]
+    fn brief_rejects_depth_out_of_range() {
+        let result = parse_cli_args(["yomu", "brief", "task", "--depth", "11"]);
+        assert!(result.is_err(), "depth=11 must fail (range 1..=10)");
+
+        let result = parse_cli_args(["yomu", "brief", "task", "--depth", "0"]);
+        assert!(result.is_err(), "depth=0 must fail (range 1..=10)");
+    }
+
+    // T-567: brief_rejects_max_chunks_or_bytes_out_of_range [Spec FR-009b]
+    #[test]
+    fn brief_rejects_max_chunks_or_bytes_out_of_range() {
+        let result = parse_cli_args(["yomu", "brief", "task", "--max-chunks", "1001"]);
+        assert!(
+            result.is_err(),
+            "max-chunks=1001 must fail (range 1..=1000)"
+        );
+
+        let result = parse_cli_args(["yomu", "brief", "task", "--max-bytes", "999"]);
+        assert!(
+            result.is_err(),
+            "max-bytes=999 must fail (range 1000..=10000000)"
+        );
+    }
+
+    // T-568: brief_accepts_multiple_seed_files [Spec FR-013]
+    #[test]
+    fn brief_accepts_multiple_seed_files() {
+        let cli = parse_cli_args([
+            "yomu",
+            "brief",
+            "task",
+            "--seed-file",
+            "src/a.rs",
+            "--seed-file",
+            "src/b.rs",
+            "--seed-symbol",
+            "Foo",
+        ])
+        .unwrap();
+        match cli.command.unwrap() {
+            Command::Brief {
+                seed_file,
+                seed_symbol,
+                ..
+            } => {
+                assert_eq!(seed_file, vec!["src/a.rs", "src/b.rs"]);
+                assert_eq!(seed_symbol, vec!["Foo"]);
+            }
+            other => panic!("expected Brief, got {other:?}"),
         }
     }
 
