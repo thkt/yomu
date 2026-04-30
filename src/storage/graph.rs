@@ -12,6 +12,12 @@ pub struct Dependent {
     pub depth: u32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dependency {
+    pub file_path: String,
+    pub depth: u32,
+}
+
 /// One reference edge from `source_file` to a target file, retaining the
 /// `ref_kind` (named/default/...) and the symbol that triggered it.
 ///
@@ -73,6 +79,38 @@ pub fn get_transitive_dependents(
     )?;
     let rows = stmt.query_map(rusqlite::params![target_file, max_depth], |row| {
         Ok(Dependent {
+            file_path: row.get(0)?,
+            depth: row.get(1)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Forward closure: files that `seed` transitively depends on, ordered by
+/// distance ascending. `seed` itself is included at depth 0 so brief output
+/// can group seed chunks alongside their forward dependencies.
+pub fn get_transitive_dependencies(
+    conn: &Connection,
+    seed: &str,
+    max_depth: u32,
+) -> Result<Vec<Dependency>, StorageError> {
+    let max_depth = max_depth.min(10);
+    let mut stmt = conn.prepare_cached(
+        "WITH RECURSIVE deps(file_path, depth, visited) AS (
+            SELECT ?1, 0, ',' || ?1 || ','
+          UNION
+            SELECT r.target_file, d.depth + 1,
+                   d.visited || r.target_file || ','
+            FROM file_references r
+            INNER JOIN deps d ON r.source_file = d.file_path
+            WHERE d.depth < ?2
+              AND INSTR(d.visited, ',' || r.target_file || ',') = 0
+        )
+        SELECT file_path, MIN(depth) as depth
+        FROM deps GROUP BY file_path ORDER BY depth, file_path",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![seed, max_depth], |row| {
+        Ok(Dependency {
             file_path: row.get(0)?,
             depth: row.get(1)?,
         })

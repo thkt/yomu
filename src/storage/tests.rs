@@ -864,6 +864,107 @@ fn get_transitive_dependents_circular() {
     );
 }
 
+// T-572: get_transitive_dependencies_chain
+#[test]
+fn get_transitive_dependencies_chain() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/C.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/C.tsx",
+        &[Reference {
+            source_file: "src/C.tsx".into(),
+            target_file: "src/D.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies(&conn, "src/A.tsx", 2).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependency {
+                file_path: "src/A.tsx".into(),
+                depth: 0
+            },
+            Dependency {
+                file_path: "src/B.tsx".into(),
+                depth: 1
+            },
+            Dependency {
+                file_path: "src/C.tsx".into(),
+                depth: 2
+            },
+        ]
+    );
+}
+
+// T-573: get_transitive_dependencies_circular
+#[test]
+fn get_transitive_dependencies_circular() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/A.tsx",
+        &[Reference {
+            source_file: "src/A.tsx".into(),
+            target_file: "src/B.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/B.tsx",
+        &[Reference {
+            source_file: "src/B.tsx".into(),
+            target_file: "src/A.tsx".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies(&conn, "src/A.tsx", 10).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependency {
+                file_path: "src/A.tsx".into(),
+                depth: 0
+            },
+            Dependency {
+                file_path: "src/B.tsx".into(),
+                depth: 1
+            },
+        ]
+    );
+}
+
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")
