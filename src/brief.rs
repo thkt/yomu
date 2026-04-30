@@ -1,9 +1,7 @@
-//! Brief expansion plan: TaskBrief -> forward closure -> chunks -> BriefOutput.
-//!
-//! Phase 1c-3 scaffold. cap (BR-001) and topo sort (BR-002) are deferred to
-//! follow-up commits in this phase.
+//! Brief expansion plan: TaskBrief -> forward closure -> chunks -> cap -> topo -> BriefOutput.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt;
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -40,6 +38,17 @@ pub enum ChunkInclusionReason {
     Forward(u32),
     Sibling,
     ModDecl,
+}
+
+impl fmt::Display for ChunkInclusionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Seed => f.write_str("seed"),
+            Self::Forward(n) => write!(f, "forward-{n}"),
+            Self::Sibling => f.write_str("sibling"),
+            Self::ModDecl => f.write_str("mod-decl"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -121,29 +130,30 @@ fn under_cap(chunks: &[BriefChunk], max_chunks: u32, max_bytes: u32) -> bool {
     count <= max_chunks && bytes as u32 <= max_bytes
 }
 
-/// Applies BR-001 cap deletion order: drop chunks first by
-/// `(seed_distance DESC, incoming_edge_count ASC)`. Stops once both
-/// `max_chunks` and `max_bytes` constraints are satisfied. Pure: takes
-/// pre-computed `depth_by_path` and `incoming_counts` so callers can test
-/// deterministically without DB access.
+fn deletion_priority(
+    chunk: &BriefChunk,
+    depth_by_path: &HashMap<String, u32>,
+    incoming_counts: &HashMap<String, u32>,
+) -> (u32, u32) {
+    let depth = depth_by_path.get(&chunk.file_path).copied().unwrap_or(0);
+    let incoming = incoming_counts.get(&chunk.file_path).copied().unwrap_or(0);
+    (depth, incoming)
+}
+
 #[allow(clippy::cast_possible_truncation)]
-pub fn apply_cap(
-    chunks: Vec<BriefChunk>,
+fn select_drops(
+    chunks: &[BriefChunk],
     depth_by_path: &HashMap<String, u32>,
     incoming_counts: &HashMap<String, u32>,
     max_chunks: u32,
     max_bytes: u32,
-) -> Vec<BriefChunk> {
-    if under_cap(&chunks, max_chunks, max_bytes) {
-        return chunks;
-    }
+) -> HashSet<usize> {
     let mut order: Vec<(usize, u32, u32)> = chunks
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let depth = depth_by_path.get(&c.file_path).copied().unwrap_or(0);
-            let incoming = incoming_counts.get(&c.file_path).copied().unwrap_or(0);
-            (i, depth, incoming)
+            let (d, e) = deletion_priority(c, depth_by_path, incoming_counts);
+            (i, d, e)
         })
         .collect();
     order.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
@@ -159,6 +169,30 @@ pub fn apply_cap(
         count -= 1;
         bytes -= chunks[idx].content.len();
     }
+    drop_idx
+}
+
+/// Applies BR-001 cap deletion order: drop chunks first by
+/// `(seed_distance DESC, incoming_edge_count ASC)`. Pure: takes pre-computed
+/// `depth_by_path` and `incoming_counts` so callers can test deterministically
+/// without DB access.
+pub fn apply_cap(
+    chunks: Vec<BriefChunk>,
+    depth_by_path: &HashMap<String, u32>,
+    incoming_counts: &HashMap<String, u32>,
+    max_chunks: u32,
+    max_bytes: u32,
+) -> Vec<BriefChunk> {
+    if under_cap(&chunks, max_chunks, max_bytes) {
+        return chunks;
+    }
+    let drop_idx = select_drops(
+        &chunks,
+        depth_by_path,
+        incoming_counts,
+        max_chunks,
+        max_bytes,
+    );
     chunks
         .into_iter()
         .enumerate()
@@ -181,6 +215,22 @@ fn build_dep_graph(chunks: &[BriefChunk], edges: &[(String, String)]) -> DepGrap
         }
     }
     (out_degree, dependents)
+}
+
+fn append_cycle_tail(
+    positions: &mut HashMap<String, usize>,
+    next_idx: &mut usize,
+    all_files: &HashMap<String, u32>,
+) {
+    let mut leftover: Vec<&String> = all_files
+        .keys()
+        .filter(|p| !positions.contains_key(*p))
+        .collect();
+    leftover.sort();
+    for p in leftover {
+        positions.insert(p.clone(), *next_idx);
+        *next_idx += 1;
+    }
 }
 
 fn kahn_positions(graph: DepGraph) -> HashMap<String, usize> {
@@ -207,15 +257,7 @@ fn kahn_positions(graph: DepGraph) -> HashMap<String, usize> {
             }
         }
     }
-    let mut leftover: Vec<&String> = out_degree
-        .keys()
-        .filter(|p| !positions.contains_key(*p))
-        .collect();
-    leftover.sort();
-    for p in leftover {
-        positions.insert(p.clone(), idx);
-        idx += 1;
-    }
+    append_cycle_tail(&mut positions, &mut idx, &out_degree);
     positions
 }
 
@@ -233,15 +275,6 @@ pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<Bri
         )
     });
     sorted
-}
-
-fn inclusion_reason_str(reason: &ChunkInclusionReason) -> String {
-    match reason {
-        ChunkInclusionReason::Seed => "seed".to_owned(),
-        ChunkInclusionReason::Forward(n) => format!("forward-{n}"),
-        ChunkInclusionReason::Sibling => "sibling".to_owned(),
-        ChunkInclusionReason::ModDecl => "mod-decl".to_owned(),
-    }
 }
 
 #[derive(Serialize)]
@@ -276,7 +309,7 @@ pub fn render_json(output: &BriefOutput) -> String {
                 end_line: c.end_line,
                 chunk_type: c.chunk_type.as_str(),
                 content: &c.content,
-                included_reason: inclusion_reason_str(&c.included_reason),
+                included_reason: c.included_reason.to_string(),
             })
             .collect(),
     };
@@ -318,7 +351,12 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let chunks = get_chunks_for_files(conn, &paths)?;
     let brief_chunks = build_brief_chunks(chunks, &depth_by_path);
 
-    let incoming_counts = get_import_counts(conn, &paths)?;
+    // BR-001 priority data is only needed when chunks exceed the budget.
+    let incoming_counts = if under_cap(&brief_chunks, task.max_chunks, task.max_bytes) {
+        HashMap::new()
+    } else {
+        get_import_counts(conn, &paths)?
+    };
     let capped = apply_cap(
         brief_chunks,
         &depth_by_path,
@@ -327,7 +365,11 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
         task.max_bytes,
     );
 
-    let edges = get_edges_among_files(conn, &paths)?;
+    // Edges only matter for files that survived cap; querying the pre-cap
+    // closure would fetch rows that topo_sort silently discards.
+    let capped_paths: HashSet<&str> = capped.iter().map(|c| c.file_path.as_str()).collect();
+    let capped_paths: Vec<&str> = capped_paths.into_iter().collect();
+    let edges = get_edges_among_files(conn, &capped_paths)?;
     let ordered = topo_sort(capped, &edges);
 
     let total_chunks = ordered.len() as u32;

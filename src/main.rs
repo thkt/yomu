@@ -273,23 +273,9 @@ fn main() -> ExitCode {
             max_bytes,
             no_embed: _,
         } => {
-            let mut seeds: Vec<brief::Seed> =
-                Vec::with_capacity(seed_file.len() + seed_symbol.len());
-            for value in seed_file {
-                seeds.push(brief::Seed {
-                    kind: brief::SeedKind::File,
-                    value,
-                });
-            }
-            for value in seed_symbol {
-                seeds.push(brief::Seed {
-                    kind: brief::SeedKind::Symbol,
-                    value,
-                });
-            }
             let task_brief = brief::TaskBrief {
                 task,
-                seeds,
+                seeds: build_seeds(seed_file, seed_symbol),
                 depth,
                 max_chunks,
                 max_bytes,
@@ -314,6 +300,19 @@ fn main() -> ExitCode {
 const KNOWN_SUBCOMMANDS: &[&str] = &[
     "search", "index", "rebuild", "impact", "status", "embed", "brief", "model",
 ];
+
+fn build_seeds(files: Vec<String>, symbols: Vec<String>) -> Vec<brief::Seed> {
+    let mut seeds = Vec::with_capacity(files.len() + symbols.len());
+    seeds.extend(files.into_iter().map(|value| brief::Seed {
+        kind: brief::SeedKind::File,
+        value,
+    }));
+    seeds.extend(symbols.into_iter().map(|value| brief::Seed {
+        kind: brief::SeedKind::Symbol,
+        value,
+    }));
+    seeds
+}
 const GLOBAL_FLAGS: &[&str] = &["--json"];
 
 fn parse_cli_args<I, T>(args: I) -> Result<Cli, clap::Error>
