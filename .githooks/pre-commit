@@ -9,8 +9,8 @@
 
 set -e
 
-# Only run when Rust / config / CI files are staged.
-if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.rs$|Cargo\.(toml|lock)$|\.github/'; then
+# Only run when Rust / config / CI files are staged (covers add, modify, delete, rename).
+if git diff --cached --name-only | grep -qE '\.rs$|Cargo\.(toml|lock)$|\.github/'; then
     echo "▶ pre-commit: cargo fmt -- --check"
     cargo fmt -- --check
 
