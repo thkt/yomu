@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=138de41#138de41151e062efa0f7cec87ad8966dbf481256"
+source = "git+https://github.com/thkt/amici?rev=6ca986d#6ca986df827ba213761dd947dd607099ca2f1055"
 dependencies = [
  "rand 0.10.1",
  "rand_chacha 0.10.0",
@@ -2106,11 +2106,10 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=ef26de2#ef26de21cf0ef3d50f8c6dfbc8b06cf65bab0e16"
+source = "git+https://github.com/thkt/rurico?rev=0c0e0f6#0c0e0f6c93c2705d1d76304a15fc8549da07052b"
 dependencies = [
  "bytemuck",
  "hf-hub",
- "log",
  "mlx-rs",
  "rand 0.10.1",
  "rand_chacha 0.10.0",
@@ -2120,13 +2119,14 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokenizers",
+ "tracing",
  "unicode-normalization",
 ]
 
 [[package]]
 name = "rurico-ffi"
 version = "0.1.0"
-source = "git+https://github.com/thkt/rurico?rev=ef26de2#ef26de21cf0ef3d50f8c6dfbc8b06cf65bab0e16"
+source = "git+https://github.com/thkt/rurico?rev=0c0e0f6#0c0e0f6c93c2705d1d76304a15fc8549da07052b"
 dependencies = [
  "mlx-sys",
  "rusqlite",
@@ -2851,6 +2851,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-test"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19a4c448db514d4f24c5ddb9f73f2ee71bfb24c526cf0c570ba142d1119e0051"
+dependencies = [
+ "tracing-core",
+ "tracing-subscriber",
+ "tracing-test-macro",
+]
+
+[[package]]
+name = "tracing-test-macro"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad06847b7afb65c7866a36664b75c40b895e318cea4f71299f013fb22965329d"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "tree-sitter"
 version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3546,6 +3567,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+ "tracing-test",
  "tree-sitter",
  "tree-sitter-css",
  "tree-sitter-html",

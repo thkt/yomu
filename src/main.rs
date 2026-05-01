@@ -6,6 +6,7 @@ use std::iter;
 use std::process::ExitCode;
 
 use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand};
+use amici::logging::init_subscriber;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::model_probe::handle_probe_if_needed;
@@ -142,13 +143,7 @@ impl fmt::Display for QueryError {
 fn main() -> ExitCode {
     handle_probe_if_needed();
 
-    tracing_subscriber::fmt()
-        .with_writer(io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("yomu=warn")),
-        )
-        .init();
+    init_subscriber("yomu=warn");
 
     let cli = parse_cli_args(env::args_os()).unwrap_or_else(|e| e.exit());
     let json = cli.json;
