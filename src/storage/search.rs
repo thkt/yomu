@@ -150,19 +150,29 @@ pub fn search_by_fts(
     }
 
     let normalization = fts_normalization();
+    let mut failed: Vec<(&str, String)> = Vec::new();
     let parts: Vec<String> = keywords
         .iter()
         .filter_map(
             |k| match prepare_match_query(conn, k, "fts_chunks_vocab", &normalization) {
                 Ok(m) if !m.as_str().is_empty() => Some(m.into_string()),
                 Err(e) if !k.trim().is_empty() => {
-                    tracing::debug!(keyword = %k, error = %e, "prepare_match_query failed, falling back to fts_quote");
+                    failed.push((*k, e.to_string()));
                     Some(fts_quote(k))
                 }
                 _ => None,
             },
         )
         .collect();
+    if !failed.is_empty() {
+        let failed_keywords: Vec<&str> = failed.iter().map(|(k, _)| *k).collect();
+        tracing::warn!(
+            keywords = ?failed_keywords,
+            count = failed.len(),
+            first_error = %failed[0].1,
+            "prepare_match_query failed, falling back to fts_quote"
+        );
+    }
     if parts.is_empty() {
         return Ok(Vec::new());
     }
@@ -264,6 +274,7 @@ pub fn get_keyword_doc_frequencies(
     total_chunks: u32,
 ) -> Result<Vec<u32>, StorageError> {
     let mut dfs = Vec::with_capacity(keywords.len());
+    let mut failed: Vec<(&str, String)> = Vec::new();
     for kw in keywords {
         let fts_term = fts_quote(kw);
         let count: u32 = match conn.query_row(
@@ -273,11 +284,20 @@ pub fn get_keyword_doc_frequencies(
         ) {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(keyword = %kw, error = %e, "FTS5 doc freq query failed, treating as neutral");
+                failed.push((kw, e.to_string()));
                 total_chunks
             }
         };
         dfs.push(count);
+    }
+    if !failed.is_empty() {
+        let failed_keywords: Vec<&str> = failed.iter().map(|(k, _)| *k).collect();
+        tracing::warn!(
+            keywords = ?failed_keywords,
+            count = failed.len(),
+            first_error = %failed[0].1,
+            "FTS5 doc freq query failed, treating as neutral"
+        );
     }
     Ok(dfs)
 }

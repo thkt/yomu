@@ -8,6 +8,7 @@ use std::fs;
 
 use rurico::embed::{Embed, FailingEmbedder, MockEmbedder};
 use tempfile::{TempDir, tempdir};
+use tracing_test::traced_test;
 
 fn parse_json(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{json}"))
@@ -2586,6 +2587,42 @@ fn brief_falls_back_to_degraded_when_no_embedder() {
         parsed["chunks"].as_array().unwrap().len(),
         0,
         "without seeds the closure is empty, got: {output}"
+    );
+}
+
+// T-572: brief_emits_warn_on_seed_inference_embed_query_failure
+#[traced_test]
+#[test]
+fn brief_emits_warn_on_seed_inference_embed_query_failure() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(FailingEmbedder::all_fail("upstream embedder timeout")) as Arc<dyn Embed>),
+    );
+    let task = brief::TaskBrief {
+        task: "infer something".to_owned(),
+        seeds: vec![],
+        depth: 1,
+        max_chunks: 80,
+        max_bytes: 80_000,
+    };
+
+    let output = yomu.brief(&task, true).unwrap();
+    let parsed = parse_json(&output);
+    assert_eq!(
+        parsed["degraded"], true,
+        "embed_query failure must mark degraded, got: {output}"
+    );
+
+    assert!(
+        logs_contain("brief seed inference: embed_query"),
+        "expected embed_query warn context"
+    );
+    assert!(
+        logs_contain("brief: seed inference"),
+        "expected seed inference degraded warn"
     );
 }
 

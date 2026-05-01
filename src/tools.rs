@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use amici::cli::embed_with_spinners;
-use amici::model::{ModelLoad, download_and_verify_model};
+use amici::model::{ModelLoad, degrade_with_warn, download_and_verify_model, record_degraded};
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
@@ -524,15 +524,20 @@ impl Yomu {
 
     fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> Result<Vec<String>, DegradedReason> {
         let embedder = self.try_embedder_arc()?;
-        let task_emb = embedder
-            .embed_query(task)
-            .map_err(|_| DegradedReason::ProbeFailed)?;
+        let task_emb = embedder.embed_query(task).map_err(degrade_with_warn(
+            "brief seed inference: embed_query",
+            DegradedReason::ProbeFailed,
+        ))?;
         let conn = self
             .conn
             .lock()
             .expect("brief seed inference: lock poisoned");
-        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[])
-            .map_err(|_| DegradedReason::ProbeFailed)?;
+        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[]).map_err(
+            degrade_with_warn(
+                "brief seed inference: vec_search",
+                DegradedReason::ProbeFailed,
+            ),
+        )?;
         drop(conn);
 
         let cap = max_seeds as usize;
@@ -577,7 +582,10 @@ impl Yomu {
                         })
                         .collect();
                 }
-                Err(_) => degraded = true,
+                Err(reason) => {
+                    record_degraded(reason, "brief: seed inference");
+                    degraded = true;
+                }
             }
         }
 
