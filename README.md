@@ -264,7 +264,7 @@ This installs a pre-commit hook that runs `cargo fmt --check` and `cargo clippy 
 ### Common commands
 
 ```sh
-cargo test                                                # all tests
+cargo nextest run                                         # all tests (install: cargo install cargo-nextest --locked)
 cargo clippy --all-targets --all-features -- -D warnings  # lint (matches CI)
 cargo fmt -- --check                                      # format check
 ```
