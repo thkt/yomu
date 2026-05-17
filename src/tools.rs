@@ -8,13 +8,17 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use std::process::ExitCode;
+
 use amici::cli::embed_with_spinners;
+use amici::cli::exit_code::CliError;
 use amici::model::{ModelLoad, degrade_with_warn, download_and_verify_model, record_degraded};
 use rurico::embed::Embed;
 use rurico::reranker::Rerank;
 
 use crate::brief;
 use crate::config;
+use crate::error::ErrorCode;
 use crate::indexer;
 use crate::query::{self, QueryError};
 use crate::storage;
@@ -109,6 +113,26 @@ pub enum YomuError {
     Query(#[from] QueryError),
     #[error("{0}")]
     EmbedderUnavailable(String),
+}
+
+impl YomuError {
+    /// Classifies this error for both exit-code routing and the
+    /// `--json` envelope. Single source of truth per ADR-0066 Group 2.
+    pub fn error_code(&self) -> ErrorCode {
+        match self {
+            Self::InvalidInput(_) => ErrorCode::UsageError,
+            Self::Internal(_) | Self::Query(_) => ErrorCode::Internal,
+            Self::Storage(_) | Self::Index(_) => ErrorCode::CantCreat,
+            Self::Io(_) => ErrorCode::IoError,
+            Self::EmbedderUnavailable(_) => ErrorCode::TempFailure,
+        }
+    }
+}
+
+impl CliError for YomuError {
+    fn exit_code(&self) -> ExitCode {
+        ExitCode::from(self.error_code().exit_code())
+    }
 }
 
 pub struct Yomu {

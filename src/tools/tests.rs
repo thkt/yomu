@@ -2638,3 +2638,65 @@ fn yomu_brief_rejects_empty_task() {
         "expected InvalidInput, got: {err:?}"
     );
 }
+
+// --- CliError / ErrorCode mapping (ADR-0066 Group 2) ---
+
+fn io_err() -> io::Error {
+    io::Error::other("boom")
+}
+
+// T-EC101: InvalidInput → UsageError (64)
+#[test]
+fn error_code_invalid_input_is_usage_error() {
+    let err = YomuError::InvalidInput("bad".into());
+    assert_eq!(err.error_code(), ErrorCode::UsageError);
+    assert_eq!(err.exit_code(), ExitCode::from(64));
+}
+
+// T-EC102: Internal → Internal (70)
+#[test]
+fn error_code_internal_is_internal() {
+    let err = YomuError::Internal("boom".into());
+    assert_eq!(err.error_code(), ErrorCode::Internal);
+    assert_eq!(err.exit_code(), ExitCode::from(70));
+}
+
+// T-EC103: Storage → CantCreat (73)
+#[test]
+fn error_code_storage_is_cant_creat() {
+    let err = YomuError::Storage(storage::StorageError::Io(io_err()));
+    assert_eq!(err.error_code(), ErrorCode::CantCreat);
+    assert_eq!(err.exit_code(), ExitCode::from(73));
+}
+
+// T-EC104: Io → IoError (74)
+#[test]
+fn error_code_io_is_io_error() {
+    let err = YomuError::Io(io_err());
+    assert_eq!(err.error_code(), ErrorCode::IoError);
+    assert_eq!(err.exit_code(), ExitCode::from(74));
+}
+
+// T-EC105: Index → CantCreat (73)
+#[test]
+fn error_code_index_is_cant_creat() {
+    let err = YomuError::Index(indexer::IndexError::Internal("x".into()));
+    assert_eq!(err.error_code(), ErrorCode::CantCreat);
+    assert_eq!(err.exit_code(), ExitCode::from(73));
+}
+
+// T-EC106: Query → Internal (70)
+#[test]
+fn error_code_query_is_internal() {
+    let err = YomuError::Query(QueryError::Internal("x".into()));
+    assert_eq!(err.error_code(), ErrorCode::Internal);
+    assert_eq!(err.exit_code(), ExitCode::from(70));
+}
+
+// T-EC107: EmbedderUnavailable → TempFailure (75)
+#[test]
+fn error_code_embedder_unavailable_is_temp_failure() {
+    let err = YomuError::EmbedderUnavailable("offline".into());
+    assert_eq!(err.error_code(), ErrorCode::TempFailure);
+    assert_eq!(err.exit_code(), ExitCode::from(75));
+}

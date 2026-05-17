@@ -5,12 +5,14 @@ use std::io::{self, IsTerminal, Read};
 use std::iter;
 use std::process::ExitCode;
 
+use amici::cli::exit_code::CliError;
 use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand};
 use amici::logging::init_subscriber;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use rurico::handle_probe_if_needed;
 use yomu::brief;
+use yomu::error::{self, ErrorCode};
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,
 };
@@ -167,10 +169,7 @@ fn main() -> ExitCode {
                 println!("{output}");
                 ExitCode::SUCCESS
             }
-            Err(e) => {
-                exit_error(&format!("{e}"));
-                exit_code_for(&e)
-            }
+            Err(e) => emit_error(&e, json),
         };
     }
 
@@ -183,10 +182,7 @@ fn main() -> ExitCode {
 
     let yomu = match Yomu::new(yomu_options) {
         Ok(y) => y,
-        Err(e) => {
-            exit_error(&format!("{e}"));
-            return exit_code_for(&e);
-        }
+        Err(e) => return emit_error(&e, json),
     };
 
     let result = match command {
@@ -213,8 +209,7 @@ fn main() -> ExitCode {
                         Ok(q) => Some(q),
                         Err(QueryError::NoQuery(_)) => None,
                         Err(e @ QueryError::Io(_)) => {
-                            exit_error(&format!("{e}"));
-                            return ExitCode::FAILURE;
+                            return emit_error_code(&e.to_string(), ErrorCode::IoError, json);
                         }
                     }
                 };
@@ -229,9 +224,11 @@ fn main() -> ExitCode {
             } else {
                 let query = match resolve_query(query) {
                     Ok(q) => q,
-                    Err(e) => {
-                        exit_error(&format!("{e}"));
-                        return ExitCode::from(2);
+                    Err(e @ QueryError::NoQuery(_)) => {
+                        return emit_error_code(&e.to_string(), ErrorCode::UsageError, json);
+                    }
+                    Err(e @ QueryError::Io(_)) => {
+                        return emit_error_code(&e.to_string(), ErrorCode::IoError, json);
                     }
                 };
                 yomu.search(Some(&query), limit, offset, &path, json, None)
@@ -285,11 +282,27 @@ fn main() -> ExitCode {
             println!("{output}");
             ExitCode::SUCCESS
         }
-        Err(e) => {
-            exit_error(&format!("{e}"));
-            exit_code_for(&e)
-        }
+        Err(e) => emit_error(&e, json),
     }
+}
+
+fn emit_error(err: &YomuError, json: bool) -> ExitCode {
+    let code = err.error_code();
+    if json {
+        eprintln!("{}", error::render_json_error(code, &err.to_string()));
+    } else {
+        exit_error(&err.to_string());
+    }
+    err.exit_code()
+}
+
+fn emit_error_code(message: &str, code: ErrorCode, json: bool) -> ExitCode {
+    if json {
+        eprintln!("{}", error::render_json_error(code, message));
+    } else {
+        exit_error(message);
+    }
+    ExitCode::from(code.exit_code())
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
@@ -359,18 +372,6 @@ fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
     let stdin = io::stdin();
     let is_terminal = stdin.is_terminal();
     resolve_query_with(arg, &mut stdin.lock(), is_terminal)
-}
-
-fn exit_code_for(e: &YomuError) -> ExitCode {
-    match e {
-        YomuError::InvalidInput(_) => ExitCode::from(2),
-        YomuError::Internal(_) => ExitCode::from(4),
-        YomuError::Storage(_)
-        | YomuError::Io(_)
-        | YomuError::Index(_)
-        | YomuError::Query(_)
-        | YomuError::EmbedderUnavailable(_) => ExitCode::FAILURE,
-    }
 }
 
 #[cfg(test)]
