@@ -10,6 +10,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use amici::cli::embed_with_spinners;
+use amici::cli::env_lookup;
 use amici::cli::exit_code::CliError;
 use amici::model::{ModelLoad, degrade_with_warn, download_and_verify_model, record_degraded};
 use rurico::embed::Embed;
@@ -24,7 +25,7 @@ use crate::storage;
 
 #[cfg(any(test, feature = "test-support"))]
 use embedder::DEFAULT_EMBED_BUDGET;
-use embedder::{DegradedReason, degraded_reason_user_note, parse_embed_budget};
+use embedder::{DegradedReason, degraded_reason_user_note, parse_budget_value};
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_dry_run_json,
     format_embed_result, format_impact_all, format_impact_json, format_impact_results,
@@ -96,6 +97,39 @@ pub struct YomuOptions {
     pub no_embed: bool,
 }
 
+/// Env-derived runtime configuration for [`Yomu::with_root`].
+///
+/// Production callers obtain this via [`YomuConfig::from_env`]; tests use
+/// [`YomuConfig::from_env_with`] to inject a deterministic lookup closure.
+#[derive(Debug, Clone, Copy)]
+pub struct YomuConfig {
+    pub embed_disabled: bool,
+    pub rerank_enabled: bool,
+    pub embed_budget: u32,
+}
+
+impl YomuConfig {
+    /// Read configuration from the process environment.
+    pub fn from_env() -> Self {
+        Self::from_env_with(env_lookup())
+    }
+
+    /// Read configuration through an injected lookup closure.
+    pub fn from_env_with<F: Fn(&str) -> Option<String>>(get: F) -> Self {
+        Self {
+            embed_disabled: get("YOMU_EMBED").as_deref() == Some("0"),
+            rerank_enabled: get("YOMU_RERANK").as_deref() == Some("1"),
+            embed_budget: parse_budget_value(get("YOMU_EMBED_BUDGET").as_deref()),
+        }
+    }
+}
+
+impl Default for YomuConfig {
+    fn default() -> Self {
+        Self::from_env_with(|_| None)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum YomuError {
     #[error("storage error: {0}")]
@@ -148,23 +182,26 @@ impl Yomu {
     pub fn new(options: YomuOptions) -> Result<Self, YomuError> {
         let cwd = env::current_dir()?;
         let root = config::detect_root(&cwd);
-        Self::with_root(root, options)
+        Self::with_root(root, options, YomuConfig::from_env())
     }
 
-    pub fn with_root(root: PathBuf, options: YomuOptions) -> Result<Self, YomuError> {
+    pub fn with_root(
+        root: PathBuf,
+        options: YomuOptions,
+        config: YomuConfig,
+    ) -> Result<Self, YomuError> {
         tracing::info!(root = %root.display(), "Detected project root");
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let embed_disabled = options.no_embed || env::var("YOMU_EMBED").as_deref() == Ok("0");
-        let rerank_enabled = env::var("YOMU_RERANK").as_deref() == Ok("1");
+        let embed_disabled = options.no_embed || config.embed_disabled;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
-            embed_budget: parse_embed_budget(),
+            embed_budget: config.embed_budget,
             embed_disabled,
-            rerank_enabled,
+            rerank_enabled: config.rerank_enabled,
             reranker: OnceLock::new(),
         })
     }

@@ -1258,7 +1258,11 @@ fn ensure_indexed_fully_embedded_with_failing_embedder() {
 #[test]
 fn with_root_creates_db_and_returns_yomu() {
     let dir = tempdir().unwrap();
-    let result = Yomu::with_root(dir.path().to_path_buf(), Default::default());
+    let result = Yomu::with_root(
+        dir.path().to_path_buf(),
+        Default::default(),
+        Default::default(),
+    );
     assert!(
         result.is_ok(),
         "with_root should succeed: {:?}",
@@ -2699,4 +2703,73 @@ fn error_code_embedder_unavailable_is_temp_failure() {
     let err = YomuError::EmbedderUnavailable("offline".into());
     assert_eq!(err.error_code(), ErrorCode::TempFailure);
     assert_eq!(err.exit_code(), ExitCode::from(75));
+}
+
+// T-CFG001: from_env_with returns defaults when lookup yields nothing
+#[test]
+fn yomu_config_from_env_with_empty_lookup_uses_defaults() {
+    let cfg = YomuConfig::from_env_with(|_| None);
+    assert!(!cfg.embed_disabled);
+    assert!(!cfg.rerank_enabled);
+    assert_eq!(cfg.embed_budget, DEFAULT_EMBED_BUDGET);
+}
+
+// T-CFG002: YOMU_EMBED=0 sets embed_disabled
+#[test]
+fn yomu_config_yomu_embed_zero_disables_embedding() {
+    let cfg = YomuConfig::from_env_with(|k| match k {
+        "YOMU_EMBED" => Some("0".into()),
+        _ => None,
+    });
+    assert!(cfg.embed_disabled);
+}
+
+// T-CFG003: YOMU_EMBED non-"0" leaves embed_disabled false
+#[test]
+fn yomu_config_yomu_embed_non_zero_keeps_embedding() {
+    let cfg = YomuConfig::from_env_with(|k| match k {
+        "YOMU_EMBED" => Some("1".into()),
+        _ => None,
+    });
+    assert!(!cfg.embed_disabled);
+}
+
+// T-CFG004: YOMU_RERANK=1 enables reranker
+#[test]
+fn yomu_config_yomu_rerank_one_enables_reranker() {
+    let cfg = YomuConfig::from_env_with(|k| match k {
+        "YOMU_RERANK" => Some("1".into()),
+        _ => None,
+    });
+    assert!(cfg.rerank_enabled);
+}
+
+// T-CFG005: YOMU_RERANK non-"1" leaves reranker disabled
+#[test]
+fn yomu_config_yomu_rerank_non_one_keeps_reranker_off() {
+    let cfg = YomuConfig::from_env_with(|k| match k {
+        "YOMU_RERANK" => Some("0".into()),
+        _ => None,
+    });
+    assert!(!cfg.rerank_enabled);
+}
+
+// T-CFG006: YOMU_EMBED_BUDGET valid value flows through
+#[test]
+fn yomu_config_yomu_embed_budget_valid_value_applied() {
+    let cfg = YomuConfig::from_env_with(|k| match k {
+        "YOMU_EMBED_BUDGET" => Some("10".into()),
+        _ => None,
+    });
+    assert_eq!(cfg.embed_budget, 10);
+}
+
+// T-CFG007: Default impl equals from_env_with empty lookup
+#[test]
+fn yomu_config_default_matches_empty_lookup() {
+    let default = YomuConfig::default();
+    let empty = YomuConfig::from_env_with(|_| None);
+    assert_eq!(default.embed_disabled, empty.embed_disabled);
+    assert_eq!(default.rerank_enabled, empty.rerank_enabled);
+    assert_eq!(default.embed_budget, empty.embed_budget);
 }
