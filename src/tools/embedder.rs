@@ -1,4 +1,3 @@
-use std::env;
 use std::sync::Arc;
 
 use amici::model::embedder::try_load_embedder_with;
@@ -70,10 +69,6 @@ pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
         },
         None => DEFAULT_EMBED_BUDGET,
     }
-}
-
-pub(super) fn parse_embed_budget() -> u32 {
-    parse_budget_value(env::var("YOMU_EMBED_BUDGET").ok().as_deref())
 }
 
 fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
