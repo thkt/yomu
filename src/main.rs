@@ -146,15 +146,18 @@ fn main() -> ExitCode {
 
     init_subscriber("yomu=warn");
 
-    let cli = parse_cli_args(env::args_os()).unwrap_or_else(|e| e.exit());
+    let cli = match parse_cli_args(env::args_os()) {
+        Ok(cli) => cli,
+        Err(e) if is_clap_display_exit(&e) => e.exit(),
+        Err(e) => return render_clap_error(&e),
+    };
     let json = cli.json;
 
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
-            Cli::command()
-                .error(ErrorKind::MissingSubcommand, "requires a subcommand")
-                .exit();
+            let err = Cli::command().error(ErrorKind::MissingSubcommand, "requires a subcommand");
+            return render_clap_error(&err);
         }
     };
 
@@ -296,6 +299,24 @@ fn emit_error_code(message: &str, code: ErrorCode, json: bool) -> ExitCode {
         exit_error(message);
     }
     ExitCode::from(code.exit_code())
+}
+
+fn is_clap_display_exit(e: &clap::Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            | ErrorKind::DisplayVersion
+    )
+}
+
+fn render_clap_error(e: &clap::Error) -> ExitCode {
+    let rendered = e.to_string();
+    let message = rendered
+        .strip_prefix("error: ")
+        .unwrap_or(&rendered)
+        .trim_end();
+    emit_error_code(message, ErrorCode::UsageError, false)
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[

@@ -255,6 +255,8 @@ Per ADR-0066 Group 2 (sysexits.h) — agents and scripts can branch on the numbe
 
 > **Breaking change (0.16+)**: prior versions emitted `1`/`2`/`4` for failures. Callers that branch on these numbers must migrate to the sysexits values above. Text-mode stderr remains the same `error: <message>` shape.
 
+> **Note**: clap parse failures (unknown flags, out-of-range numeric arguments, missing subcommands) exit `64` even when `--json` was requested. The `--json` flag is resolved after argument parsing, so parse-time failures fall back to text-mode `error: <message>` stderr.
+
 ## Limitations
 
 | Limitation                | Details                                                                                     |
