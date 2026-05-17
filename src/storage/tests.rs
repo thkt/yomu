@@ -3593,10 +3593,11 @@ fn bench_search_hot_path_5emb_50kw() {
 
     let keywords: Vec<String> = (0..N_KEYWORDS).map(|k| format!("token{k}")).collect();
     let kw_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
+    let total_chunks = u32::try_from(N_CHUNKS).expect("N_CHUNKS fits in u32");
 
     // Warm up.
     let _ = vec_search_multi(&conn, &emb_refs, 20, None, &[]).unwrap();
-    let _ = get_keyword_doc_frequencies(&conn, &kw_refs, N_CHUNKS as u32).unwrap();
+    let _ = get_keyword_doc_frequencies(&conn, &kw_refs, total_chunks).unwrap();
 
     // Time vec_search_multi.
     let t0 = Instant::now();
@@ -3608,7 +3609,7 @@ fn bench_search_hot_path_5emb_50kw() {
     // Time get_keyword_doc_frequencies.
     let t1 = Instant::now();
     for _ in 0..ITERATIONS {
-        let _ = get_keyword_doc_frequencies(&conn, &kw_refs, N_CHUNKS as u32).unwrap();
+        let _ = get_keyword_doc_frequencies(&conn, &kw_refs, total_chunks).unwrap();
     }
     let gkdf_elapsed = t1.elapsed();
 
