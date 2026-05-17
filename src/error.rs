@@ -42,14 +42,14 @@ impl ErrorCode {
 
 /// Wire envelope emitted to stderr when `--json` is set and the command failed.
 #[derive(Debug, Serialize)]
-pub struct ErrorEnvelope<'a> {
-    pub error: ErrorPayload<'a>,
+struct ErrorEnvelope<'a> {
+    error: ErrorPayload<'a>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ErrorPayload<'a> {
-    pub code: ErrorCode,
-    pub message: &'a str,
+struct ErrorPayload<'a> {
+    code: ErrorCode,
+    message: &'a str,
 }
 
 /// Serializes the JSON error envelope as a single line, suitable for
@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(ErrorCode::Unknown.exit_code(), 104);
     }
 
-    // T-EC002: JSON envelope round-trips with SCREAMING_SNAKE_CASE code.
+    // T-EC002: JSON envelope serializes the variant in SCREAMING_SNAKE_CASE.
     #[test]
     fn json_envelope_uses_screaming_snake_case() {
         let json = render_json_error(ErrorCode::UsageError, "bad arg");
@@ -87,7 +87,7 @@ mod tests {
         );
     }
 
-    // T-EC003: Unknown variant surfaces as the project extension code.
+    // T-EC003: Unknown variant serializes as the "UNKNOWN" label.
     #[test]
     fn json_envelope_unknown_serializes_to_unknown_label() {
         let json = render_json_error(ErrorCode::Unknown, "x");

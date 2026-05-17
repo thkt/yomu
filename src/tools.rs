@@ -6,9 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
-
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use amici::cli::embed_with_spinners;
 use amici::cli::exit_code::CliError;

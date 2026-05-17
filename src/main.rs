@@ -5,7 +5,6 @@ use std::io::{self, IsTerminal, Read};
 use std::iter;
 use std::process::ExitCode;
 
-use amici::cli::exit_code::CliError;
 use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand};
 use amici::logging::init_subscriber;
 use clap::error::ErrorKind;
@@ -287,13 +286,7 @@ fn main() -> ExitCode {
 }
 
 fn emit_error(err: &YomuError, json: bool) -> ExitCode {
-    let code = err.error_code();
-    if json {
-        eprintln!("{}", error::render_json_error(code, &err.to_string()));
-    } else {
-        exit_error(&err.to_string());
-    }
-    err.exit_code()
+    emit_error_code(&err.to_string(), err.error_code(), json)
 }
 
 fn emit_error_code(message: &str, code: ErrorCode, json: bool) -> ExitCode {
