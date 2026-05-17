@@ -13,6 +13,22 @@ use super::{
 
 const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
 
+/// KNN-only query over `vec_chunks`. Returns `(chunk_id, distance)` pairs
+/// ordered by ascending distance. Shared by [`vec_search`] (single embedding)
+/// and [`vec_search_multi`] (multiple embeddings sharing one metadata fetch).
+fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f32)>, StorageError> {
+    let query_bytes = f32_as_bytes(embedding);
+    let mut stmt = conn.prepare_cached(
+        "SELECT chunk_id, distance FROM vec_chunks \
+         WHERE embedding MATCH ?1 AND k = ?2 \
+         ORDER BY distance",
+    )?;
+    let rows = stmt.query_map(params![query_bytes, k], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
 fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
     Ok(Chunk {
         file_path: row.get(offset)?,
@@ -52,23 +68,8 @@ pub fn vec_search(
     type_filter: Option<&[ChunkType]>,
     path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
-    let query_bytes = f32_as_bytes(query_embedding);
     let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
-
-    // KNN query — fetch only chunk_id + distance.
-    // vec0 auxiliary columns (+chunk_id) cannot be used in JOIN conditions,
-    // so we avoid a direct JOIN here.
-    let knn_rows: Vec<(i64, f32)> = {
-        let mut stmt = conn.prepare_cached(
-            "SELECT chunk_id, distance FROM vec_chunks \
-             WHERE embedding MATCH ?1 AND k = ?2 \
-             ORDER BY distance",
-        )?;
-        stmt.query_map(params![query_bytes, k], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
+    let knn_rows = knn_only(conn, query_embedding, k)?;
 
     if knn_rows.is_empty() {
         return Ok(Vec::new());
