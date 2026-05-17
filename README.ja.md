@@ -265,7 +265,7 @@ git config --local core.hooksPath .githooks
 ### よく使うコマンド
 
 ```sh
-cargo test                                                # 全テスト
+cargo nextest run                                         # 全テスト（導入: cargo install cargo-nextest --locked）
 cargo clippy --all-targets --all-features -- -D warnings  # lint（CI と同条件）
 cargo fmt -- --check                                      # フォーマット検査
 ```
