@@ -239,6 +239,22 @@ Source files → tree-sitter AST → Semantic chunks → Local embeddings (Ruri 
 
 Other files fall back to character-based chunking with overlap.
 
+## Exit codes
+
+Per ADR-0066 Group 2 (sysexits.h) — agents and scripts can branch on the number for retry policy. With `--json`, errors emit a single-line envelope to stderr: `{"error":{"code":"<CODE>","message":"<text>"}}`.
+
+| Code | `error.code`   | Triggers                                                                                |
+| ---- | -------------- | --------------------------------------------------------------------------------------- |
+| 0    | (none)         | Success                                                                                 |
+| 64   | `USAGE_ERROR`  | Invalid CLI input — clap parse failure, empty query/task, out-of-range numeric argument |
+| 70   | `INTERNAL`     | Invariant violation, search/query failure                                               |
+| 73   | `CANT_CREAT`   | Index DB create/migrate failure, indexing pipeline failure                              |
+| 74   | `IO_ERROR`     | Filesystem IO failure                                                                   |
+| 75   | `TEMP_FAILURE` | Embedder unavailable (model missing / probe failed) — retryable after `yomu model download` |
+| 104  | `UNKNOWN`      | Reserved for unclassified failures (currently unused — surfaces if a path drifts off)    |
+
+> **Breaking change (0.16+)**: prior versions emitted `1`/`2`/`4` for failures. Callers that branch on these numbers must migrate to the sysexits values above. Text-mode stderr remains the same `error: <message>` shape.
+
 ## Limitations
 
 | Limitation                | Details                                                                                     |

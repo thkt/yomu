@@ -1038,8 +1038,8 @@ fn brief_integration_rejects_empty_task() {
     );
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "empty task must exit 2, got: {:?} (stderr: {})",
+        Some(64),
+        "empty task must exit 64 (sysexits USAGE), got: {:?} (stderr: {})",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1073,5 +1073,54 @@ fn brief_integration_json_output_includes_chunks() {
     assert!(
         !parsed["chunks"].as_array().unwrap().is_empty(),
         "expected at least seed chunk, got: {stdout}"
+    );
+}
+
+// --- ADR-0066 Group 2 exit code + JSON error envelope ---
+
+// T-EC201: NoQuery surfaces as sysexits USAGE (64) in text mode.
+#[test]
+fn search_no_query_exits_with_sysexits_usage_text_mode() {
+    let output = yomu_cmd()
+        .args(["search"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "expected sysexits USAGE (64), got: {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.starts_with("error:"),
+        "expected text-mode 'error:' prefix: {stderr}"
+    );
+}
+
+// T-EC202: NoQuery with --json emits JSON envelope with USAGE_ERROR code.
+#[test]
+fn search_no_query_json_emits_usage_error_envelope() {
+    let output = yomu_cmd()
+        .args(["--json", "search"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "expected exit code 64, got: {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
+        .unwrap_or_else(|e| panic!("invalid JSON: {e}: {stderr}"));
+    assert_eq!(parsed["error"]["code"], "USAGE_ERROR", "stderr: {stderr}");
+    assert!(
+        parsed["error"]["message"].is_string(),
+        "expected error.message string: {stderr}"
     );
 }
