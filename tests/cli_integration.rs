@@ -83,7 +83,11 @@ fn search_limit_out_of_range() {
         .args(["search", "test", "--limit", "0"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "clap parse failure must exit with sysexits USAGE (64)"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("0") || stderr.contains("invalid"),
@@ -98,7 +102,11 @@ fn search_limit_too_large() {
         .args(["search", "test", "--limit", "999"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "clap parse failure must exit with sysexits USAGE (64)"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("999") || stderr.contains("invalid"),
@@ -113,7 +121,11 @@ fn search_offset_too_large() {
         .args(["search", "test", "--offset", "999"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "clap parse failure must exit with sysexits USAGE (64)"
+    );
 }
 
 // T-500: impact_depth_too_large
@@ -123,7 +135,11 @@ fn impact_depth_too_large() {
         .args(["impact", "src/foo.ts", "--depth", "99"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "clap parse failure must exit with sysexits USAGE (64)"
+    );
 }
 
 // T-501: search_default_limit_accepted
@@ -142,7 +158,27 @@ fn search_default_limit_accepted() {
 #[test]
 fn unknown_flag_fails() {
     let output = yomu_cmd().arg("--nonexistent").output().unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "clap parse failure must exit with sysexits USAGE (64)"
+    );
+}
+
+// T-503: no_subcommand_exits_usage
+#[test]
+fn no_subcommand_exits_usage() {
+    let output = yomu_cmd().output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "missing subcommand must exit with sysexits USAGE (64)"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("subcommand"),
+        "stderr should mention subcommand: {stderr}"
+    );
 }
 
 // --- Success-path integration tests ---
