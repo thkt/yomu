@@ -3563,8 +3563,7 @@ fn bench_search_hot_path_5emb_50kw() {
         emb[(i + 7) % EMBEDDING_DIMS] = 0.5;
         let content = format!(
             "function handler{i}() {{ render token{i} update cache{i} fetch async await }} \
-             const cfg{i} = {{ value: {i}, label: \"item{i}\" }};",
-            i = i
+             const cfg{i} = {{ value: {i}, label: \"item{i}\" }};"
         );
         insert_chunk(
             &conn,
@@ -3584,7 +3583,6 @@ fn bench_search_hot_path_5emb_50kw() {
         .unwrap();
     }
 
-    // 5 query embeddings.
     let mut embs: Vec<Vec<f32>> = Vec::with_capacity(N_EMBEDDINGS);
     for j in 0..N_EMBEDDINGS {
         let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
@@ -3593,7 +3591,6 @@ fn bench_search_hot_path_5emb_50kw() {
     }
     let emb_refs: Vec<&[f32]> = embs.iter().map(Vec::as_slice).collect();
 
-    // 50 keywords.
     let keywords: Vec<String> = (0..N_KEYWORDS).map(|k| format!("token{k}")).collect();
     let kw_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
 

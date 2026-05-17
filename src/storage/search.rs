@@ -13,6 +13,16 @@ use super::{
 
 const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
 
+/// Hard cap on candidates passed to a single `WHERE id IN (?, ...)` query.
+/// SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 32766; we leave headroom
+/// for filter params.
+const MAX_VEC_CANDIDATES: usize = 30_000;
+
+/// Hard cap on keywords for the bulk UNION ALL doc-frequency query. Above
+/// this we skip the bulk path entirely so we do not build SQL that SQLite
+/// will refuse to compile (`SQLITE_MAX_COMPOUND_SELECT` default is 500).
+const MAX_BULK_DOC_FREQ_KEYWORDS: usize = 500;
+
 /// KNN-only query over `vec_chunks`. Returns `(chunk_id, distance)` pairs
 /// ordered by ascending distance. Shared by [`vec_search`] (single embedding)
 /// and [`vec_search_multi`] (multiple embeddings sharing one metadata fetch).
@@ -27,39 +37,6 @@ fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f3
         Ok((row.get(0)?, row.get(1)?))
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-/// Bulk-fetch chunk metadata by ids with type/path filters applied at the
-/// SQL layer. Used by both [`vec_search`] and [`vec_search_multi`] so that
-/// N-embedding searches share a single round-trip for metadata.
-fn fetch_filtered_chunks(
-    conn: &Connection,
-    chunk_ids: &[i64],
-    type_filter: Option<&[ChunkType]>,
-    path_filter: &[String],
-) -> Result<HashMap<i64, Chunk>, StorageError> {
-    if chunk_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
-         FROM chunks WHERE id IN ({})",
-        anon_placeholders(chunk_ids.len())
-    );
-    let mut params: Vec<Box<dyn ToSql>> = chunk_ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn ToSql>)
-        .collect();
-    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
-    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
-
-    let mut stmt = conn.prepare(&sql)?;
-    let meta = stmt
-        .query_map(params_from_iter(params.iter()), |row| {
-            Ok((row.get::<_, i64>(0)?, chunk_from_row(row, 1)?))
-        })?
-        .collect::<Result<HashMap<_, _>, _>>()?;
-    Ok(meta)
 }
 
 /// Assemble [`SearchResult`]s from a `chunk_id → min distance` map and a
@@ -146,7 +123,7 @@ pub fn vec_search(
     }
 
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
-    let meta = fetch_filtered_chunks(conn, &chunk_ids, type_filter, path_filter)?;
+    let meta = get_chunks_by_ids(conn, &chunk_ids, type_filter, path_filter)?;
     Ok(build_semantic_results(best, &meta, limit))
 }
 
@@ -243,23 +220,33 @@ pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>
     }
 }
 
+/// Bulk-fetch chunk metadata by ids with optional type/path filters applied
+/// at the SQL layer. Shared by [`vec_search`], [`vec_search_multi`], and
+/// callers that need a plain id→chunk lookup.
 pub fn get_chunks_by_ids(
     conn: &Connection,
     ids: &[i64],
+    type_filter: Option<&[ChunkType]>,
+    path_filter: &[String],
 ) -> Result<HashMap<i64, Chunk>, StorageError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = in_placeholders(ids.len());
-    let sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
-         FROM chunks WHERE id IN ({placeholders})"
+    let mut sql = format!(
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
+         FROM chunks WHERE id IN ({})",
+        anon_placeholders(ids.len())
     );
+    let mut params: Vec<Box<dyn ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn ToSql>)
+        .collect();
+    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
+    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
+
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
-        let id: i64 = row.get(0)?;
-        let chunk = chunk_from_row(row, 1)?;
-        Ok((id, chunk))
+    let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+        Ok((row.get::<_, i64>(0)?, chunk_from_row(row, 1)?))
     })?;
     rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
@@ -292,12 +279,18 @@ pub fn get_keyword_doc_frequencies(
         return Ok(Vec::new());
     }
 
-    // Bulk path: 1 round-trip via UNION ALL. SQLite preserves the SELECT
-    // order across UNION ALL in practice, but we attach an explicit `idx`
-    // and ORDER BY to defend against re-ordering.
+    // Above SQLite's SQLITE_MAX_COMPOUND_SELECT (default 500) the UNION ALL
+    // refuses to compile. Drop to per-keyword immediately rather than build
+    // a SQL string we know will fail.
+    if keywords.len() > MAX_BULK_DOC_FREQ_KEYWORDS {
+        return doc_frequencies_per_keyword(conn, keywords, total_chunks);
+    }
+
+    // SQLite preserves SELECT order across UNION ALL in practice, but we
+    // attach an explicit `idx` + ORDER BY to defend against re-ordering.
     let terms: Vec<String> = keywords.iter().map(|k| fts_quote(k)).collect();
     let mut sql = String::with_capacity(terms.len() * 80);
-    for (i, _) in terms.iter().enumerate() {
+    for i in 0..terms.len() {
         if i > 0 {
             sql.push_str(" UNION ALL ");
         }
@@ -385,8 +378,8 @@ pub fn vec_search_multi(
     }
     let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
 
-    // KNN per embedding, MaxSim merge across all embeddings before metadata
-    // fetch. Old impl did N round-trips for metadata; this does 1.
+    // KNN per embedding, MaxSim merge across all embeddings before the shared
+    // metadata fetch.
     let mut best: HashMap<i64, f32> = HashMap::new();
     for emb in query_embeddings {
         for (chunk_id, distance) in knn_only(conn, emb, k)? {
@@ -403,8 +396,19 @@ pub fn vec_search_multi(
         return Ok(Vec::new());
     }
 
+    // Cap candidates by min distance so the IN-clause stays under SQLite's
+    // SQLITE_MAX_VARIABLE_NUMBER (32766). Without this, large-corpus searches
+    // through `search_from_file` (up to 20 sub-embeddings × fetch_limit × 10
+    // oversample) can overflow the prepared-statement parameter limit.
+    if best.len() > MAX_VEC_CANDIDATES {
+        let mut pairs: Vec<(i64, f32)> = best.into_iter().collect();
+        pairs.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+        pairs.truncate(MAX_VEC_CANDIDATES);
+        best = pairs.into_iter().collect();
+    }
+
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
-    let meta = fetch_filtered_chunks(conn, &chunk_ids, type_filter, path_filter)?;
+    let meta = get_chunks_by_ids(conn, &chunk_ids, type_filter, path_filter)?;
     Ok(build_semantic_results(best, &meta, limit))
 }
 
