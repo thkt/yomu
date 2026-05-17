@@ -288,6 +288,62 @@ pub fn get_keyword_doc_frequencies(
     keywords: &[&str],
     total_chunks: u32,
 ) -> Result<Vec<u32>, StorageError> {
+    if keywords.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Bulk path: 1 round-trip via UNION ALL. SQLite preserves the SELECT
+    // order across UNION ALL in practice, but we attach an explicit `idx`
+    // and ORDER BY to defend against re-ordering.
+    let terms: Vec<String> = keywords.iter().map(|k| fts_quote(k)).collect();
+    let mut sql = String::with_capacity(terms.len() * 80);
+    for (i, _) in terms.iter().enumerate() {
+        if i > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        sql.push_str(&format!(
+            "SELECT {i} AS idx, COUNT(*) AS df FROM fts_chunks WHERE fts_chunks MATCH ?"
+        ));
+    }
+    sql.push_str(" ORDER BY idx");
+
+    let bulk = conn.prepare(&sql).and_then(|mut stmt| {
+        stmt.query_map(params_from_iter(terms.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, u32>(1)?))
+        })?
+        .collect::<Result<Vec<(i64, u32)>, _>>()
+    });
+
+    match bulk {
+        Ok(rows) if rows.len() == keywords.len() => {
+            Ok(rows.into_iter().map(|(_, df)| df).collect())
+        }
+        Ok(rows) => {
+            tracing::warn!(
+                expected = keywords.len(),
+                got = rows.len(),
+                "FTS5 bulk doc-freq query returned unexpected row count, falling back to per-keyword"
+            );
+            doc_frequencies_per_keyword(conn, keywords, total_chunks)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                count = keywords.len(),
+                "FTS5 bulk doc-freq query failed, falling back to per-keyword"
+            );
+            doc_frequencies_per_keyword(conn, keywords, total_chunks)
+        }
+    }
+}
+
+/// Per-keyword fallback used when the bulk UNION ALL query fails. Substitutes
+/// `total_chunks` for individual keyword failures so IDF stays neutral.
+fn doc_frequencies_per_keyword(
+    conn: &Connection,
+    keywords: &[&str],
+    total_chunks: u32,
+) -> Result<Vec<u32>, StorageError> {
     let mut dfs = Vec::with_capacity(keywords.len());
     let mut failed: Vec<(&str, String)> = Vec::new();
     for kw in keywords {
