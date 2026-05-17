@@ -34,8 +34,9 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=6ca986d#6ca986df827ba213761dd947dd607099ca2f1055"
+source = "git+https://github.com/thkt/amici?rev=2b54c72#2b54c728f745a88794a7b9084b06d4b7723158af"
 dependencies = [
+ "bytemuck",
  "rand 0.10.1",
  "rand_chacha 0.10.0",
  "rurico",
@@ -2106,13 +2107,11 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=0c0e0f6#0c0e0f6c93c2705d1d76304a15fc8549da07052b"
+source = "git+https://github.com/thkt/rurico?rev=bb25a06#bb25a06cd32b5e83df291d6a7cf251de738ac7bb"
 dependencies = [
  "bytemuck",
  "hf-hub",
  "mlx-rs",
- "rand 0.10.1",
- "rand_chacha 0.10.0",
  "rurico-ffi",
  "rusqlite",
  "serde",
@@ -2126,7 +2125,7 @@ dependencies = [
 [[package]]
 name = "rurico-ffi"
 version = "0.1.0"
-source = "git+https://github.com/thkt/rurico?rev=0c0e0f6#0c0e0f6c93c2705d1d76304a15fc8549da07052b"
+source = "git+https://github.com/thkt/rurico?rev=bb25a06#bb25a06cd32b5e83df291d6a7cf251de738ac7bb"
 dependencies = [
  "mlx-sys",
  "rusqlite",
@@ -3555,6 +3554,7 @@ name = "yomu"
 version = "0.15.0"
 dependencies = [
  "amici",
+ "bytemuck",
  "clap",
  "ignore",
  "rurico",

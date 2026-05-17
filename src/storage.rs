@@ -22,7 +22,6 @@ use rusqlite::Connection;
 pub type Db = Connection;
 
 pub use rurico::embed::EMBEDDING_DIMS;
-pub use rurico::storage::f32_as_bytes;
 pub(crate) use rurico::storage::{QueryNormalizationConfig, normalize_for_fts};
 
 /// FTS normalization shared by index INSERT and query MATCH paths.
