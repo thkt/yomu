@@ -29,6 +29,64 @@ fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f3
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
+/// Bulk-fetch chunk metadata by ids with type/path filters applied at the
+/// SQL layer. Used by both [`vec_search`] and [`vec_search_multi`] so that
+/// N-embedding searches share a single round-trip for metadata.
+fn fetch_filtered_chunks(
+    conn: &Connection,
+    chunk_ids: &[i64],
+    type_filter: Option<&[ChunkType]>,
+    path_filter: &[String],
+) -> Result<HashMap<i64, Chunk>, StorageError> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut sql = format!(
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
+         FROM chunks WHERE id IN ({})",
+        anon_placeholders(chunk_ids.len())
+    );
+    let mut params: Vec<Box<dyn ToSql>> = chunk_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn ToSql>)
+        .collect();
+    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
+    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
+
+    let mut stmt = conn.prepare(&sql)?;
+    let meta = stmt
+        .query_map(params_from_iter(params.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, chunk_from_row(row, 1)?))
+        })?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    Ok(meta)
+}
+
+/// Assemble [`SearchResult`]s from a `chunk_id → min distance` map and a
+/// filtered metadata map. Entries missing from `meta` (filtered out) are
+/// dropped. Result is sorted by ascending distance and truncated to `limit`.
+fn build_semantic_results(
+    best: HashMap<i64, f32>,
+    meta: &HashMap<i64, Chunk>,
+    limit: u32,
+) -> Vec<SearchResult> {
+    let mut results: Vec<SearchResult> = best
+        .into_iter()
+        .filter_map(|(chunk_id, distance)| {
+            meta.get(&chunk_id).map(|chunk| SearchResult {
+                chunk: chunk.clone(),
+                chunk_id: Some(chunk_id),
+                distance,
+                match_source: MatchSource::Semantic,
+                score: 1.0 / (1.0 + distance),
+            })
+        })
+        .collect();
+    results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    results.truncate(limit as usize);
+    results
+}
+
 fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
     Ok(Chunk {
         file_path: row.get(offset)?,
@@ -88,52 +146,8 @@ pub fn vec_search(
     }
 
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
-    let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
-         FROM chunks WHERE id IN ({})",
-        anon_placeholders(chunk_ids.len())
-    );
-    let mut params: Vec<Box<dyn ToSql>> = chunk_ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn ToSql>)
-        .collect();
-    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
-    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
-
-    let mut stmt2 = conn.prepare(&sql)?;
-    let meta: HashMap<i64, Chunk> = stmt2
-        .query_map(params_from_iter(params.iter()), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                Chunk {
-                    file_path: row.get(1)?,
-                    chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                    name: row.get(3)?,
-                    content: row.get(4)?,
-                    start_line: row.get(5)?,
-                    end_line: row.get(6)?,
-                    parent_chunk_id: row.get(7)?,
-                },
-            ))
-        })?
-        .collect::<Result<HashMap<_, _>, _>>()?;
-
-    let mut results: Vec<SearchResult> = best
-        .into_iter()
-        .filter_map(|(chunk_id, distance)| {
-            meta.get(&chunk_id).map(|chunk| SearchResult {
-                chunk: chunk.clone(),
-                chunk_id: Some(chunk_id),
-                distance,
-                match_source: MatchSource::Semantic,
-                score: 1.0 / (1.0 + distance),
-            })
-        })
-        .collect();
-
-    results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-    results.truncate(limit as usize);
-    Ok(results)
+    let meta = fetch_filtered_chunks(conn, &chunk_ids, type_filter, path_filter)?;
+    Ok(build_semantic_results(best, &meta, limit))
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -313,27 +327,29 @@ pub fn vec_search_multi(
     if query_embeddings.is_empty() {
         return Ok(Vec::new());
     }
+    let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
 
-    let mut best: HashMap<i64, SearchResult> = HashMap::new();
+    // KNN per embedding, MaxSim merge across all embeddings before metadata
+    // fetch. Old impl did N round-trips for metadata; this does 1.
+    let mut best: HashMap<i64, f32> = HashMap::new();
     for emb in query_embeddings {
-        for result in vec_search(conn, emb, limit, type_filter, path_filter)? {
-            if let Some(chunk_id) = result.chunk_id {
-                best.entry(chunk_id)
-                    .and_modify(|existing| {
-                        if result.distance < existing.distance {
-                            existing.distance = result.distance;
-                            existing.score = result.score;
-                        }
-                    })
-                    .or_insert(result);
-            }
+        for (chunk_id, distance) in knn_only(conn, emb, k)? {
+            best.entry(chunk_id)
+                .and_modify(|d| {
+                    if distance < *d {
+                        *d = distance;
+                    }
+                })
+                .or_insert(distance);
         }
     }
+    if best.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    let mut merged: Vec<SearchResult> = best.into_values().collect();
-    merged.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-    merged.truncate(limit as usize);
-    Ok(merged)
+    let chunk_ids: Vec<i64> = best.keys().copied().collect();
+    let meta = fetch_filtered_chunks(conn, &chunk_ids, type_filter, path_filter)?;
+    Ok(build_semantic_results(best, &meta, limit))
 }
 
 pub fn get_chunks_for_from_target(
