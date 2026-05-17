@@ -28,7 +28,7 @@ const MAX_BULK_DOC_FREQ_KEYWORDS: usize = 500;
 /// ordered by ascending distance. Shared by [`vec_search`] (single embedding)
 /// and [`vec_search_multi`] (multiple embeddings sharing one metadata fetch).
 fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f32)>, StorageError> {
-    let query_bytes = cast_slice::<f32, u8>(embedding);
+    let query_bytes: &[u8] = cast_slice(embedding);
     let mut stmt = conn.prepare_cached(
         "SELECT chunk_id, distance FROM vec_chunks \
          WHERE embedding MATCH ?1 AND k = ?2 \
