@@ -727,7 +727,7 @@ impl Yomu {
         if parent_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids))
+        self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids, None, &[]))
     }
 
     fn semantic_search(

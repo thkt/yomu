@@ -13,6 +13,57 @@ use super::{
 
 const VEC_MAXSIM_OVERSAMPLE: u32 = 10;
 
+/// Hard cap on candidates passed to a single `WHERE id IN (?, ...)` query.
+/// SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 32766; we leave headroom
+/// for filter params.
+const MAX_VEC_CANDIDATES: usize = 30_000;
+
+/// Hard cap on keywords for the bulk UNION ALL doc-frequency query. Above
+/// this we skip the bulk path entirely so we do not build SQL that SQLite
+/// will refuse to compile (`SQLITE_MAX_COMPOUND_SELECT` default is 500).
+const MAX_BULK_DOC_FREQ_KEYWORDS: usize = 500;
+
+/// KNN-only query over `vec_chunks`. Returns `(chunk_id, distance)` pairs
+/// ordered by ascending distance. Shared by [`vec_search`] (single embedding)
+/// and [`vec_search_multi`] (multiple embeddings sharing one metadata fetch).
+fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f32)>, StorageError> {
+    let query_bytes = f32_as_bytes(embedding);
+    let mut stmt = conn.prepare_cached(
+        "SELECT chunk_id, distance FROM vec_chunks \
+         WHERE embedding MATCH ?1 AND k = ?2 \
+         ORDER BY distance",
+    )?;
+    let rows = stmt.query_map(params![query_bytes, k], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// Assemble [`SearchResult`]s from a `chunk_id → min distance` map and a
+/// filtered metadata map. Entries missing from `meta` (filtered out) are
+/// dropped. Result is sorted by ascending distance and truncated to `limit`.
+fn build_semantic_results(
+    best: HashMap<i64, f32>,
+    meta: &HashMap<i64, Chunk>,
+    limit: u32,
+) -> Vec<SearchResult> {
+    let mut results: Vec<SearchResult> = best
+        .into_iter()
+        .filter_map(|(chunk_id, distance)| {
+            meta.get(&chunk_id).map(|chunk| SearchResult {
+                chunk: chunk.clone(),
+                chunk_id: Some(chunk_id),
+                distance,
+                match_source: MatchSource::Semantic,
+                score: 1.0 / (1.0 + distance),
+            })
+        })
+        .collect();
+    results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    results.truncate(limit as usize);
+    results
+}
+
 fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
     Ok(Chunk {
         file_path: row.get(offset)?,
@@ -52,23 +103,8 @@ pub fn vec_search(
     type_filter: Option<&[ChunkType]>,
     path_filter: &[String],
 ) -> Result<Vec<SearchResult>, StorageError> {
-    let query_bytes = f32_as_bytes(query_embedding);
     let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
-
-    // KNN query — fetch only chunk_id + distance.
-    // vec0 auxiliary columns (+chunk_id) cannot be used in JOIN conditions,
-    // so we avoid a direct JOIN here.
-    let knn_rows: Vec<(i64, f32)> = {
-        let mut stmt = conn.prepare_cached(
-            "SELECT chunk_id, distance FROM vec_chunks \
-             WHERE embedding MATCH ?1 AND k = ?2 \
-             ORDER BY distance",
-        )?;
-        stmt.query_map(params![query_bytes, k], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-    };
+    let knn_rows = knn_only(conn, query_embedding, k)?;
 
     if knn_rows.is_empty() {
         return Ok(Vec::new());
@@ -87,52 +123,8 @@ pub fn vec_search(
     }
 
     let chunk_ids: Vec<i64> = best.keys().copied().collect();
-    let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
-         FROM chunks WHERE id IN ({})",
-        anon_placeholders(chunk_ids.len())
-    );
-    let mut params: Vec<Box<dyn ToSql>> = chunk_ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn ToSql>)
-        .collect();
-    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
-    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
-
-    let mut stmt2 = conn.prepare(&sql)?;
-    let meta: HashMap<i64, Chunk> = stmt2
-        .query_map(params_from_iter(params.iter()), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                Chunk {
-                    file_path: row.get(1)?,
-                    chunk_type: ChunkType::from_db(row.get::<_, String>(2)?.as_ref()),
-                    name: row.get(3)?,
-                    content: row.get(4)?,
-                    start_line: row.get(5)?,
-                    end_line: row.get(6)?,
-                    parent_chunk_id: row.get(7)?,
-                },
-            ))
-        })?
-        .collect::<Result<HashMap<_, _>, _>>()?;
-
-    let mut results: Vec<SearchResult> = best
-        .into_iter()
-        .filter_map(|(chunk_id, distance)| {
-            meta.get(&chunk_id).map(|chunk| SearchResult {
-                chunk: chunk.clone(),
-                chunk_id: Some(chunk_id),
-                distance,
-                match_source: MatchSource::Semantic,
-                score: 1.0 / (1.0 + distance),
-            })
-        })
-        .collect();
-
-    results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-    results.truncate(limit as usize);
-    Ok(results)
+    let meta = get_chunks_by_ids(conn, &chunk_ids, type_filter, path_filter)?;
+    Ok(build_semantic_results(best, &meta, limit))
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -228,23 +220,33 @@ pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>
     }
 }
 
+/// Bulk-fetch chunk metadata by ids with optional type/path filters applied
+/// at the SQL layer. Shared by [`vec_search`], [`vec_search_multi`], and
+/// callers that need a plain id→chunk lookup.
 pub fn get_chunks_by_ids(
     conn: &Connection,
     ids: &[i64],
+    type_filter: Option<&[ChunkType]>,
+    path_filter: &[String],
 ) -> Result<HashMap<i64, Chunk>, StorageError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = in_placeholders(ids.len());
-    let sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
-         FROM chunks WHERE id IN ({placeholders})"
+    let mut sql = format!(
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
+         FROM chunks WHERE id IN ({})",
+        anon_placeholders(ids.len())
     );
+    let mut params: Vec<Box<dyn ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn ToSql>)
+        .collect();
+    append_like_prefix_filter(&mut sql, &mut params, "file_path", path_filter);
+    append_chunk_type_filter(&mut sql, &mut params, "chunk_type", type_filter);
+
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
-        let id: i64 = row.get(0)?;
-        let chunk = chunk_from_row(row, 1)?;
-        Ok((id, chunk))
+    let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+        Ok((row.get::<_, i64>(0)?, chunk_from_row(row, 1)?))
     })?;
     rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)
@@ -269,6 +271,68 @@ pub fn get_chunks_for_files(conn: &Connection, paths: &[&str]) -> Result<Vec<Chu
 }
 
 pub fn get_keyword_doc_frequencies(
+    conn: &Connection,
+    keywords: &[&str],
+    total_chunks: u32,
+) -> Result<Vec<u32>, StorageError> {
+    if keywords.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Above SQLite's SQLITE_MAX_COMPOUND_SELECT (default 500) the UNION ALL
+    // refuses to compile. Drop to per-keyword immediately rather than build
+    // a SQL string we know will fail.
+    if keywords.len() > MAX_BULK_DOC_FREQ_KEYWORDS {
+        return doc_frequencies_per_keyword(conn, keywords, total_chunks);
+    }
+
+    // SQLite preserves SELECT order across UNION ALL in practice, but we
+    // attach an explicit `idx` + ORDER BY to defend against re-ordering.
+    let terms: Vec<String> = keywords.iter().map(|k| fts_quote(k)).collect();
+    let mut sql = String::with_capacity(terms.len() * 80);
+    for i in 0..terms.len() {
+        if i > 0 {
+            sql.push_str(" UNION ALL ");
+        }
+        sql.push_str(&format!(
+            "SELECT {i} AS idx, COUNT(*) AS df FROM fts_chunks WHERE fts_chunks MATCH ?"
+        ));
+    }
+    sql.push_str(" ORDER BY idx");
+
+    let bulk = conn.prepare(&sql).and_then(|mut stmt| {
+        stmt.query_map(params_from_iter(terms.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, u32>(1)?))
+        })?
+        .collect::<Result<Vec<(i64, u32)>, _>>()
+    });
+
+    match bulk {
+        Ok(rows) if rows.len() == keywords.len() => {
+            Ok(rows.into_iter().map(|(_, df)| df).collect())
+        }
+        Ok(rows) => {
+            tracing::warn!(
+                expected = keywords.len(),
+                got = rows.len(),
+                "FTS5 bulk doc-freq query returned unexpected row count, falling back to per-keyword"
+            );
+            doc_frequencies_per_keyword(conn, keywords, total_chunks)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                count = keywords.len(),
+                "FTS5 bulk doc-freq query failed, falling back to per-keyword"
+            );
+            doc_frequencies_per_keyword(conn, keywords, total_chunks)
+        }
+    }
+}
+
+/// Per-keyword fallback used when the bulk UNION ALL query fails. Substitutes
+/// `total_chunks` for individual keyword failures so IDF stays neutral.
+fn doc_frequencies_per_keyword(
     conn: &Connection,
     keywords: &[&str],
     total_chunks: u32,
@@ -312,27 +376,40 @@ pub fn vec_search_multi(
     if query_embeddings.is_empty() {
         return Ok(Vec::new());
     }
+    let k = limit.saturating_mul(VEC_MAXSIM_OVERSAMPLE);
 
-    let mut best: HashMap<i64, SearchResult> = HashMap::new();
+    // KNN per embedding, MaxSim merge across all embeddings before the shared
+    // metadata fetch.
+    let mut best: HashMap<i64, f32> = HashMap::new();
     for emb in query_embeddings {
-        for result in vec_search(conn, emb, limit, type_filter, path_filter)? {
-            if let Some(chunk_id) = result.chunk_id {
-                best.entry(chunk_id)
-                    .and_modify(|existing| {
-                        if result.distance < existing.distance {
-                            existing.distance = result.distance;
-                            existing.score = result.score;
-                        }
-                    })
-                    .or_insert(result);
-            }
+        for (chunk_id, distance) in knn_only(conn, emb, k)? {
+            best.entry(chunk_id)
+                .and_modify(|d| {
+                    if distance < *d {
+                        *d = distance;
+                    }
+                })
+                .or_insert(distance);
         }
     }
+    if best.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    let mut merged: Vec<SearchResult> = best.into_values().collect();
-    merged.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-    merged.truncate(limit as usize);
-    Ok(merged)
+    // Cap candidates by min distance so the IN-clause stays under SQLite's
+    // SQLITE_MAX_VARIABLE_NUMBER (32766). Without this, large-corpus searches
+    // through `search_from_file` (up to 20 sub-embeddings × fetch_limit × 10
+    // oversample) can overflow the prepared-statement parameter limit.
+    if best.len() > MAX_VEC_CANDIDATES {
+        let mut pairs: Vec<(i64, f32)> = best.into_iter().collect();
+        pairs.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+        pairs.truncate(MAX_VEC_CANDIDATES);
+        best = pairs.into_iter().collect();
+    }
+
+    let chunk_ids: Vec<i64> = best.keys().copied().collect();
+    let meta = get_chunks_by_ids(conn, &chunk_ids, type_filter, path_filter)?;
+    Ok(build_semantic_results(best, &meta, limit))
 }
 
 pub fn get_chunks_for_from_target(

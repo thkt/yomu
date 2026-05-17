@@ -3542,3 +3542,85 @@ fn search_by_fts_fallback_to_quoted_literal_on_sanitize_error() {
         "fts_quote fallback should find content containing 'NOT', got empty"
     );
 }
+
+// T-580: wall-clock timing for #133 bulk-fetch refactor.
+// Run with: cargo test --release -- --ignored --nocapture bench_search_hot_path_5emb_50kw
+#[test]
+#[ignore]
+fn bench_search_hot_path_5emb_50kw() {
+    use std::time::Instant;
+    const N_CHUNKS: usize = 200;
+    const N_EMBEDDINGS: usize = 5;
+    const N_KEYWORDS: usize = 50;
+    const ITERATIONS: u32 = 20;
+
+    let (conn, _dir) = test_db();
+
+    // Seed corpus: 200 chunks, varied content + embeddings.
+    for i in 0..N_CHUNKS {
+        let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
+        emb[i % EMBEDDING_DIMS] = 1.0;
+        emb[(i + 7) % EMBEDDING_DIMS] = 0.5;
+        let content = format!(
+            "function handler{i}() {{ render token{i} update cache{i} fetch async await }} \
+             const cfg{i} = {{ value: {i}, label: \"item{i}\" }};"
+        );
+        insert_chunk(
+            &conn,
+            &format!("src/mod_{}.tsx", i % 20),
+            &NewChunk {
+                chunk_type: &ChunkType::Component,
+                name: Some(&format!("Component{i}")),
+                content: &content,
+                start_line: 1,
+                end_line: 5,
+                parent_index: None,
+            },
+            &format!("hash{i}"),
+            &ce(emb),
+            None,
+        )
+        .unwrap();
+    }
+
+    let mut embs: Vec<Vec<f32>> = Vec::with_capacity(N_EMBEDDINGS);
+    for j in 0..N_EMBEDDINGS {
+        let mut emb = vec![0.0_f32; EMBEDDING_DIMS];
+        emb[j * 13 % EMBEDDING_DIMS] = 1.0;
+        embs.push(emb);
+    }
+    let emb_refs: Vec<&[f32]> = embs.iter().map(Vec::as_slice).collect();
+
+    let keywords: Vec<String> = (0..N_KEYWORDS).map(|k| format!("token{k}")).collect();
+    let kw_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
+    let total_chunks = u32::try_from(N_CHUNKS).expect("N_CHUNKS fits in u32");
+
+    // Warm up.
+    let _ = vec_search_multi(&conn, &emb_refs, 20, None, &[]).unwrap();
+    let _ = get_keyword_doc_frequencies(&conn, &kw_refs, total_chunks).unwrap();
+
+    // Time vec_search_multi.
+    let t0 = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = vec_search_multi(&conn, &emb_refs, 20, None, &[]).unwrap();
+    }
+    let vsm_elapsed = t0.elapsed();
+
+    // Time get_keyword_doc_frequencies.
+    let t1 = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = get_keyword_doc_frequencies(&conn, &kw_refs, total_chunks).unwrap();
+    }
+    let gkdf_elapsed = t1.elapsed();
+
+    println!(
+        "vec_search_multi: {N_EMBEDDINGS} embs × {ITERATIONS} iters, {N_CHUNKS} chunks corpus → {:.2}ms total, {:.3}ms/call",
+        vsm_elapsed.as_secs_f64() * 1000.0,
+        vsm_elapsed.as_secs_f64() * 1000.0 / f64::from(ITERATIONS)
+    );
+    println!(
+        "get_keyword_doc_frequencies: {N_KEYWORDS} kw × {ITERATIONS} iters, {N_CHUNKS} chunks corpus → {:.2}ms total, {:.3}ms/call",
+        gkdf_elapsed.as_secs_f64() * 1000.0,
+        gkdf_elapsed.as_secs_f64() * 1000.0 / f64::from(ITERATIONS)
+    );
+}
