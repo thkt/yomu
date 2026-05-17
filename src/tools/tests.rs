@@ -1881,8 +1881,9 @@ fn json_notes_present_when_degraded() {
         "notes should contain degradation reason: {json}"
     );
     assert_eq!(
-        notes[0], "embedding model not installed; results from text search only",
-        "note should match NotInstalled variant: {json}"
+        notes[0],
+        "embedding model not installed; run `yomu model download` to enable semantic search",
+        "note should include `yomu model download` hint: {json}"
     );
 }
 
