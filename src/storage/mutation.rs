@@ -1,7 +1,7 @@
+use bytemuck::cast_slice;
 use rusqlite::Connection;
 
 use rurico::embed::ChunkedEmbedding;
-use rurico::storage::f32_as_bytes;
 
 use crate::text::split_identifier;
 
@@ -58,7 +58,7 @@ pub(super) fn insert_sub_embeddings(
     chunked_emb: &ChunkedEmbedding,
 ) -> Result<(), StorageError> {
     for (sub_idx, emb_slice) in chunked_emb.chunks.iter().enumerate() {
-        let bytes = f32_as_bytes(emb_slice);
+        let bytes = cast_slice::<f32, u8>(emb_slice);
         conn.prepare_cached(
             "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
         )?

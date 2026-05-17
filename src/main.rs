@@ -9,7 +9,7 @@ use amici::cli::{deprecation_warn, exit_error, hint_arrow, try_expand_shorthand}
 use amici::logging::init_subscriber;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
-use rurico::model_probe::handle_probe_if_needed;
+use rurico::handle_probe_if_needed;
 use yomu::brief;
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,

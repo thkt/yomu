@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use bytemuck::cast_slice;
 use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder, ModelId};
 use rurico::reranker::{MockReranker, RankedResult, Rerank, RerankerError};
 use tempfile::tempdir;
@@ -1529,7 +1530,7 @@ fn bench_knn_round_trips() {
 
     let run = |n: usize, label: &str| {
         let emb_bytes: Vec<Vec<u8>> = (0..n)
-            .map(|i| storage::f32_as_bytes(&emb_axis(i % 32)).to_vec())
+            .map(|i| cast_slice::<f32, u8>(&emb_axis(i % 32)).to_vec())
             .collect();
         let iters = 50;
         let t = Instant::now();
@@ -1606,7 +1607,7 @@ fn search_from_file_excludes_source_chunks() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_src1, id_src2]);
 
     let results = search_from_file(&conn, &emb_bytes, &source_ids, None, 10, &[]).unwrap();
@@ -1670,7 +1671,7 @@ fn search_from_file_with_query_applies_fts_filter() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("error"), 10, &[]).unwrap();
@@ -1716,7 +1717,7 @@ fn search_from_file_fts_zero_matches_returns_empty() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     let results =
@@ -1756,7 +1757,7 @@ fn search_from_file_caps_sub_embeddings_at_20() {
     .unwrap();
 
     // Generate 25 sub-embeddings (all same vector for simplicity)
-    let emb_bytes = storage::f32_as_bytes(&emb_axis(0)).to_vec();
+    let emb_bytes = cast_slice::<f32, u8>(&emb_axis(0)).to_vec();
     let entries: Vec<Vec<u8>> = (0..25).map(|_| emb_bytes.clone()).collect();
     let source_ids = HashSet::new();
 
@@ -1842,7 +1843,7 @@ fn search_from_file_fts_uses_fetch_limit_not_limit() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     // limit=1: with bug, FTS picks top BM25 (far_handler); with fix, all pass through to rerank
@@ -1950,7 +1951,7 @@ fn search_from_file_3x_overfetch_reaches_third_candidate() {
     .unwrap();
 
     // Search from emb_axis(0) with query "magic", limit=1 → fetch_limit=3
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     let results = search_from_file(&conn, &emb_bytes, &source_ids, Some("magic"), 1, &[]).unwrap();
@@ -2006,7 +2007,7 @@ fn search_from_file_source_exclusion_does_not_empty_results_at_limit_1() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     let results = search_from_file(&conn, &emb_bytes, &source_ids, None, 1, &[]).unwrap();
@@ -2057,7 +2058,7 @@ fn search_from_file_stopword_query_falls_back_to_semantic() {
     )
     .unwrap();
 
-    let emb_bytes = vec![storage::f32_as_bytes(&emb_axis(0)).to_vec()];
+    let emb_bytes = vec![cast_slice::<f32, u8>(&emb_axis(0)).to_vec()];
     let source_ids = HashSet::from([id_source]);
 
     // "a" is a stopword → extract_keywords returns [] → must behave like query=None

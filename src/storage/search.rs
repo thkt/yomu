@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use amici::storage::filter::{
     append_exclude_ids, append_in_filter, append_include_ids, append_like_prefix_filter,
 };
+use bytemuck::cast_slice;
 use rurico::storage::{fts_quote, prepare_match_query};
 use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter, types::ToSql};
 
 use super::{
-    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, f32_as_bytes,
+    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders,
     fts_normalization, in_placeholders,
 };
 
@@ -27,7 +28,7 @@ const MAX_BULK_DOC_FREQ_KEYWORDS: usize = 500;
 /// ordered by ascending distance. Shared by [`vec_search`] (single embedding)
 /// and [`vec_search_multi`] (multiple embeddings sharing one metadata fetch).
 fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f32)>, StorageError> {
-    let query_bytes = f32_as_bytes(embedding);
+    let query_bytes = cast_slice::<f32, u8>(embedding);
     let mut stmt = conn.prepare_cached(
         "SELECT chunk_id, distance FROM vec_chunks \
          WHERE embedding MATCH ?1 AND k = ?2 \
