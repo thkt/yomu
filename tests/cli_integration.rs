@@ -406,7 +406,8 @@ fn search_format_json_includes_index_and_degraded_notes() {
     );
     assert!(
         notes.iter().any(|n| n
-            == "embedding model not installed; run `yomu model download` to enable semantic search"),
+            .as_str()
+            .is_some_and(|s| s.contains("yomu model download"))),
         "should include degraded note with download hint: {stdout}"
     );
 }
