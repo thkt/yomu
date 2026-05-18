@@ -10,6 +10,8 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: cargo
     directory: /
@@ -21,6 +23,8 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    cooldown:
+      default-days: 7
     groups:
       patch-and-minor:
         update-types:
