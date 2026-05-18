@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=2b54c72#2b54c728f745a88794a7b9084b06d4b7723158af"
+source = "git+https://github.com/thkt/amici?rev=1d16d08#1d16d08f9144b7a522fee6a155bd658ad38c8a88"
 dependencies = [
  "bytemuck",
  "rand 0.10.1",

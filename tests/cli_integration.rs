@@ -405,10 +405,10 @@ fn search_format_json_includes_index_and_degraded_notes() {
         "should include re-index note: {stdout}"
     );
     assert!(
-        notes
-            .iter()
-            .any(|n| n == "embedding model not installed; results from text search only"),
-        "should include degraded note: {stdout}"
+        notes.iter().any(|n| n
+            .as_str()
+            .is_some_and(|s| s.contains("yomu model download"))),
+        "should include degraded note with download hint: {stdout}"
     );
 }
 

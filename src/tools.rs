@@ -293,8 +293,8 @@ impl Yomu {
             notes.push(note);
         }
         if let Some(reason) = self.degraded_reason() {
-            if let Some(note) = degraded_reason_user_note(*reason) {
-                notes.push(note.to_owned());
+            if let Some(note) = degraded_reason_user_note(*reason, "yomu model download") {
+                notes.push(note);
             }
         } else if outcome.degraded {
             notes.push("embedding model not loaded; results from text search only".into());
@@ -555,7 +555,9 @@ impl Yomu {
                         DegradedReason::Disabled => {
                             "embedding is disabled (--no-embed or YOMU_EMBED=0)"
                         }
-                        DegradedReason::NotInstalled => "embedding model not installed",
+                        DegradedReason::NotInstalled => {
+                            "embedding model not installed; run `yomu model download` to enable semantic search"
+                        }
                         DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
                             "embedding model unavailable"
                         }
