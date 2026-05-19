@@ -8,9 +8,7 @@ use rurico::storage::ensure_sqlite_vec;
 use rusqlite::Connection;
 use rusqlite::ffi::{Error as FfiError, ErrorCode};
 
-use crate::text::split_identifier;
-
-use super::{EMBEDDING_DIMS, StorageError, fts_normalization, normalize_for_fts};
+use super::{EMBEDDING_DIMS, StorageError};
 
 pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     ensure_sqlite_vec().map_err(|e| StorageError::Io(io::Error::other(e)))?;
@@ -51,8 +49,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
 
 const SCHEMA_VERSION: u32 = 8;
 
-const DDL_FTS_CHUNKS: &str =
-    "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path)";
+const DDL_FTS_CHUNKS: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path, tokenize='trigram')";
 
 const DDL_FTS_CHUNKS_VOCAB: &str =
     "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab USING fts5vocab(fts_chunks, row)";
@@ -198,20 +195,8 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
     }
     tracing::info!(from, to, "Migrating schema from v{from} to v{to}");
 
-    // v2 → v3: populate fts_chunks from existing chunks
-    if from < 3 {
-        let _automerge = FtsAutomergeGuard::new(conn)?;
-        conn.execute_batch(
-            "INSERT OR IGNORE INTO fts_chunks(rowid, content)
-             SELECT id, content FROM chunks",
-        )?;
-        fts_optimize(conn)?;
-    }
-
-    // v3 → v4: add fts5vocab table for short-term expansion
-    if from < 4 {
-        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
-    }
+    // v2 → v4 are intentionally skipped: v6 → v7 below drops fts_chunks and
+    // clears file_hash, so any earlier FTS work would just be overwritten.
 
     // v4 → v5: add parent_chunk_id for subchunk extraction
     if from < 5 && !column_exists(conn, "SELECT parent_chunk_id FROM chunks LIMIT 0")? {
@@ -225,22 +210,17 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         conn.execute_batch("ALTER TABLE file_context ADD COLUMN mtime_epoch INTEGER")?;
     }
 
-    // v6 → v7: rebuild FTS with 3 columns (name, content, file_path)
+    // v6 → v7: rebuild FTS with 3 columns (name, content, file_path).
+    // Drop fts_chunks/vocab and let `yomu index` repopulate on the next run.
     if from < 7 {
-        conn.execute_batch("SAVEPOINT fts_v7")?;
-        match rebuild_fts_v7(conn) {
-            Ok(()) => conn.execute_batch("RELEASE fts_v7")?,
-            Err(e) => {
-                if let Err(rb_err) = conn.execute_batch("ROLLBACK TO fts_v7") {
-                    tracing::error!(
-                        error = %rb_err,
-                        original_error = %e,
-                        "ROLLBACK TO fts_v7 failed"
-                    );
-                }
-                return Err(e);
-            }
-        }
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS fts_chunks_vocab; DROP TABLE IF EXISTS fts_chunks;",
+        )?;
+        conn.execute_batch(DDL_FTS_CHUNKS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
+        conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
+        let _span = tracing::info_span!("migration_v7", path = %path.display()).entered();
+        notify_schema_change("yomu", "FTS index", 0, "yomu index");
     }
 
     // v7 → v8: migrate vec_chunks to multi-sub-chunk schema, add embedded_chunk_ids
@@ -256,43 +236,6 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         notify_schema_change("yomu", "embeddings", 0, "yomu index");
     }
 
-    Ok(())
-}
-
-fn rebuild_fts_v7(conn: &Connection) -> Result<(), StorageError> {
-    let _automerge = FtsAutomergeGuard::new(conn)?;
-    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")?;
-    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")?;
-    conn.execute_batch("CREATE VIRTUAL TABLE fts_chunks USING fts5(name, content, file_path)")?;
-
-    let mut stmt = conn.prepare("SELECT id, file_path, name, content FROM chunks")?;
-    let mut rows = stmt.query([])?;
-    {
-        let mut insert = conn.prepare(
-            "INSERT INTO fts_chunks(rowid, name, content, file_path) VALUES (?1, ?2, ?3, ?4)",
-        )?;
-        let normalization = fts_normalization();
-        while let Some(row) = rows.next()? {
-            let id: i64 = row.get(0)?;
-            let path: String = row.get(1)?;
-            let name: Option<String> = row.get(2)?;
-            let content: String = row.get(3)?;
-            let fts_name = name
-                .as_deref()
-                .map(|n| split_identifier(n).join(" "))
-                .unwrap_or_default();
-            insert.execute(rusqlite::params![
-                id,
-                normalize_for_fts(&fts_name, &normalization),
-                normalize_for_fts(&content, &normalization),
-                normalize_for_fts(&path, &normalization),
-            ])?;
-        }
-    }
-
-    fts_optimize(conn)?;
-
-    conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
     Ok(())
 }
 
