@@ -1866,14 +1866,13 @@ fn fts_chunks_deleted_with_file() {
     assert!(results.is_empty());
 }
 
-// T-160: fts5_migration_from_v2
+// T-160: fts5_migration_from_v2_clears_file_hash
 #[test]
-fn fts5_migration_from_v2() {
+fn fts5_migration_from_v2_clears_file_hash() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
 
-    // Insert a chunk (schema is v3, fts_chunks populated via insert_chunk_row)
     let chunks = vec![NewChunk {
         chunk_type: &ChunkType::Hook,
         name: Some("useX"),
@@ -1892,21 +1891,22 @@ fn fts5_migration_from_v2() {
     )
     .unwrap();
 
-    // Verify FTS5 is empty
-    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), None, 10, &[]).unwrap();
-    assert!(
-        results.is_empty(),
-        "fts_chunks should be empty before migration"
-    );
-
-    // Re-init triggers migration v2→v3
+    // Re-init runs migration v2 → current. Migration drops fts_chunks and
+    // clears file_hash so `yomu index` repopulates on the next run.
     drop(conn);
     let conn = open_db(&db_path).unwrap();
 
-    // Migration should have populated fts_chunks from existing chunks
-    let results = search_by_fts(&conn, &["loading"], None, &HashSet::new(), None, 10, &[]).unwrap();
-    assert_eq!(results.len(), 1, "migration should populate fts_chunks");
-    assert_eq!(results[0].chunk.name.as_deref(), Some("useX"));
+    let hash: String = conn
+        .query_row(
+            "SELECT file_hash FROM chunks WHERE file_path = 'src/x.tsx'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        hash, "",
+        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
+    );
 }
 
 // T-161: fts5_handles_special_characters_in_content
@@ -2039,9 +2039,9 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
-// T-167: migration_v3_to_v4_creates_vocab_table
+// T-167: migration_v3_to_v4_creates_vocab_and_clears_file_hash
 #[test]
-fn migration_v3_to_v4_creates_vocab_table() {
+fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2090,25 +2090,18 @@ fn migration_v3_to_v4_creates_vocab_table() {
         "fts_chunks_vocab should exist after v3->v4 migration"
     );
 
-    // Verify data preserved: chunk should still be searchable
-    let results = search_by_fts(
-        &conn,
-        &["migrationTest"],
-        None,
-        &HashSet::new(),
-        None,
-        10,
-        &[],
-    )
-    .unwrap();
-    assert!(
-        !results.is_empty(),
-        "seeded chunk should survive v3->v4 migration"
-    );
+    // chunks rows are kept across migration even though fts_chunks gets
+    // dropped; file_hash is cleared so `yomu index` repopulates the FTS.
+    let hash: String = conn
+        .query_row(
+            "SELECT file_hash FROM chunks WHERE file_path = 'src/migrate.ts'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(
-        results[0].chunk.name.as_deref(),
-        Some("migrationTest"),
-        "chunk name should be preserved after migration"
+        hash, "",
+        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
     );
 }
 
@@ -2855,9 +2848,9 @@ fn fts_stores_file_path() {
     );
 }
 
-// T-557: migration_v6_to_v7_preserves_fts_search
+// T-557: migration_v6_to_v7_clears_file_hash_for_reindex
 #[test]
-fn migration_v6_to_v7_preserves_fts_search() {
+fn migration_v6_to_v7_clears_file_hash_for_reindex() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2896,58 +2889,16 @@ fn migration_v6_to_v7_preserves_fts_search() {
         .unwrap();
     assert_eq!(version, "8", "schema_version should be 8 after migration");
 
-    let results =
-        search_by_fts(&conn, &["transform"], None, &HashSet::new(), None, 10, &[]).unwrap();
-    assert_eq!(
-        results.len(),
-        1,
-        "FTS search should return results after v6->v7 migration"
-    );
-    assert_eq!(results[0].chunk.name.as_deref(), Some("processData"));
-}
-
-// T-559: migration_populates_fts_name_with_split_identifier
-#[test]
-fn migration_populates_fts_name_with_split_identifier() {
-    let dir = tempdir().unwrap();
-    let db_path = dir.path().join("test.db");
-    let conn = open_db(&db_path).unwrap();
-
-    let chunks = vec![NewChunk {
-        chunk_type: &ChunkType::RustFn,
-        name: Some("getUserName"),
-        content: "fn get_user_name() { return name; }",
-        start_line: 1,
-        end_line: 3,
-        parent_index: None,
-    }];
-    replace_file_chunks_only(&conn, "src/user.rs", &chunks, "h1", "", &[], None).unwrap();
-
-    // Simulate pre-v7: roll back to v6, drop FTS tables
-    conn.execute(
-        "UPDATE index_meta SET value = '6' WHERE key = 'schema_version'",
-        [],
-    )
-    .unwrap();
-    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks")
-        .unwrap();
-    conn.execute_batch("DROP TABLE IF EXISTS fts_chunks_vocab")
-        .unwrap();
-    drop(conn);
-
-    // Re-open triggers migration to v7
-    let conn = open_db(&db_path).unwrap();
-
-    let fts_name: String = conn
+    let hash: String = conn
         .query_row(
-            "SELECT name FROM fts_chunks WHERE rowid = (SELECT id FROM chunks LIMIT 1)",
+            "SELECT file_hash FROM chunks WHERE file_path = 'src/data.rs'",
             [],
             |row| row.get(0),
         )
         .unwrap();
     assert_eq!(
-        fts_name, "get user name",
-        "migration should populate FTS name with split_identifier output (NFKC + ASCII lowercase via rurico Phase 5 normalization)"
+        hash, "",
+        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
     );
 }
 
@@ -3817,4 +3768,79 @@ fn bench_search_hot_path_5emb_50kw() {
         gkdf_elapsed.as_secs_f64() * 1000.0,
         gkdf_elapsed.as_secs_f64() * 1000.0 / f64::from(ITERATIONS)
     );
+}
+
+// === Issue #157: FTS5 trigram tokenizer for Japanese prose search ===
+
+// T-157-002: search_by_fts_finds_japanese_prose_in_markdown
+#[test]
+fn search_by_fts_finds_japanese_prose_in_markdown() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::MdSection,
+        name: Some("Architecture"),
+        content: "このセクションでは設計判断とドメインモデルについて説明する。",
+        start_line: 1,
+        end_line: 1,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "docs/arch.md", &chunks, "h1", "", &[], None).unwrap();
+
+    let results =
+        search_by_fts(&conn, &["設計判断"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "trigram tokenizer should match Japanese prose '設計判断' in Markdown content"
+    );
+}
+
+// T-157-003: search_by_fts_preserves_ascii_identifier_match
+#[test]
+fn search_by_fts_preserves_ascii_identifier_match() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useState"),
+        content: "const [count, setCount] = useState(0);",
+        start_line: 1,
+        end_line: 1,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/Counter.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    let results =
+        search_by_fts(&conn, &["useState"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "trigram tokenizer should still match camelCase identifier 'useState'"
+    );
+}
+
+// T-157-004: search_by_fts_handles_short_query_without_panic
+#[test]
+fn search_by_fts_handles_short_query_without_panic() {
+    let (conn, _dir) = test_db();
+
+    // Seed a chunk so FTS evaluates the short query against a populated index
+    // rather than an empty one; the vocab expansion path differs in each case.
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Hook,
+        name: Some("useState"),
+        content: "useState hook",
+        start_line: 1,
+        end_line: 1,
+        parent_index: None,
+    }];
+    replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
+
+    // Trigram needs ≥3 chars to form a token; 1-2 char queries must return
+    // cleanly (no panic, no error), regardless of whether they hit.
+    for q in ["a", "ab", "あ", "あい"] {
+        search_by_fts(&conn, &[q], None, &HashSet::new(), None, 10, &[])
+            .unwrap_or_else(|e| panic!("short query {q:?} should not error: {e}"));
+    }
 }
