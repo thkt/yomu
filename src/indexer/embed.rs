@@ -2,11 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
 
-use crate::resolver::Resolver;
-use crate::rust_resolver::RustResolver;
-use crate::storage::{self, Db, Reference, StorageError};
+use crate::storage::{self, Db, StorageError};
 
-use super::{IndexError, PendingFile, build_references};
+use super::IndexError;
 
 pub(super) const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 
@@ -14,12 +12,6 @@ pub(super) const MAX_CONSECUTIVE_EMBED_ERRORS: u32 = 5;
 pub struct EmbedResult {
     pub chunks_embedded: u32,
     pub files_completed: u32,
-}
-
-pub(super) struct EmbedStoreResult {
-    pub files_processed: u32,
-    pub chunks_created: u32,
-    pub files_errored: u32,
 }
 
 enum EmbedFailure {
@@ -101,100 +93,6 @@ fn run_embed_batch(
         }
         Err(e) => Err(classify_embed_error(e, consecutive_errors, file_path)),
     }
-}
-
-fn store_file_data(
-    conn: &Db,
-    pf: &PendingFile,
-    embeddings: &[ChunkedEmbedding],
-    refs: &[Reference],
-) -> Result<(), StorageError> {
-    let new_chunks = pf.to_new_chunks();
-    let data = storage::FileData {
-        file_path: &pf.rel_path,
-        chunks: &new_chunks,
-        file_hash: &pf.hash,
-        imports_text: &pf.imports_text,
-        refs,
-        mtime_epoch: pf.mtime_epoch,
-    };
-    storage::replace_file_chunks_with(conn, &data, embeddings)
-}
-
-#[allow(clippy::cast_possible_truncation)]
-pub(super) fn embed_and_store(
-    conn: &Arc<Mutex<Db>>,
-    embedder: &(impl Embed + ?Sized),
-    pending: Vec<PendingFile>,
-    resolver: &Resolver,
-    rust_resolver: &RustResolver,
-) -> Result<EmbedStoreResult, IndexError> {
-    let pending_total = pending.len();
-    let mut files_processed = 0u32;
-    let mut chunks_created = 0u32;
-    let mut files_errored = 0u32;
-    let mut consecutive_errors = 0u32;
-
-    for pf in pending {
-        let texts: Vec<String> = pf
-            .raw_chunks
-            .iter()
-            .filter(|c| c.chunk_type != storage::ChunkType::InnerFn)
-            .map(|c| {
-                let parent_name = c
-                    .parent_index
-                    .and_then(|i| pf.raw_chunks[i].name.as_deref());
-                enrich_for_embedding(
-                    &pf.rel_path,
-                    c.chunk_type.as_str(),
-                    c.name.as_deref(),
-                    parent_name,
-                    &pf.imports_text,
-                    &c.content,
-                )
-            })
-            .collect();
-
-        let embeddings =
-            match run_embed_batch(embedder, &texts, &mut consecutive_errors, &pf.rel_path) {
-                Ok(embs) => embs,
-                Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
-                Err(EmbedFailure::Contract) => {
-                    return Err(IndexError::Internal(
-                        "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
-                    ));
-                }
-                Err(EmbedFailure::Skip) => {
-                    files_errored += 1;
-                    continue;
-                }
-            };
-
-        let n = embeddings.len() as u32;
-        let refs = if pf.rel_path.ends_with(".rs") {
-            build_references(&pf.parsed_imports, &pf.rel_path, rust_resolver)
-        } else {
-            build_references(&pf.parsed_imports, &pf.rel_path, resolver)
-        };
-        tracing::debug!(file = %pf.rel_path, chunks = n, "Indexing file");
-
-        {
-            let conn = conn.lock().unwrap();
-            store_file_data(&conn, &pf, &embeddings, &refs)?;
-        }
-
-        chunks_created += n;
-        files_processed += 1;
-        if files_processed.is_multiple_of(10) {
-            tracing::info!(files_processed, total = pending_total, "Indexing progress");
-        }
-    }
-
-    Ok(EmbedStoreResult {
-        files_processed,
-        chunks_created,
-        files_errored,
-    })
 }
 
 pub(super) fn order_files_for_embedding(

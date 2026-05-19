@@ -6,18 +6,17 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
-use rurico::embed::{Embed, EmbedError};
+use rurico::embed::EmbedError;
 
 use crate::resolver::{Resolve, Resolver};
 use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
 use chunker::ParsedImport;
 
-use embed::embed_and_store;
 pub use embed::{EmbedResult, run_incremental_embed, run_incremental_embed_with_progress};
 #[cfg(test)]
 use embed::{MAX_CONSECUTIVE_EMBED_ERRORS, enrich_for_embedding, order_files_for_embedding};
@@ -77,7 +76,6 @@ impl PendingFile {
 }
 
 const MAX_FILE_SIZE: u64 = 1_000_000;
-const LARGE_PROJECT_THRESHOLD: usize = 5_000;
 
 enum FileAction {
     Skip,
@@ -236,58 +234,6 @@ fn process_file(
     };
     storage::replace_file_data(conn, &data, None)?;
     Ok(FileOutcome::Processed(n))
-}
-
-struct CollectResult {
-    pending: Vec<PendingFile>,
-    files_skipped: u32,
-    files_errored: u32,
-    rel_paths: HashSet<String>,
-}
-
-fn collect_pending_files(
-    conn: &Arc<Mutex<Db>>,
-    root: &Path,
-    files: &[PathBuf],
-    force: bool,
-    crate_name: Option<&str>,
-) -> Result<CollectResult, IndexError> {
-    let mut pending: Vec<PendingFile> = Vec::new();
-    let mut files_skipped = 0u32;
-    let mut files_errored = 0u32;
-    let mut rel_paths = HashSet::with_capacity(files.len());
-
-    for file_path in files {
-        let rel_path = to_rel_path(root, file_path);
-        rel_paths.insert(rel_path.clone());
-        let checked = {
-            let conn_guard = conn.lock().unwrap();
-            match check_file(&conn_guard, rel_path, file_path, force)? {
-                CheckResult::Changed(c) => c,
-                CheckResult::Skip => {
-                    files_skipped += 1;
-                    continue;
-                }
-                CheckResult::Error => {
-                    files_errored += 1;
-                    continue;
-                }
-            }
-        };
-        match prepare_chunks(checked, file_path, crate_name) {
-            Some(pf) => pending.push(pf),
-            None => {
-                files_skipped += 1;
-            }
-        }
-    }
-
-    Ok(CollectResult {
-        pending,
-        files_skipped,
-        files_errored,
-        rel_paths,
-    })
 }
 
 fn remove_orphans(
@@ -505,52 +451,6 @@ pub fn run_chunk_only_index_force(
     root: &Path,
 ) -> Result<IndexResult, IndexError> {
     run_chunk_only_index_inner(conn, root, true)
-}
-
-/// Per-file embed+store ensures partial progress survives embedding failures.
-pub fn run_index(
-    conn: &Arc<Mutex<Db>>,
-    root: &Path,
-    embedder: &(impl Embed + ?Sized),
-    force: bool,
-) -> Result<IndexResult, IndexError> {
-    let files = walker::walk_source_files(root);
-    if files.len() > LARGE_PROJECT_THRESHOLD {
-        tracing::warn!(
-            count = files.len(),
-            "Large number of files detected — indexing may be slow"
-        );
-    }
-    tracing::info!(file_count = files.len(), force, "Starting indexing");
-
-    let resolver = Resolver::new(root);
-    let rust_resolver = RustResolver::new(root);
-
-    let collected = collect_pending_files(conn, root, &files, force, rust_resolver.crate_name())?;
-    let files_skipped = collected.files_skipped;
-    let mut files_errored = collected.files_errored;
-
-    remove_orphans(conn, &collected.rel_paths)?;
-    let embed_result =
-        embed_and_store(conn, embedder, collected.pending, &resolver, &rust_resolver)?;
-    let files_processed = embed_result.files_processed;
-    let chunks_created = embed_result.chunks_created;
-    files_errored += embed_result.files_errored;
-
-    tracing::info!(
-        files_processed,
-        chunks_created,
-        files_skipped,
-        files_errored,
-        "Indexing complete"
-    );
-
-    Ok(IndexResult {
-        files_processed,
-        chunks_created,
-        files_skipped,
-        files_errored,
-    })
 }
 
 #[cfg(test)]
