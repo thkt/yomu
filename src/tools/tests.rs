@@ -2629,6 +2629,29 @@ fn brief_emits_warn_on_seed_inference_embed_query_failure() {
     );
 }
 
+// T-573: brief_emits_warn_and_degraded_on_zero_chunks [RC-014 #140]
+#[traced_test]
+#[test]
+fn brief_emits_warn_and_degraded_on_zero_chunks() {
+    let (yomu, _dir) = test_yomu();
+    let task = brief_task("src/nonexistent_seed.rs");
+    let output = yomu.brief(&task, true).unwrap();
+    let parsed = parse_json(&output);
+    assert_eq!(
+        parsed["chunks"].as_array().unwrap().len(),
+        0,
+        "missing seed file must yield zero chunks, got: {output}"
+    );
+    assert_eq!(
+        parsed["degraded"], true,
+        "zero chunks must mark degraded, got: {output}"
+    );
+    assert!(
+        logs_contain("brief produced zero chunks"),
+        "expected warn for zero chunks"
+    );
+}
+
 // T-570: yomu_brief_rejects_empty_task [Spec FR-010b prep]
 #[test]
 fn yomu_brief_rejects_empty_task() {

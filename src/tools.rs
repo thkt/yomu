@@ -680,6 +680,16 @@ impl Yomu {
 
         let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
         output.degraded |= degraded;
+
+        if output.chunks.is_empty() {
+            tracing::warn!(
+                seeds = effective.seeds.len(),
+                degraded = output.degraded,
+                "brief produced zero chunks"
+            );
+            output.degraded = true;
+        }
+
         Ok(if json {
             brief::render_json(&output)
         } else {
