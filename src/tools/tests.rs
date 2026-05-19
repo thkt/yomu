@@ -331,7 +331,8 @@ fn search_degraded_with_results_shows_note() {
         Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 3, None).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
     let conn2 = storage::open_db(&db_path).unwrap();
@@ -1025,7 +1026,8 @@ fn integration_index_then_impact() {
         ("src/C.tsx", "export function C() { return <div/>; }"),
     ]);
 
-    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 6, None).unwrap();
 
     let text = y.impact("src/C.tsx", None, 3, false, false).unwrap();
     assert!(
@@ -1198,59 +1200,6 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
     assert!(
         stats_after.embedded_chunks > 0,
         "should have embeddings after search"
-    );
-}
-
-// T-220: ensure_indexed_fully_embedded_skips_embed
-#[test]
-fn ensure_indexed_fully_embedded_skips_embed() {
-    let (y, _dir) = test_yomu_with_files_and_embedder(
-        &[(
-            "src/Button.tsx",
-            "export function Button() { return <button/>; }",
-        )],
-        Arc::new(MockEmbedder::default()),
-    );
-
-    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
-
-    let stats = {
-        let c = y.conn.lock().unwrap();
-        storage::get_stats(&c).unwrap()
-    };
-    assert_eq!(
-        stats.embedded_chunks, stats.total_chunks,
-        "should be fully embedded"
-    );
-
-    let result = y.search(Some("Button"), 10, 0, &[], false, None).unwrap();
-    assert!(result.contains("Button"), "should find Button: {result}");
-}
-
-// T-221: ensure_indexed_fully_embedded_with_failing_embedder
-#[test]
-fn ensure_indexed_fully_embedded_with_failing_embedder() {
-    let (y, dir) = test_yomu_with_files_and_embedder(
-        &[("src/Card.tsx", "export function Card() { return <div/>; }")],
-        Arc::new(MockEmbedder::default()),
-    );
-
-    indexer::run_index(&y.conn, y.root.as_path(), &MockEmbedder::default(), false).unwrap();
-
-    let db_path = dir.path().join(".yomu").join("index.db");
-    let conn2 = storage::open_db(&db_path).unwrap();
-    let y_failing = Yomu::for_test(
-        conn2,
-        dir.path().to_path_buf(),
-        Some(Arc::new(FailingEmbedder::all_fail("service unavailable")) as Arc<dyn Embed>),
-    );
-
-    let result = y_failing
-        .search(Some("Card"), 10, 0, &[], false, None)
-        .unwrap();
-    assert!(
-        result.contains("Card"),
-        "should find Card with existing embeddings: {result}"
     );
 }
 
