@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "amici"
 version = "0.1.0"
-source = "git+https://github.com/thkt/amici?rev=1d16d08#1d16d08f9144b7a522fee6a155bd658ad38c8a88"
+source = "git+https://github.com/thkt/amici?rev=b545722#b54572260e8a7685c7503284de27eec0585dfd28"
 dependencies = [
  "bytemuck",
  "rand 0.10.1",
@@ -1627,9 +1627,9 @@ dependencies = [
 
 [[package]]
 name = "num-conv"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6673768db2d862beb9b39a78fdcb1a69439615d5794a1be50caa9bc92c81967"
+checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
 name = "num-traits"
@@ -2096,7 +2096,7 @@ dependencies = [
 [[package]]
 name = "rurico"
 version = "0.2.0"
-source = "git+https://github.com/thkt/rurico?rev=bb25a06#bb25a06cd32b5e83df291d6a7cf251de738ac7bb"
+source = "git+https://github.com/thkt/rurico?rev=a573655#a573655f0a811deeae96f87640d28fcd117dec7b"
 dependencies = [
  "bytemuck",
  "hf-hub",
@@ -2114,7 +2114,7 @@ dependencies = [
 [[package]]
 name = "rurico-ffi"
 version = "0.1.0"
-source = "git+https://github.com/thkt/rurico?rev=bb25a06#bb25a06cd32b5e83df291d6a7cf251de738ac7bb"
+source = "git+https://github.com/thkt/rurico?rev=a573655#a573655f0a811deeae96f87640d28fcd117dec7b"
 dependencies = [
  "mlx-sys",
  "rusqlite",
@@ -2749,9 +2749,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.10"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68d6fdd9f81c2819c9a8b0e0cd91660e7746a8e6ea2ba7c6b2b057985f6bcb51"
+checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
  "bitflags",
  "bytes",
