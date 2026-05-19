@@ -584,37 +584,69 @@ impl Yomu {
         }
     }
 
-    fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> Result<Vec<String>, DegradedReason> {
-        let embedder = self.try_embedder_arc()?;
-        let task_emb = embedder.embed_query(task).map_err(degrade_with_warn(
-            "brief seed inference: embed_query",
-            DegradedReason::ProbeFailed,
-        ))?;
+    fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
+        if let Some(paths) = self.embedder_seed_paths(task, max_seeds) {
+            return (paths, false);
+        }
+        let reason = self
+            .degraded_reason()
+            .copied()
+            .unwrap_or(DegradedReason::ProbeFailed);
+        record_degraded(reason, "brief: seed inference");
+        (self.fts_fallback_seed_paths(task, max_seeds), true)
+    }
+
+    fn embedder_seed_paths(&self, task: &str, max_seeds: u32) -> Option<Vec<String>> {
+        let embedder = self.try_embedder_arc().ok()?;
+        let task_emb = embedder
+            .embed_query(task)
+            .map_err(degrade_with_warn(
+                "brief seed inference: embed_query",
+                DegradedReason::ProbeFailed,
+            ))
+            .ok()?;
         let conn = self
             .conn
             .lock()
             .expect("brief seed inference: lock poisoned");
-        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[]).map_err(
-            degrade_with_warn(
+        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[])
+            .map_err(degrade_with_warn(
                 "brief seed inference: vec_search",
                 DegradedReason::ProbeFailed,
-            ),
-        )?;
+            ))
+            .ok()?;
         drop(conn);
 
-        let cap = max_seeds as usize;
-        let mut paths = Vec::with_capacity(cap);
-        let mut seen = HashSet::new();
-        for r in results {
-            if !seen.insert(r.chunk.file_path.clone()) {
-                continue;
-            }
-            paths.push(r.chunk.file_path);
-            if paths.len() >= cap {
-                break;
-            }
+        Some(dedupe_seed_paths(results, max_seeds as usize))
+    }
+
+    fn fts_fallback_seed_paths(&self, task: &str, max_seeds: u32) -> Vec<String> {
+        let keywords: Vec<&str> = task.split_whitespace().collect();
+        if keywords.is_empty() {
+            return Vec::new();
         }
-        Ok(paths)
+        let oversample = max_seeds.saturating_mul(3);
+        let conn = self
+            .conn
+            .lock()
+            .expect("brief seed inference fts fallback: lock poisoned");
+        let results = storage::search_by_fts(
+            &conn,
+            &keywords,
+            None,
+            &HashSet::new(),
+            None,
+            oversample,
+            &[],
+        )
+        .map_err(degrade_with_warn(
+            "brief seed inference: fts fallback",
+            DegradedReason::ProbeFailed,
+        ))
+        .unwrap_or_default();
+        drop(conn);
+
+        dedupe_seed_paths(results, max_seeds as usize)
     }
 
     pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
@@ -634,21 +666,16 @@ impl Yomu {
         let mut effective = task.clone();
         let mut degraded = false;
         if effective.seeds.is_empty() {
-            match self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS) {
-                Ok(paths) => {
-                    effective.seeds = paths
-                        .into_iter()
-                        .map(|value| brief::Seed {
-                            kind: brief::SeedKind::File,
-                            value,
-                        })
-                        .collect();
-                }
-                Err(reason) => {
-                    record_degraded(reason, "brief: seed inference");
-                    degraded = true;
-                }
-            }
+            let (paths, seed_degraded) =
+                self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS);
+            effective.seeds = paths
+                .into_iter()
+                .map(|value| brief::Seed {
+                    kind: brief::SeedKind::File,
+                    value,
+                })
+                .collect();
+            degraded |= seed_degraded;
         }
 
         let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
@@ -829,6 +856,21 @@ impl Yomu {
             Ok("Model downloaded and verified".to_owned())
         }
     }
+}
+
+fn dedupe_seed_paths(results: Vec<storage::SearchResult>, cap: usize) -> Vec<String> {
+    let mut paths = Vec::with_capacity(cap);
+    let mut seen = HashSet::new();
+    for r in results {
+        if !seen.insert(r.chunk.file_path.clone()) {
+            continue;
+        }
+        paths.push(r.chunk.file_path);
+        if paths.len() >= cap {
+            break;
+        }
+    }
+    paths
 }
 
 #[cfg(test)]
