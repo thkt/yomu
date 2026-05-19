@@ -12,6 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use rurico::handle_probe_if_needed;
 use yomu::brief;
 use yomu::error::{self, ErrorCode};
+use yomu::io::write_output;
 use yomu::tools::{
     MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,
 };
@@ -167,10 +168,7 @@ fn main() -> ExitCode {
             ModelCommand::Download => Yomu::model_download(json),
         };
         return match result {
-            Ok(output) => {
-                println!("{output}");
-                ExitCode::SUCCESS
-            }
+            Ok(output) => write_output(&output),
             Err(e) => emit_error(&e, json),
         };
     }
@@ -280,10 +278,7 @@ fn main() -> ExitCode {
     };
 
     match result {
-        Ok(output) => {
-            println!("{output}");
-            ExitCode::SUCCESS
-        }
+        Ok(output) => write_output(&output),
         Err(e) => emit_error(&e, json),
     }
 }
