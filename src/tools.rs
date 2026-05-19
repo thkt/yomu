@@ -294,6 +294,7 @@ impl Yomu {
             offset,
             self.get_reranker(),
             paths,
+            self.log_query,
         )?;
         if self.log_query {
             let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -907,14 +908,15 @@ impl Yomu {
         let timestamp = OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .unwrap_or_default();
+        let stages = outcome.stages.clone().unwrap_or_default();
         let record = QueryLogRecord {
             timestamp,
             yomu_version: env!("CARGO_PKG_VERSION").to_owned(),
             original_query: query.to_owned(),
-            fts_results: Vec::new(),
-            vec_results: Vec::new(),
-            rrf_results: Vec::new(),
-            reranked_results: Vec::new(),
+            fts_results: stages.fts_results,
+            vec_results: stages.vec_results,
+            rrf_results: stages.rrf_results,
+            reranked_results: stages.reranked_results,
             final_context_ids: outcome.results.iter().filter_map(|r| r.chunk_id).collect(),
             latency_ms,
         };

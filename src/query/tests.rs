@@ -41,7 +41,17 @@ fn search_with_mock_embedder() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(&conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(
+        &conn,
+        &MockEmbedder::default(),
+        "button",
+        10,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
     assert!(!outcome.degraded);
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(outcome.results[0].chunk.name.as_deref(), Some("Button"));
@@ -228,9 +238,18 @@ fn search_fallback_merges_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
-        .unwrap()
-        .results;
+    let results = search(
+        &conn,
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap()
+    .results;
 
     assert!(
         results.len() >= 2,
@@ -283,9 +302,18 @@ fn search_deduplicates_vector_and_name_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let results = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[])
-        .unwrap()
-        .results;
+    let results = search(
+        &conn,
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap()
+    .results;
 
     let auth_count = results
         .iter()
@@ -667,6 +695,7 @@ fn search_returns_results_sorted_by_score() {
         0,
         None,
         &[],
+        false,
     )
     .unwrap()
     .results;
@@ -888,6 +917,7 @@ fn search_degrades_on_embed_failure() {
         0,
         None,
         &[],
+        false,
     )
     .unwrap();
     assert!(outcome.degraded, "should be degraded when embed fails");
@@ -912,7 +942,7 @@ fn search_degrades_on_model_not_available() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(&conn, &embedder, "test", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &embedder, "test", 10, 0, None, &[], false).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
@@ -1024,6 +1054,7 @@ fn reranker_reorders_results_by_cross_encoder_score() {
         0,
         Some(&reranker),
         &[],
+        false,
     )
     .unwrap();
 
@@ -1066,10 +1097,29 @@ fn no_reranker_produces_rrf_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
+    let outcome = search(
+        &conn,
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
 
-    let outcome_existing =
-        search(&conn, &MockEmbedder::default(), "auth", 5, 0, None, &[]).unwrap();
+    let outcome_existing = search(
+        &conn,
+        &MockEmbedder::default(),
+        "auth",
+        5,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
 
     assert_eq!(
         outcome.results.len(),
@@ -1134,6 +1184,7 @@ fn reranker_increases_fetch_limit() {
         offset,
         Some(&reranker),
         &[],
+        false,
     )
     .unwrap();
 
@@ -1223,6 +1274,7 @@ fn reranker_scores_applied_before_cap_per_file() {
         0,
         Some(&reranker),
         &[],
+        false,
     )
     .unwrap();
 
@@ -1290,7 +1342,7 @@ fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(&conn, &embedder, "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(&conn, &embedder, "button", 10, 0, None, &[], false).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
@@ -1319,7 +1371,7 @@ fn search_pipeline_text_only_returns_name_matches() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "auth", None, 10, 0, None, &[]).unwrap();
+    let (results, _stages) = search_pipeline(&conn, "auth", None, 10, 0, None, &[], false).unwrap();
     assert!(
         !results.is_empty(),
         "text-only pipeline should find name matches"
@@ -1353,7 +1405,8 @@ fn search_pipeline_with_embedding_returns_semantic() {
     )
     .unwrap();
 
-    let results = search_pipeline(&conn, "button", Some(&emb), 10, 0, None, &[]).unwrap();
+    let (results, _stages) =
+        search_pipeline(&conn, "button", Some(&emb), 10, 0, None, &[], false).unwrap();
     assert!(!results.is_empty());
     assert_eq!(results[0].match_source, storage::MatchSource::Semantic);
 }
@@ -1377,7 +1430,7 @@ fn search_pipeline_caps_per_file() {
         .collect();
     storage::replace_file_chunks_only(&conn, "src/big.ts", &chunks, "h1", "", &[], None).unwrap();
 
-    let results = search_pipeline(&conn, "fn", None, 10, 0, None, &[]).unwrap();
+    let (results, _stages) = search_pipeline(&conn, "fn", None, 10, 0, None, &[], false).unwrap();
     let file_count = results
         .iter()
         .filter(|r| r.chunk.file_path == "src/big.ts")
@@ -1441,6 +1494,7 @@ fn text_only_search_with_offset_returns_results() {
         10,
         None,
         &[],
+        false,
     )
     .unwrap();
     assert!(
@@ -1478,7 +1532,17 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     assert_eq!(stats.embedded_chunks, 0, "no embeddings should exist");
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(&conn, &MockEmbedder::default(), "button", 10, 0, None, &[]).unwrap();
+    let outcome = search(
+        &conn,
+        &MockEmbedder::default(),
+        "button",
+        10,
+        0,
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
     assert!(
         !outcome.results.is_empty(),
         "should return text/name fallback results even with zero embeddings"
@@ -2132,10 +2196,91 @@ fn search_pipeline_offset_beyond_results_returns_empty() {
     }
 
     // offset=10 exceeds the 2-result set → empty Vec expected.
-    let results = search_pipeline(&conn, "widget", None, 10, 10, None, &[]).unwrap();
+    let (results, _stages) =
+        search_pipeline(&conn, "widget", None, 10, 10, None, &[], false).unwrap();
     assert!(
         results.is_empty(),
         "offset >= results.len() should return empty Vec, got: {results:?}"
+    );
+}
+
+// === TC-6: stage capture (Issue #182 Phase 2) ===
+
+// T-QL-014: capture_stages=false leaves stages as None (NFR-002 zero-cost flag-off).
+#[test]
+fn search_pipeline_capture_stages_false_returns_none() {
+    let (conn, _dir) = from_test_db();
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/auth.ts",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Other,
+            name: Some("authHandler"),
+            content: "function authHandler() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        }],
+        "h0",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    let (_results, stages) = search_pipeline(&conn, "auth", None, 10, 0, None, &[], false).unwrap();
+    assert!(
+        stages.is_none(),
+        "capture_stages=false must return None, got: {stages:?}"
+    );
+}
+
+// T-QL-015: capture_stages=true populates fts_results / rrf_results / reranked_results
+// on the FTS-only path (no embedding) with source="fts".
+#[test]
+fn search_pipeline_capture_stages_fts_path_populates_stages() {
+    let (conn, _dir) = from_test_db();
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/auth.ts",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Other,
+            name: Some("authHandler"),
+            content: "function authHandler() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+        }],
+        "h0",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    let (results, stages) = search_pipeline(&conn, "auth", None, 10, 0, None, &[], true).unwrap();
+    assert!(!results.is_empty(), "expected at least 1 result");
+    let s = stages.expect("capture_stages=true must return Some");
+    assert!(
+        s.vec_results.is_empty(),
+        "no embedding => vec_results must be empty, got: {:?}",
+        s.vec_results
+    );
+    assert!(
+        !s.fts_results.is_empty(),
+        "FTS path must populate fts_results"
+    );
+    assert_eq!(
+        s.fts_results[0].source, "fts",
+        "fts stage source must be 'fts'"
+    );
+    assert!(
+        !s.rrf_results.is_empty(),
+        "post-merge rrf_results must include FTS hits"
+    );
+    assert!(
+        !s.reranked_results.is_empty(),
+        "post-rerank reranked_results must be populated"
     );
 }
 
