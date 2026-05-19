@@ -2516,7 +2516,55 @@ fn yomu_brief_with_json_returns_valid_json() {
     );
 }
 
-// T-571: brief_falls_back_to_degraded_when_no_embedder
+// T-014b [Spec FR-014b]: brief_fts_seeds_when_no_embedder_and_keyword_matches
+#[test]
+fn brief_fts_seeds_when_no_embedder_and_keyword_matches() {
+    let (conn, dir) = test_db();
+    let emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
+    storage::insert_chunk(
+        &conn,
+        "src/auth_handler.rs",
+        &storage::NewChunk {
+            chunk_type: &storage::ChunkType::RustFn,
+            name: Some("auth"),
+            content: "fn auth() { /* auth logic */ }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+        },
+        "h",
+        &storage::ce(emb),
+        None,
+    )
+    .unwrap();
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let task = brief::TaskBrief {
+        task: "auth".to_owned(),
+        seeds: vec![],
+        depth: 1,
+        max_chunks: 80,
+        max_bytes: 80_000,
+    };
+
+    let output = yomu.brief(&task, true).unwrap();
+    let parsed = parse_json(&output);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "no embedder must mark degraded, got: {output}"
+    );
+    let chunks = parsed["chunks"].as_array().unwrap();
+    assert!(
+        !chunks.is_empty(),
+        "FTS hit on 'auth' must produce at least one seed chunk, got: {output}"
+    );
+}
+
+// T-014c [Spec FR-014b] / T-571: brief_falls_back_to_degraded_when_no_embedder
+// T-014c covers the FTS-0-hit branch: task keyword `infer something` finds no
+// matching chunk in `fn body() {}`, so closure stays empty even after FTS
+// fallback. Behavior identical to the original T-571 assertion.
 #[test]
 fn brief_falls_back_to_degraded_when_no_embedder() {
     let (conn, dir) = test_db();

@@ -584,7 +584,21 @@ impl Yomu {
         }
     }
 
-    fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> Result<Vec<String>, DegradedReason> {
+    fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
+        match self.embedder_seed_paths(task, max_seeds) {
+            Ok(paths) => (paths, false),
+            Err(reason) => {
+                record_degraded(reason, "brief: seed inference");
+                (self.fts_fallback_seed_paths(task, max_seeds), true)
+            }
+        }
+    }
+
+    fn embedder_seed_paths(
+        &self,
+        task: &str,
+        max_seeds: u32,
+    ) -> Result<Vec<String>, DegradedReason> {
         let embedder = self.try_embedder_arc()?;
         let task_emb = embedder.embed_query(task).map_err(degrade_with_warn(
             "brief seed inference: embed_query",
@@ -602,19 +616,37 @@ impl Yomu {
         )?;
         drop(conn);
 
-        let cap = max_seeds as usize;
-        let mut paths = Vec::with_capacity(cap);
-        let mut seen = HashSet::new();
-        for r in results {
-            if !seen.insert(r.chunk.file_path.clone()) {
-                continue;
-            }
-            paths.push(r.chunk.file_path);
-            if paths.len() >= cap {
-                break;
-            }
+        Ok(dedupe_seed_paths(results, max_seeds as usize))
+    }
+
+    fn fts_fallback_seed_paths(&self, task: &str, max_seeds: u32) -> Vec<String> {
+        let keywords = query::extract_keywords(task);
+        if keywords.is_empty() {
+            return Vec::new();
         }
-        Ok(paths)
+        let keyword_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
+        let oversample = max_seeds.saturating_mul(3);
+        let conn = self
+            .conn
+            .lock()
+            .expect("brief seed inference fts fallback: lock poisoned");
+        let results = storage::search_by_fts(
+            &conn,
+            &keyword_refs,
+            None,
+            &HashSet::new(),
+            None,
+            oversample,
+            &[],
+        )
+        .map_err(degrade_with_warn(
+            "brief seed inference: fts fallback",
+            DegradedReason::ProbeFailed,
+        ))
+        .unwrap_or_default();
+        drop(conn);
+
+        dedupe_seed_paths(results, max_seeds as usize)
     }
 
     pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
@@ -634,21 +666,16 @@ impl Yomu {
         let mut effective = task.clone();
         let mut degraded = false;
         if effective.seeds.is_empty() {
-            match self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS) {
-                Ok(paths) => {
-                    effective.seeds = paths
-                        .into_iter()
-                        .map(|value| brief::Seed {
-                            kind: brief::SeedKind::File,
-                            value,
-                        })
-                        .collect();
-                }
-                Err(reason) => {
-                    record_degraded(reason, "brief: seed inference");
-                    degraded = true;
-                }
-            }
+            let (paths, seed_degraded) =
+                self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS);
+            effective.seeds = paths
+                .into_iter()
+                .map(|value| brief::Seed {
+                    kind: brief::SeedKind::File,
+                    value,
+                })
+                .collect();
+            degraded |= seed_degraded;
         }
 
         let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
@@ -829,6 +856,21 @@ impl Yomu {
             Ok("Model downloaded and verified".to_owned())
         }
     }
+}
+
+fn dedupe_seed_paths(results: Vec<storage::SearchResult>, cap: usize) -> Vec<String> {
+    let mut paths = Vec::with_capacity(cap);
+    let mut seen = HashSet::new();
+    for r in results {
+        if !seen.insert(r.chunk.file_path.clone()) {
+            continue;
+        }
+        paths.push(r.chunk.file_path);
+        if paths.len() >= cap {
+            break;
+        }
+    }
+    paths
 }
 
 #[cfg(test)]
