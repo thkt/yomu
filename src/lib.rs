@@ -2,6 +2,7 @@ pub mod brief;
 pub mod config;
 pub mod error;
 pub mod indexer;
+pub mod io;
 pub mod query;
 pub mod resolver;
 pub mod rust_resolver;
