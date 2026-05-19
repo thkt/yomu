@@ -54,19 +54,20 @@ pub fn get_transitive_dependents(
     max_depth: u32,
 ) -> Result<Vec<Dependent>, StorageError> {
     let max_depth = max_depth.min(10);
+    // Cycle handling: `UNION` (vs `UNION ALL`) lets SQLite deduplicate the
+    // `(file_path, depth)` tuple, so a node only re-expands while its depth
+    // grows. `d.depth < ?2` then bounds total work. Excluding the seed
+    // (`source_file != ?1`) keeps target_file itself out of the result.
     let mut stmt = conn.prepare_cached(
-        "WITH RECURSIVE deps(file_path, depth, visited) AS (
-            SELECT DISTINCT source_file, 1,
-                   ',' || ?1 || ',' || source_file || ','
+        "WITH RECURSIVE deps(file_path, depth) AS (
+            SELECT source_file, 1
             FROM file_references
-            WHERE target_file = ?1
+            WHERE target_file = ?1 AND source_file != ?1
           UNION
-            SELECT r.source_file, d.depth + 1,
-                   d.visited || r.source_file || ','
+            SELECT r.source_file, d.depth + 1
             FROM file_references r
             INNER JOIN deps d ON r.target_file = d.file_path
-            WHERE d.depth < ?2
-              AND INSTR(d.visited, ',' || r.source_file || ',') = 0
+            WHERE d.depth < ?2 AND r.source_file != ?1
         )
         SELECT file_path, MIN(depth) as depth
         FROM deps GROUP BY file_path ORDER BY depth, file_path",
@@ -114,16 +115,18 @@ pub fn get_transitive_dependencies(
     max_depth: u32,
 ) -> Result<Vec<Dependent>, StorageError> {
     let max_depth = max_depth.min(10);
+    // See `get_transitive_dependents` for the cycle-handling rationale.
+    // `r.target_file != ?1` blocks back-edges to the seed; the seed is
+    // injected once at depth=0 in the anchor, so this only suppresses
+    // wasteful re-visits inside the recursion.
     let mut stmt = conn.prepare_cached(
-        "WITH RECURSIVE deps(file_path, depth, visited) AS (
-            SELECT ?1, 0, ',' || ?1 || ','
+        "WITH RECURSIVE deps(file_path, depth) AS (
+            SELECT ?1, 0
           UNION
-            SELECT r.target_file, d.depth + 1,
-                   d.visited || r.target_file || ','
+            SELECT r.target_file, d.depth + 1
             FROM file_references r
             INNER JOIN deps d ON r.source_file = d.file_path
-            WHERE d.depth < ?2
-              AND INSTR(d.visited, ',' || r.target_file || ',') = 0
+            WHERE d.depth < ?2 AND r.target_file != ?1
         )
         SELECT file_path, MIN(depth) as depth
         FROM deps GROUP BY file_path ORDER BY depth, file_path",
