@@ -2039,9 +2039,9 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
-// T-167: migration_v3_to_v4_creates_vocab_table
+// T-167: migration_v3_to_v4_creates_vocab_and_clears_file_hash
 #[test]
-fn migration_v3_to_v4_creates_vocab_table() {
+fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -3825,6 +3825,8 @@ fn search_by_fts_preserves_ascii_identifier_match() {
 fn search_by_fts_handles_short_query_without_panic() {
     let (conn, _dir) = test_db();
 
+    // Seed a chunk so FTS evaluates the short query against a populated index
+    // rather than an empty one; the vocab expansion path differs in each case.
     let chunks = vec![NewChunk {
         chunk_type: &ChunkType::Hook,
         name: Some("useState"),

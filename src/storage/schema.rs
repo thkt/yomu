@@ -195,8 +195,9 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
     }
     tracing::info!(from, to, "Migrating schema from v{from} to v{to}");
 
-    // v2 → v4 are intentionally skipped: v6 → v7 below drops fts_chunks and
-    // clears file_hash, so any earlier FTS work would just be overwritten.
+    // v2 → v4 are no-ops: the v6 → v7 step below drops fts_chunks and the
+    // v7 → v8 step clears file_hash, so any pre-v5 FTS work would be discarded
+    // immediately afterward.
 
     // v4 → v5: add parent_chunk_id for subchunk extraction
     if from < 5 && !column_exists(conn, "SELECT parent_chunk_id FROM chunks LIMIT 0")? {
@@ -212,19 +213,20 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
 
     // v6 → v7: rebuild FTS with 3 columns (name, content, file_path).
     // Drop fts_chunks/vocab and let `yomu index` repopulate on the next run.
+    // file_hash reset is handled by the v7 → v8 block below.
     if from < 7 {
+        let _span = tracing::info_span!("migration_v7", path = %path.display()).entered();
         conn.execute_batch(
             "DROP TABLE IF EXISTS fts_chunks_vocab; DROP TABLE IF EXISTS fts_chunks;",
         )?;
         conn.execute_batch(DDL_FTS_CHUNKS)?;
         conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
-        conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
-        let _span = tracing::info_span!("migration_v7", path = %path.display()).entered();
         notify_schema_change("yomu", "FTS index", 0, "yomu index");
     }
 
     // v7 → v8: migrate vec_chunks to multi-sub-chunk schema, add embedded_chunk_ids
     if from < 8 {
+        let _span = tracing::info_span!("migration_v8", path = %path.display()).entered();
         conn.execute_batch("DROP TABLE IF EXISTS vec_chunks")?;
         conn.execute_batch(&ddl_vec_chunks())?;
         conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
@@ -232,7 +234,6 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         // Without this, should_reindex() would skip every file whose content hasn't changed,
         // leaving embedded_chunk_ids permanently empty after the migration.
         conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
-        let _span = tracing::info_span!("migration_v8", path = %path.display()).entered();
         notify_schema_change("yomu", "embeddings", 0, "yomu index");
     }
 
