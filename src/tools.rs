@@ -295,8 +295,10 @@ impl Yomu {
             self.get_reranker(),
             paths,
         )?;
-        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-        maybe_emit_query_log(self.log_query, query, &outcome, latency_ms);
+        if self.log_query {
+            let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            self.emit_query_log(query, &outcome, latency_ms);
+        }
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
@@ -896,41 +898,35 @@ fn dedupe_seed_paths(results: Vec<storage::SearchResult>, cap: usize) -> Vec<Str
     paths
 }
 
-fn maybe_emit_query_log(
-    log_query: bool,
-    query: &str,
-    outcome: &query::SearchOutcome,
-    latency_ms: u64,
-) {
-    if !log_query {
-        return;
-    }
-    let Some(path) = query_log::resolve_log_path_from_env() else {
-        tracing::warn!("query log path unresolved (HOME unset); skipping emit");
-        return;
-    };
-    let timestamp = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_default();
-    let record = QueryLogRecord {
-        timestamp,
-        yomu_version: env!("CARGO_PKG_VERSION").to_owned(),
-        original_query: query.to_owned(),
-        fts_results: Vec::new(),
-        vec_results: Vec::new(),
-        rrf_results: Vec::new(),
-        reranked_results: Vec::new(),
-        final_context_ids: outcome.results.iter().filter_map(|r| r.chunk_id).collect(),
-        latency_ms,
-    };
-    match query_log::open_append_writer(&path) {
-        Ok(mut writer) => {
-            if let Err(e) = writer.write_record(&record) {
-                tracing::warn!(error = %e, "query log write failed");
+impl Yomu {
+    fn emit_query_log(&self, query: &str, outcome: &query::SearchOutcome, latency_ms: u64) {
+        let Some(path) = query_log::resolve_log_path_from_env() else {
+            tracing::warn!("query log path unresolved (HOME unset); skipping emit");
+            return;
+        };
+        let timestamp = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_default();
+        let record = QueryLogRecord {
+            timestamp,
+            yomu_version: env!("CARGO_PKG_VERSION").to_owned(),
+            original_query: query.to_owned(),
+            fts_results: Vec::new(),
+            vec_results: Vec::new(),
+            rrf_results: Vec::new(),
+            reranked_results: Vec::new(),
+            final_context_ids: outcome.results.iter().filter_map(|r| r.chunk_id).collect(),
+            latency_ms,
+        };
+        match query_log::open_append_writer(&path) {
+            Ok(mut writer) => {
+                if let Err(e) = writer.write_record(&record) {
+                    tracing::warn!(error = %e, "query log write failed");
+                }
             }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, path = %path.display(), "query log open failed");
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "query log open failed");
+            }
         }
     }
 }
