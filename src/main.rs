@@ -33,6 +33,12 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Semantic code search. Finds components, hooks, types by meaning.
+    #[command(after_help = "\
+Examples:
+  yomu search \"streaming chat hooks\"
+  yomu search --from src/query.rs:rerank
+  yomu search \"auth\" --path src/auth --limit 5
+  yomu --json search \"useAuth\"")]
     Search {
         /// Natural language query (reads from stdin if omitted or "-")
         query: Option<String>,
@@ -57,18 +63,31 @@ enum Command {
         no_embed: bool,
     },
     /// Update chunk index incrementally. No API calls.
+    #[command(after_help = "\
+Examples:
+  yomu index
+  yomu index --dry-run")]
     Index {
         /// Show what would be indexed without writing to the database
         #[arg(long)]
         dry_run: bool,
     },
     /// Rebuild chunk index from scratch. No API calls.
+    #[command(after_help = "\
+Examples:
+  yomu rebuild
+  yomu rebuild --dry-run")]
     Rebuild {
         /// Show what would be rebuilt without writing to the database
         #[arg(long)]
         dry_run: bool,
     },
     /// Analyze impact of changes to a file or symbol.
+    #[command(after_help = "\
+Examples:
+  yomu impact src/hooks/useAuth.ts
+  yomu impact src/hooks/useAuth.ts --symbol useAuth --depth 2
+  yomu impact src/hooks/useAuth.ts --semantic")]
     Impact {
         /// File path relative to project root (e.g. "src/hooks/useAuth.ts")
         target: String,
@@ -83,10 +102,23 @@ enum Command {
         semantic: bool,
     },
     /// Show index statistics.
+    #[command(after_help = "\
+Examples:
+  yomu status
+  yomu --json status")]
     Status,
     /// Embed pending chunks for semantic search.
+    #[command(after_help = "\
+Examples:
+  yomu embed
+  yomu --json embed")]
     Embed,
     /// Bundle forward-closure code for an agent (recall-complete brief).
+    #[command(after_help = "\
+Examples:
+  yomu brief \"add OAuth login\" --seed-file src/auth.rs
+  yomu brief \"fix rerank scoring\" --seed-symbol rerank --depth 2
+  yomu --json brief \"refactor query layer\" --seed-file src/query.rs --max-chunks 40")]
     Brief {
         /// Free-form task description (must not be empty)
         task: String,

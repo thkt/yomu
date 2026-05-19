@@ -1160,3 +1160,30 @@ fn search_no_query_json_emits_usage_error_envelope() {
         "expected error.message string: {stderr}"
     );
 }
+
+// T-700: after_help_examples_present_for_all_commands [Issue #192 Phase 2.3]
+#[test]
+fn after_help_examples_present_for_all_commands() {
+    for cmd in [
+        "search", "index", "rebuild", "impact", "status", "embed", "brief",
+    ] {
+        let output = yomu_cmd().args([cmd, "--help"]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{cmd} --help failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (_, after_examples) = stdout
+            .split_once("Examples:")
+            .unwrap_or_else(|| panic!("{cmd} --help should contain 'Examples:', got: {stdout}"));
+        let example_count = after_examples
+            .lines()
+            .filter(|l| l.trim_start().starts_with("yomu "))
+            .count();
+        assert!(
+            example_count >= 1,
+            "{cmd} --help should have at least 1 example line starting with 'yomu ', got: {stdout}"
+        );
+    }
+}
