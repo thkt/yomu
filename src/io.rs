@@ -11,23 +11,22 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use amici::cli::exit_code::codes;
+use amici::cli::{exit_code::codes, exit_error};
 
-/// Writes `output` followed by a newline to stdout. `BrokenPipe` is treated as
-/// successful completion (consumer chose to stop reading); other I/O errors
-/// surface as `IO_ERR` exit code.
+/// Writes `output` plus a newline to stdout. See module docs for the
+/// `BrokenPipe` / `IO_ERR` exit-code contract.
 pub fn write_output(output: &str) -> ExitCode {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     write_output_to(&mut handle, output)
 }
 
-pub(crate) fn write_output_to<W: Write>(writer: &mut W, output: &str) -> ExitCode {
+fn write_output_to<W: Write>(writer: &mut W, output: &str) -> ExitCode {
     match writeln!(writer, "{output}") {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("yomu: stdout write failed: {e}");
+            exit_error(&format!("stdout write failed: {e}"));
             ExitCode::from(codes::IO_ERR)
         }
     }
