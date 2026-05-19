@@ -4,6 +4,7 @@ pub mod error;
 pub mod indexer;
 pub mod io;
 pub mod query;
+pub mod query_log;
 pub mod resolver;
 pub mod rust_resolver;
 pub mod storage;

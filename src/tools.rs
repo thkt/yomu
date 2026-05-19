@@ -8,6 +8,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
+
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use amici::cli::embed_with_spinners;
 use amici::cli::env_lookup;
@@ -21,6 +25,7 @@ use crate::config;
 use crate::error::ErrorCode;
 use crate::indexer;
 use crate::query::{self, QueryError};
+use crate::query_log::{self, QueryLogRecord};
 use crate::storage;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -95,6 +100,8 @@ pub struct YomuOptions {
     /// Disable embedding-based search; falls back to FTS5 only.
     /// OR-merged with `YOMU_EMBED=0`.
     pub no_embed: bool,
+    /// Opt in to query log JSONL output (`--log-query`). Default off per #182.
+    pub log_query: bool,
 }
 
 /// Env-derived runtime configuration for [`Yomu::with_root`].
@@ -176,6 +183,7 @@ pub struct Yomu {
     embed_disabled: bool,
     rerank_enabled: bool,
     reranker: OnceLock<ModelLoad<Box<dyn Rerank>>>,
+    log_query: bool,
 }
 
 impl Yomu {
@@ -203,6 +211,7 @@ impl Yomu {
             embed_disabled,
             rerank_enabled: config.rerank_enabled,
             reranker: OnceLock::new(),
+            log_query: options.log_query,
         })
     }
 
@@ -222,6 +231,7 @@ impl Yomu {
             embed_disabled: false,
             rerank_enabled: false,
             reranker: OnceLock::new(),
+            log_query: false,
         }
     }
 
@@ -275,6 +285,7 @@ impl Yomu {
         let state = determine_index_state(&stats);
         let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
+        let start = Instant::now();
         let outcome = query::search(
             &self.conn,
             embedder,
@@ -284,6 +295,10 @@ impl Yomu {
             self.get_reranker(),
             paths,
         )?;
+        if self.log_query {
+            let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            self.emit_query_log(query, &outcome, latency_ms);
+        }
 
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_notes {
@@ -881,6 +896,39 @@ fn dedupe_seed_paths(results: Vec<storage::SearchResult>, cap: usize) -> Vec<Str
         }
     }
     paths
+}
+
+impl Yomu {
+    fn emit_query_log(&self, query: &str, outcome: &query::SearchOutcome, latency_ms: u64) {
+        let Some(path) = query_log::resolve_log_path_from_env() else {
+            tracing::warn!("query log path unresolved (HOME unset); skipping emit");
+            return;
+        };
+        let timestamp = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_default();
+        let record = QueryLogRecord {
+            timestamp,
+            yomu_version: env!("CARGO_PKG_VERSION").to_owned(),
+            original_query: query.to_owned(),
+            fts_results: Vec::new(),
+            vec_results: Vec::new(),
+            rrf_results: Vec::new(),
+            reranked_results: Vec::new(),
+            final_context_ids: outcome.results.iter().filter_map(|r| r.chunk_id).collect(),
+            latency_ms,
+        };
+        match query_log::open_append_writer(&path) {
+            Ok(mut writer) => {
+                if let Err(e) = writer.write_record(&record) {
+                    tracing::warn!(error = %e, "query log write failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "query log open failed");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

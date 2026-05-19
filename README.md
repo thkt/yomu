@@ -312,6 +312,16 @@ src/
 
 Single binary, zero runtime dependencies. SQLite and sqlite-vec are statically linked.
 
+## Query Log
+
+検索パイプラインの観測用に append-only JSONL の query log を出力できる (default off、Issue #182)。
+
+- Opt-in: `yomu --log-query search "..."` で 1 search = 1 record が書き込まれる
+- 書き込み先: `$XDG_DATA_HOME/yomu/query_log.jsonl` (env 未設定時は `~/.local/share/yomu/query_log.jsonl`)
+- 用途: Hit@k 低下の query 抽出、ranking 実験の baseline 蓄積、回帰検知
+
+`original_query` には実際の検索文字列がそのまま記録される。bug report として共有する前に内容を確認すること。yomu はローカル個人利用前提のため default で redact しない。
+
 ## License
 
 MIT

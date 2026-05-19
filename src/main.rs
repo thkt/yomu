@@ -23,6 +23,9 @@ struct Cli {
     /// Output as JSON
     #[arg(long, global = true)]
     json: bool,
+    /// Append a JSONL record per search to the XDG-resolved query log (default off, see Issue #182)
+    #[arg(long, global = true)]
+    log_query: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -176,8 +179,12 @@ fn main() -> ExitCode {
     let yomu_options = match &command {
         Command::Search { no_embed, .. } | Command::Brief { no_embed, .. } => YomuOptions {
             no_embed: *no_embed,
+            log_query: cli.log_query,
         },
-        _ => YomuOptions::default(),
+        _ => YomuOptions {
+            log_query: cli.log_query,
+            ..YomuOptions::default()
+        },
     };
 
     let yomu = match Yomu::new(yomu_options) {
