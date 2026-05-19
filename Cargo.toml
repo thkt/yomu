@@ -11,11 +11,11 @@ repository = "https://github.com/thkt/yomu"
 test-support = ["rurico/test-support"]
 
 [dependencies]
-amici = { git = "https://github.com/thkt/amici", rev = "1d16d08" }
+amici = { git = "https://github.com/thkt/amici", rev = "b545722" }
 bytemuck = "1"
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
-rurico = { git = "https://github.com/thkt/rurico", rev = "bb25a06" }
+rurico = { git = "https://github.com/thkt/rurico", rev = "a573655" }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,7 +31,7 @@ tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
-rurico = { git = "https://github.com/thkt/rurico", rev = "bb25a06", features = ["test-support"] }
+rurico = { git = "https://github.com/thkt/rurico", rev = "a573655", features = ["test-support"] }
 tempfile = "3"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 
