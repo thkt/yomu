@@ -965,6 +965,200 @@ fn get_transitive_dependencies_circular() {
     );
 }
 
+// T-581: get_transitive_dependents_path_with_comma_delimiter
+//
+// Invariant: a path containing ',' inside the closure must not mask a
+// separately-named file whose path appears as a comma-bounded fragment
+// of it. Graph: src/a -> src/a,b.rs -> src/target.rs. Walking back from
+// target must reach both src/a,b.rs (depth 1) and src/a (depth 2).
+#[test]
+fn get_transitive_dependents_path_with_comma_delimiter() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/a,b.rs",
+        &[Reference {
+            source_file: "src/a,b.rs".into(),
+            target_file: "src/target.rs".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/a",
+        &[Reference {
+            source_file: "src/a".into(),
+            target_file: "src/a,b.rs".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependents(&conn, "src/target.rs", 5).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/a,b.rs".into(),
+                depth: 1
+            },
+            Dependent {
+                file_path: "src/a".into(),
+                depth: 2
+            },
+        ],
+        "src/a must reach the closure even though src/a,b.rs contains a comma",
+    );
+}
+
+// T-582: get_transitive_dependencies_path_with_comma_delimiter
+//
+// Forward direction of T-581.
+// Graph: src/seed.rs -> src/a,b.rs -> src/a
+#[test]
+fn get_transitive_dependencies_path_with_comma_delimiter() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/seed.rs",
+        &[Reference {
+            source_file: "src/seed.rs".into(),
+            target_file: "src/a,b.rs".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+    replace_file_references(
+        &conn,
+        "src/a,b.rs",
+        &[Reference {
+            source_file: "src/a,b.rs".into(),
+            target_file: "src/a".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies(&conn, "src/seed.rs", 5).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/seed.rs".into(),
+                depth: 0
+            },
+            Dependent {
+                file_path: "src/a,b.rs".into(),
+                depth: 1
+            },
+            Dependent {
+                file_path: "src/a".into(),
+                depth: 2
+            },
+        ],
+        "src/a must reach the closure even though src/a,b.rs contains a comma",
+    );
+}
+
+// T-583: get_transitive_dependents_similar_paths_no_collision
+//
+// Substring-similar paths (`a.rs`, `ab.rs`, `a.rs/inner.rs`) must each
+// reach the closure independently. Guard against future cycle-detection
+// schemes that might confuse them.
+#[test]
+fn get_transitive_dependents_similar_paths_no_collision() {
+    let (conn, _dir) = test_db();
+    for src in ["src/a.rs", "src/ab.rs", "src/a.rs/inner.rs"] {
+        replace_file_references(
+            &conn,
+            src,
+            &[Reference {
+                source_file: src.into(),
+                target_file: "src/target.rs".into(),
+                symbol_name: None,
+                ref_kind: RefKind::Named,
+            }],
+        )
+        .unwrap();
+    }
+
+    let mut deps = get_transitive_dependents(&conn, "src/target.rs", 5).unwrap();
+    deps.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/a.rs".into(),
+                depth: 1,
+            },
+            Dependent {
+                file_path: "src/a.rs/inner.rs".into(),
+                depth: 1,
+            },
+            Dependent {
+                file_path: "src/ab.rs".into(),
+                depth: 1,
+            },
+        ],
+    );
+}
+
+// T-584: get_transitive_dependencies_similar_paths_no_collision
+//
+// Forward-direction twin of T-583. Walking a chain across substring-similar
+// paths must still resolve every hop without false-positive cycle drops.
+// Graph: src/seed.rs -> src/a.rs -> src/ab.rs -> src/a.rs/inner.rs
+#[test]
+fn get_transitive_dependencies_similar_paths_no_collision() {
+    let (conn, _dir) = test_db();
+    let chain = [
+        ("src/seed.rs", "src/a.rs"),
+        ("src/a.rs", "src/ab.rs"),
+        ("src/ab.rs", "src/a.rs/inner.rs"),
+    ];
+    for (src, tgt) in chain {
+        replace_file_references(
+            &conn,
+            src,
+            &[Reference {
+                source_file: src.into(),
+                target_file: tgt.into(),
+                symbol_name: None,
+                ref_kind: RefKind::Named,
+            }],
+        )
+        .unwrap();
+    }
+
+    let deps = get_transitive_dependencies(&conn, "src/seed.rs", 5).unwrap();
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/seed.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/a.rs".into(),
+                depth: 1,
+            },
+            Dependent {
+                file_path: "src/ab.rs".into(),
+                depth: 2,
+            },
+            Dependent {
+                file_path: "src/a.rs/inner.rs".into(),
+                depth: 3,
+            },
+        ],
+    );
+}
+
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")
