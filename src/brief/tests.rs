@@ -2,12 +2,33 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 use tempfile::{TempDir, tempdir};
+use tracing_test::traced_test;
 
 use super::*;
 use crate::storage::{
     EMBEDDING_DIMS, NewChunk, RefKind, Reference, ce, insert_chunk, open_db,
     replace_file_references,
 };
+
+// T-574: expand_plan_empty_seeds_returns_empty_degraded [RC-014 #140]
+#[traced_test]
+#[test]
+fn expand_plan_empty_seeds_returns_empty_degraded() {
+    let (conn, _dir) = test_db();
+    let task = task_with_seeds(vec![], 1);
+    let output = expand_plan(&conn, &task).unwrap();
+    assert!(output.chunks.is_empty(), "empty seeds yield empty chunks");
+    assert!(
+        output.degraded,
+        "empty seeds must mark degraded as invariant violation"
+    );
+    assert_eq!(output.total_chunks, 0);
+    assert_eq!(output.total_bytes, 0);
+    assert!(
+        logs_contain("expand_plan called with empty seeds"),
+        "expected warn for empty seeds"
+    );
+}
 
 fn test_db() -> (Connection, TempDir) {
     let dir = tempdir().unwrap();

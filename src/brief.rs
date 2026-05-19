@@ -353,6 +353,15 @@ pub fn render_plain(output: &BriefOutput) -> String {
 #[allow(clippy::cast_possible_truncation)]
 pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, StorageError> {
     let seeds = collect_seed_paths(task);
+    if seeds.is_empty() {
+        tracing::warn!("expand_plan called with empty seeds; returning empty");
+        return Ok(BriefOutput {
+            chunks: Vec::new(),
+            degraded: true,
+            total_chunks: 0,
+            total_bytes: 0,
+        });
+    }
     let depth_by_path = collect_closure(conn, &seeds, task.depth)?;
 
     let paths: Vec<&str> = depth_by_path.keys().map(String::as_str).collect();
