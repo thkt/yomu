@@ -585,46 +585,46 @@ impl Yomu {
     }
 
     fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
-        if let Some(paths) = self.embedder_seed_paths(task, max_seeds) {
-            return (paths, false);
+        match self.embedder_seed_paths(task, max_seeds) {
+            Ok(paths) => (paths, false),
+            Err(reason) => {
+                record_degraded(reason, "brief: seed inference");
+                (self.fts_fallback_seed_paths(task, max_seeds), true)
+            }
         }
-        let reason = self
-            .degraded_reason()
-            .copied()
-            .unwrap_or(DegradedReason::ProbeFailed);
-        record_degraded(reason, "brief: seed inference");
-        (self.fts_fallback_seed_paths(task, max_seeds), true)
     }
 
-    fn embedder_seed_paths(&self, task: &str, max_seeds: u32) -> Option<Vec<String>> {
-        let embedder = self.try_embedder_arc().ok()?;
-        let task_emb = embedder
-            .embed_query(task)
-            .map_err(degrade_with_warn(
-                "brief seed inference: embed_query",
-                DegradedReason::ProbeFailed,
-            ))
-            .ok()?;
+    fn embedder_seed_paths(
+        &self,
+        task: &str,
+        max_seeds: u32,
+    ) -> Result<Vec<String>, DegradedReason> {
+        let embedder = self.try_embedder_arc()?;
+        let task_emb = embedder.embed_query(task).map_err(degrade_with_warn(
+            "brief seed inference: embed_query",
+            DegradedReason::ProbeFailed,
+        ))?;
         let conn = self
             .conn
             .lock()
             .expect("brief seed inference: lock poisoned");
-        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[])
-            .map_err(degrade_with_warn(
+        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[]).map_err(
+            degrade_with_warn(
                 "brief seed inference: vec_search",
                 DegradedReason::ProbeFailed,
-            ))
-            .ok()?;
+            ),
+        )?;
         drop(conn);
 
-        Some(dedupe_seed_paths(results, max_seeds as usize))
+        Ok(dedupe_seed_paths(results, max_seeds as usize))
     }
 
     fn fts_fallback_seed_paths(&self, task: &str, max_seeds: u32) -> Vec<String> {
-        let keywords: Vec<&str> = task.split_whitespace().collect();
+        let keywords = query::extract_keywords(task);
         if keywords.is_empty() {
             return Vec::new();
         }
+        let keyword_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
         let oversample = max_seeds.saturating_mul(3);
         let conn = self
             .conn
@@ -632,7 +632,7 @@ impl Yomu {
             .expect("brief seed inference fts fallback: lock poisoned");
         let results = storage::search_by_fts(
             &conn,
-            &keywords,
+            &keyword_refs,
             None,
             &HashSet::new(),
             None,
