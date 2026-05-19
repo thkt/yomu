@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::storage::{self, ChunkType, Db, SearchResult, StorageError};
+use crate::query_log::StageHit;
+use crate::storage::{self, ChunkType, Db, MatchSource, SearchResult, StorageError};
 use crate::text::split_identifier;
 use rurico::embed::{Embed, EmbedError};
 use rurico::reranker::Rerank;
@@ -16,10 +17,35 @@ pub enum QueryError {
     Internal(String),
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SearchStages {
+    pub fts_results: Vec<StageHit>,
+    pub vec_results: Vec<StageHit>,
+    pub rrf_results: Vec<StageHit>,
+    pub reranked_results: Vec<StageHit>,
+}
+
 #[derive(Debug)]
 pub struct SearchOutcome {
     pub results: Vec<SearchResult>,
     pub degraded: bool,
+    pub stages: Option<SearchStages>,
+}
+
+fn capture_stage(results: &[SearchResult]) -> Vec<StageHit> {
+    results
+        .iter()
+        .filter_map(|r| {
+            r.chunk_id.map(|id| StageHit {
+                chunk_id: id,
+                score: r.score,
+                source: match r.match_source {
+                    MatchSource::Semantic => "semantic".to_owned(),
+                    MatchSource::Fts => "fts".to_owned(),
+                },
+            })
+        })
+        .collect()
 }
 
 const STOP_WORDS: &[&str] = &["the", "a", "an", "in", "for", "of", "with", "and", "or"];
@@ -390,6 +416,7 @@ pub fn search_from_file(
     Ok(results)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn search_pipeline(
     conn: &Db,
     query: &str,
@@ -398,7 +425,8 @@ fn search_pipeline(
     offset: u32,
     reranker: Option<&dyn Rerank>,
     path_filter: &[String],
-) -> Result<Vec<SearchResult>, StorageError> {
+    capture_stages: bool,
+) -> Result<(Vec<SearchResult>, Option<SearchStages>), StorageError> {
     let keywords = extract_keywords(query);
     let type_hints = extract_type_hints(query);
     let keyword_refs: Vec<&str> = keywords.iter().map(String::as_str).collect();
@@ -415,6 +443,8 @@ fn search_pipeline(
         Some(type_hints.as_slice())
     };
 
+    let mut stages = capture_stages.then(SearchStages::default);
+
     let use_semantic = query_embedding.is_some() && stats.embedded_chunks > 0;
     let mut results = match query_embedding {
         Some(emb) if use_semantic => {
@@ -422,6 +452,9 @@ fn search_pipeline(
         }
         _ => Vec::new(),
     };
+    if let Some(s) = stages.as_mut() {
+        s.vec_results = capture_stage(&results);
+    }
 
     // FTS fallback is independent of reranker's semantic overfetch to avoid
     // handing an excessively large batch to the cross-encoder.
@@ -438,7 +471,13 @@ fn search_pipeline(
             fallback_limit,
             path_filter,
         )?;
+        if let Some(s) = stages.as_mut() {
+            s.fts_results = capture_stage(&fts_results);
+        }
         results.extend(fts_results);
+    }
+    if let Some(s) = stages.as_mut() {
+        s.rrf_results = capture_stage(&results);
     }
     let embed_coverage = stats.embed_coverage();
 
@@ -465,6 +504,9 @@ fn search_pipeline(
     if let Some(ranker) = reranker {
         cross_encoder_rerank(&mut results, query, ranker);
     }
+    if let Some(s) = stages.as_mut() {
+        s.reranked_results = capture_stage(&results);
+    }
     cap_per_file(&mut results, MAX_RESULTS_PER_FILE);
     if offset > 0 {
         let skip = (offset as usize).min(results.len());
@@ -472,9 +514,10 @@ fn search_pipeline(
     }
     results.truncate(limit as usize);
 
-    Ok(results)
+    Ok((results, stages))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn search(
     conn: &Arc<Mutex<Db>>,
     embedder: &(impl Embed + ?Sized),
@@ -483,6 +526,7 @@ pub fn search(
     offset: u32,
     reranker: Option<&dyn Rerank>,
     path_filter: &[String],
+    capture_stages: bool,
 ) -> Result<SearchOutcome, QueryError> {
     let (query_embedding, degraded) = match embedder.embed_query(query) {
         Ok(emb) => (Some(emb), false),
@@ -493,7 +537,7 @@ pub fn search(
     };
 
     let conn = conn.lock().unwrap();
-    let results = search_pipeline(
+    let (results, stages) = search_pipeline(
         &conn,
         query,
         query_embedding.as_deref(),
@@ -501,8 +545,13 @@ pub fn search(
         offset,
         reranker,
         path_filter,
+        capture_stages,
     )?;
-    Ok(SearchOutcome { results, degraded })
+    Ok(SearchOutcome {
+        results,
+        degraded,
+        stages,
+    })
 }
 
 #[cfg(test)]
