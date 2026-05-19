@@ -147,6 +147,7 @@ impl Yomu {
             embed_disabled: false,
             rerank_enabled: false,
             reranker: OnceLock::new(),
+            log_query: false,
         }
     }
 
@@ -160,6 +161,7 @@ impl Yomu {
             embed_disabled: true,
             rerank_enabled: false,
             reranker: OnceLock::new(),
+            log_query: false,
         }
     }
 }
