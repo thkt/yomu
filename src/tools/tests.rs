@@ -2815,7 +2815,7 @@ fn invalid_input_kind_has_eight_variants_with_exhaustive_match() {
             actual: 1500,
         },
         InvalidInputKind::QueryOrFromRequired,
-        InvalidInputKind::EmptyTarget,
+        InvalidInputKind::EmptyTarget { candidates: vec![] },
         InvalidInputKind::EmptyIndex,
         InvalidInputKind::EmptyTask,
         InvalidInputKind::SeedSymbolUnimplemented,
@@ -2827,7 +2827,7 @@ fn invalid_input_kind_has_eight_variants_with_exhaustive_match() {
             InvalidInputKind::EmptyQuery => seen |= 1 << 1,
             InvalidInputKind::QueryTooLong { .. } => seen |= 1 << 2,
             InvalidInputKind::QueryOrFromRequired => seen |= 1 << 3,
-            InvalidInputKind::EmptyTarget => seen |= 1 << 4,
+            InvalidInputKind::EmptyTarget { .. } => seen |= 1 << 4,
             InvalidInputKind::EmptyIndex => seen |= 1 << 5,
             InvalidInputKind::EmptyTask => seen |= 1 << 6,
             InvalidInputKind::SeedSymbolUnimplemented => seen |= 1 << 7,
@@ -2997,14 +2997,10 @@ fn retryable_for_invalid_input_is_false() {
     assert!(!e.retryable(), "InvalidInput errors are not retryable");
 }
 
-// T-017: candidates() returns empty Vec for every variant in this PR.
-// FR-V02. Dynamic provisioning is deferred to a follow-up PR; the field
-// is wired but always empty so the envelope shape stays stable at v0.17.0.
-#[test]
-fn candidates_returns_empty_vec_for_invalid_input() {
-    let e = YomuError::InvalidInput(InvalidInputKind::EmptyTarget);
-    assert_eq!(e.candidates(), Vec::<String>::new());
-}
+// T-017 (Issue #192 Phase 2.2a): superseded by T-005 (Issue #197).
+// The original assertion "EmptyTarget returns empty candidates" inverts FR-001
+// of #197 (EmptyTarget now carries candidates). T-005 below covers the
+// remaining contract: non-EmptyTarget variants return Vec::new().
 
 // Phase 2.2b — degraded / notes coverage on 6 routes (issue #192).
 // Spec: .claude/workspace/planning/2026-05-20-192-phase-2-2b-degraded-notes/spec.md
@@ -3293,4 +3289,142 @@ fn format_embed_result_full_completion_is_not_degraded() {
         notes_arr.is_empty(),
         "notes must be empty when fully embedded: {json}"
     );
+}
+
+// --- Issue #197: EmptyTarget candidates dynamic supply ---
+//
+// Spec: .claude/workspace/planning/2026-05-20-197-empty-target-candidates/spec.md
+//
+// FR-001..FR-005 cover the `EmptyTarget` cause carrying an index-sourced
+// `Vec<String>` of file paths. T-001 to T-003 exercise the unit boundary;
+// T-005 fixes the negative half (other variants return empty Vec). T-004 is
+// the integration counterpart and lives in `tests/cli_integration.rs`.
+
+/// Unwraps an `EmptyTarget` cause and returns its `candidates` vector.
+/// Panics for every other variant — used in T-001 / T-002 / T-003 to keep
+/// each test's body assertion-focused. T-005 covers the negative dispatch.
+fn unwrap_empty_target_candidates(err: YomuError) -> Vec<String> {
+    match err {
+        YomuError::InvalidInput(InvalidInputKind::EmptyTarget { candidates }) => candidates,
+        other => panic!("expected EmptyTarget with candidates, got: {other:?}"),
+    }
+}
+
+/// Inserts a placeholder chunk row at each given `file_path`. The only column
+/// `get_all_file_paths` reads is `file_path`, so the chunk body is arbitrary;
+/// using `insert_chunk_row` (vs. `insert_chunk`) skips vector embedding writes
+/// and keeps the helper minimal.
+fn seed_chunks_at_paths(conn: &storage::Db, paths: &[&str]) {
+    for path in paths {
+        storage::insert_chunk_row(
+            conn,
+            path,
+            &storage::NewChunk {
+                chunk_type: &storage::ChunkType::Other,
+                name: None,
+                content: "x",
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+            },
+            "hash",
+            None,
+        )
+        .unwrap();
+    }
+}
+
+// T-001: impact_empty_target_returns_candidates_with_indexed_paths
+// FR-001. With 3 indexed paths in already-sorted insertion order, the
+// EmptyTarget cause carries those 3 paths verbatim.
+#[test]
+fn impact_empty_target_returns_candidates_with_indexed_paths() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_chunks_at_paths(&conn, &["a.rs", "b.rs", "c.rs"]);
+    }
+    let candidates =
+        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    assert_eq!(
+        candidates,
+        vec!["a.rs".to_owned(), "b.rs".to_owned(), "c.rs".to_owned()],
+        "FR-001: candidates must contain the 3 indexed paths"
+    );
+}
+
+// T-002: impact_empty_target_sorts_candidates_alphabetically
+// FR-002. Paths inserted in non-sorted order ("c", "a", "b") must emerge
+// alphabetically. Distinct from T-001 because the input order differs from
+// the asserted output — this is the test that actually discriminates sorting
+// from insertion-order accidental ordering.
+#[test]
+fn impact_empty_target_sorts_candidates_alphabetically() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_chunks_at_paths(&conn, &["c.rs", "a.rs", "b.rs"]);
+    }
+    let candidates =
+        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    assert_eq!(
+        candidates,
+        vec!["a.rs".to_owned(), "b.rs".to_owned(), "c.rs".to_owned()],
+        "FR-002: candidates must be sorted lexicographically regardless of insertion order"
+    );
+}
+
+// T-003: impact_empty_target_caps_candidates_at_ten
+// FR-003. With 15 paths "file00.rs" .. "file14.rs", the candidate list is
+// truncated to the lexicographically-first 10 entries.
+#[test]
+fn impact_empty_target_caps_candidates_at_ten() {
+    let (y, _dir) = test_yomu();
+    let paths: Vec<String> = (0..15).map(|i| format!("file{i:02}.rs")).collect();
+    let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_chunks_at_paths(&conn, &path_refs);
+    }
+    let candidates =
+        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    let expected: Vec<String> = (0..super::MAX_EMPTY_TARGET_CANDIDATES)
+        .map(|i| format!("file{i:02}.rs"))
+        .collect();
+    assert_eq!(
+        candidates,
+        expected,
+        "FR-003: candidates must be the lexicographically-first MAX_EMPTY_TARGET_CANDIDATES paths (capped at {})",
+        super::MAX_EMPTY_TARGET_CANDIDATES
+    );
+}
+
+// T-005: candidates_returns_empty_for_non_empty_target_variants
+// FR-001 (negative). YomuError::candidates() returns Vec::new() for every
+// InvalidInputKind variant except EmptyTarget. This guards the dispatch
+// branch from regressing into a catch-all that leaks data through other
+// variants.
+#[test]
+fn candidates_returns_empty_for_non_empty_target_variants() {
+    let cases: Vec<YomuError> = vec![
+        YomuError::InvalidInput(InvalidInputKind::PathTraversal {
+            path: "x".to_owned(),
+        }),
+        YomuError::InvalidInput(InvalidInputKind::EmptyQuery),
+        YomuError::InvalidInput(InvalidInputKind::QueryTooLong {
+            max: 1000,
+            actual: 1500,
+        }),
+        YomuError::InvalidInput(InvalidInputKind::QueryOrFromRequired),
+        YomuError::InvalidInput(InvalidInputKind::EmptyIndex),
+        YomuError::InvalidInput(InvalidInputKind::EmptyTask),
+        YomuError::InvalidInput(InvalidInputKind::SeedSymbolUnimplemented),
+    ];
+    for e in &cases {
+        assert_eq!(
+            e.candidates(),
+            Vec::<String>::new(),
+            "FR-001 negative: non-EmptyTarget variant {e:?} must return Vec::new()"
+        );
+    }
 }

@@ -1286,3 +1286,49 @@ fn degraded_and_notes_present_in_all_six_json_routes() {
         );
     }
 }
+
+// --- Issue #197: EmptyTarget candidates dynamic supply ---
+//
+// Spec: .claude/workspace/planning/2026-05-20-197-empty-target-candidates/spec.md
+
+// T-004: impact_empty_target_json_envelope_includes_candidates_array
+// FR-001, FR-005, NFR-003. Against a workspace with at least one indexed
+// file, `yomu impact "" --json` must:
+//   - exit non-zero with USAGE_ERROR (FR-001 routing via InvalidInput)
+//   - emit `error.candidates` as a non-empty array of strings (FR-005 + NFR-003:
+//     key present iff candidate list is non-empty)
+#[test]
+fn impact_empty_target_json_envelope_includes_candidates_array() {
+    let dir = setup_project();
+    let output = yomu_cmd()
+        .args(["--json", "impact", ""])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "empty target must exit non-zero, stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
+        .unwrap_or_else(|e| panic!("expected JSON envelope on stderr: {e}: {stderr}"));
+    assert_eq!(
+        parsed["error"]["code"], "USAGE_ERROR",
+        "FR-001: empty target routes through InvalidInput → USAGE_ERROR: {stderr}"
+    );
+    let candidates = parsed["error"]["candidates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("FR-005: error.candidates must be an array: {stderr}"));
+    assert!(
+        !candidates.is_empty(),
+        "FR-005 / NFR-003: candidates array must be non-empty when index has files: {stderr}"
+    );
+    for v in candidates {
+        assert!(
+            v.is_string(),
+            "FR-005: every candidates entry must be a string, got: {v:?} in {stderr}"
+        );
+    }
+}
