@@ -1,6 +1,7 @@
 pub mod chunker;
 mod embed;
 mod injection;
+mod source_kind;
 pub mod walker;
 
 use sha2::{Digest, Sha256};
@@ -32,6 +33,8 @@ pub enum IndexError {
     Io(#[from] io::Error),
     #[error("internal task failed: {0}")]
     Internal(String),
+    #[error("corpus init failed: {0}")]
+    CorpusInit(#[from] injection::CorpusError),
 }
 
 #[derive(Debug)]
@@ -58,21 +61,29 @@ struct PendingFile {
     parsed_imports: Vec<chunker::ParsedImport>,
     hash: String,
     mtime_epoch: Option<i64>,
+    source_kind: Option<String>,
+    /// One JSON array string per `raw_chunks` element. Invariant:
+    /// `injection_flags.len() == raw_chunks.len()`. Clean-scan is `"[]"`,
+    /// hit is `"[\"flag.id\", ...]"`. PR#2 always produces `Some` at the
+    /// schema level (NewChunk); the matcher-未走行 sentinel `None` is reserved
+    /// for post-PR#2 sampling scenarios.
+    injection_flags: Vec<String>,
 }
 
 impl PendingFile {
     fn to_new_chunks(&self) -> Vec<storage::NewChunk<'_>> {
         self.raw_chunks
             .iter()
-            .map(|c| storage::NewChunk {
+            .zip(self.injection_flags.iter())
+            .map(|(c, flags)| storage::NewChunk {
                 chunk_type: &c.chunk_type,
                 name: c.name.as_deref(),
                 content: &c.content,
                 start_line: c.start_line,
                 end_line: c.end_line,
                 parent_index: c.parent_index,
-                source_kind: None,
-                injection_flags: None,
+                source_kind: self.source_kind.as_deref(),
+                injection_flags: Some(flags.as_str()),
             })
             .collect()
     }
@@ -172,6 +183,7 @@ fn prepare_chunks(
     checked: CheckedFile,
     file_path: &Path,
     crate_name: Option<&str>,
+    corpus: &injection::Corpus,
 ) -> Option<PendingFile> {
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let file_chunks = chunker::chunk_file_with_crate_name(&checked.source, ext, crate_name);
@@ -187,6 +199,21 @@ fn prepare_chunks(
         .map(|d| d.as_secs() as i64);
 
     let imports_text = file_chunks.imports.join("\n");
+    let source_kind = Some(source_kind::classify(&checked.rel_path).to_owned());
+    let injection_flags: Vec<String> = file_chunks
+        .chunks
+        .iter()
+        .map(|c| {
+            let flags = corpus.check_chunk(&c.content);
+            if flags.is_empty() {
+                "[]".to_owned()
+            } else {
+                serde_json::to_string(&flags)
+                    .expect("serde_json::to_string on Vec<String> is infallible")
+            }
+        })
+        .collect();
+
     Some(PendingFile {
         rel_path: checked.rel_path,
         raw_chunks: file_chunks.chunks,
@@ -194,6 +221,8 @@ fn prepare_chunks(
         parsed_imports: file_chunks.parsed_imports,
         hash: checked.hash,
         mtime_epoch,
+        source_kind,
+        injection_flags,
     })
 }
 
@@ -211,13 +240,14 @@ fn process_file(
     force: bool,
     resolver: &Resolver,
     rust_resolver: &RustResolver,
+    corpus: &injection::Corpus,
 ) -> Result<FileOutcome, IndexError> {
     let checked = match check_file(conn, rel_path, file_path, force)? {
         CheckResult::Changed(c) => c,
         CheckResult::Skip => return Ok(FileOutcome::Skipped),
         CheckResult::Error => return Ok(FileOutcome::Errored),
     };
-    let Some(pf) = prepare_chunks(checked, file_path, rust_resolver.crate_name()) else {
+    let Some(pf) = prepare_chunks(checked, file_path, rust_resolver.crate_name(), corpus) else {
         return Ok(FileOutcome::Skipped);
     };
     let n = pf.raw_chunks.len() as u32;
@@ -374,6 +404,9 @@ fn run_chunk_only_index_inner(
     root: &Path,
     force: bool,
 ) -> Result<IndexResult, IndexError> {
+    const CORPUS_YAML: &str = include_str!("../tests/fixtures/injection/corpus.yaml");
+    let corpus = injection::Corpus::load_from_str(CORPUS_YAML)?;
+
     let files = walker::walk_source_files(root);
     tracing::info!(
         file_count = files.len(),
@@ -404,6 +437,7 @@ fn run_chunk_only_index_inner(
                 force,
                 &resolver,
                 &rust_resolver,
+                &corpus,
             )? {
                 FileOutcome::Processed(n) => {
                     chunks_created += n;

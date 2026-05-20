@@ -1348,3 +1348,99 @@ fn impact_empty_target_json_envelope_includes_candidates_array() {
         );
     }
 }
+
+fn setup_injection_e2e_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let tests_dir = dir.path().join("tests");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&tests_dir).unwrap();
+    fs::write(
+        src.join("lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .unwrap();
+    fs::write(
+        tests_dir.join("foo_test.rs"),
+        "#[test] fn it_runs() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"injection_e2e\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
+// T-212: index_populates_injection_flags_for_all_chunks
+// Spec FR-214: After `yomu index`, every chunks row has non-NULL
+// injection_flags (matcher走行 over every chunk).
+#[test]
+fn index_populates_injection_flags_for_all_chunks() {
+    let dir = setup_injection_e2e_project();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let null_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE injection_flags IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let total_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    assert!(total_count > 0, "fixture must produce at least one chunk");
+    assert_eq!(
+        null_count, 0,
+        "every chunk must have non-NULL injection_flags (got {null_count}/{total_count})"
+    );
+}
+
+// T-213: index_source_kind_is_subset_of_src_and_test
+// Spec FR-215: After `yomu index` on a repo with src + tests directories,
+// DISTINCT source_kind is a subset of {"src", "test"} (walker excludes
+// vendor via .gitignore).
+#[test]
+fn index_source_kind_is_subset_of_src_and_test() {
+    let dir = setup_injection_e2e_project();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT source_kind FROM chunks ORDER BY source_kind")
+        .unwrap();
+    let kinds: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert!(!kinds.is_empty(), "chunks must have source_kind values");
+    for k in &kinds {
+        assert!(
+            k == "src" || k == "test",
+            "source_kind must be 'src' or 'test' (walker excludes vendor), got: {k:?}"
+        );
+    }
+    assert!(
+        kinds.contains(&"src".to_owned()),
+        "src fixture must produce src source_kind, got: {kinds:?}"
+    );
+}
