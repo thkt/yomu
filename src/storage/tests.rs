@@ -41,6 +41,8 @@ fn insert_and_read_chunk() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "abc123",
         &ce(embedding.clone()),
@@ -79,6 +81,8 @@ fn should_reindex_returns_false_for_same_hash() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "hash_abc",
         &ce(embedding.clone()),
@@ -105,6 +109,8 @@ fn should_reindex_returns_true_for_different_hash() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "hash_abc",
         &ce(embedding.clone()),
@@ -138,6 +144,8 @@ fn get_stats_returns_counts() {
             start_line: 1,
             end_line: 5,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -154,6 +162,8 @@ fn get_stats_returns_counts() {
             start_line: 6,
             end_line: 10,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -170,6 +180,8 @@ fn get_stats_returns_counts() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(embedding.clone()),
@@ -198,6 +210,8 @@ fn get_all_file_paths_returns_distinct_paths() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -214,6 +228,8 @@ fn get_all_file_paths_returns_distinct_paths() {
             start_line: 4,
             end_line: 6,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -230,6 +246,8 @@ fn get_all_file_paths_returns_distinct_paths() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(embedding.clone()),
@@ -259,6 +277,8 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -275,6 +295,8 @@ fn delete_file_chunks_removes_all_chunks_for_file() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(embedding.clone()),
@@ -309,6 +331,8 @@ fn replace_file_chunks_replaces_existing() {
             start_line: 1,
             end_line: 5,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -324,6 +348,8 @@ fn replace_file_chunks_replaces_existing() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -332,6 +358,8 @@ fn replace_file_chunks_replaces_existing() {
             start_line: 4,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     let embeddings = vec![ce(embedding.clone()), ce(embedding.clone())];
@@ -372,6 +400,8 @@ fn vec_search_returns_ordered_results() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb_a.clone()),
@@ -388,6 +418,8 @@ fn vec_search_returns_ordered_results() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb_b),
@@ -463,6 +495,8 @@ fn delete_file_chunks_also_removes_file_context() {
         start_line: 1,
         end_line: 5,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     let embeddings = vec![ce(embedding)];
     replace_file_chunks(
@@ -504,6 +538,8 @@ fn replace_file_chunks_stores_file_context() {
         start_line: 1,
         end_line: 5,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     let embeddings = vec![ce(embedding)];
     replace_file_chunks(
@@ -553,6 +589,8 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             start_line: 1,
             end_line: 5,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -569,6 +607,8 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             start_line: 6,
             end_line: 10,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -585,6 +625,8 @@ fn get_file_siblings_returns_all_chunks_for_file() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(embedding.clone()),
@@ -763,6 +805,8 @@ fn delete_file_chunks_also_removes_references() {
         start_line: 1,
         end_line: 5,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     let embeddings = vec![ce(embedding)];
     replace_file_chunks(&conn, "src/A.tsx", &chunks, &embeddings, "h1", "", &[]).unwrap();
@@ -1187,6 +1231,8 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1195,6 +1241,8 @@ fn replace_file_chunks_only_inserts_chunks_without_embeddings() {
             start_line: 5,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     let refs: Vec<Reference> = vec![];
@@ -1250,6 +1298,8 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
             start_line: 1,
             end_line: 5,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "hash_old",
         &ce(embedding.clone()),
@@ -1265,6 +1315,8 @@ fn replace_file_chunks_only_deletes_old_embeddings() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &new_chunks, "hash_new", "", &[], None).unwrap();
 
@@ -1302,6 +1354,8 @@ fn add_embeddings_inserts_into_vec_chunks() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1310,6 +1364,8 @@ fn add_embeddings_inserts_into_vec_chunks() {
             start_line: 5,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_c", "", &[], None).unwrap();
@@ -1342,6 +1398,8 @@ fn add_embeddings_skips_already_embedded() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/Modal.tsx", &chunks, "hash_m", "", &[], None).unwrap();
 
@@ -1375,6 +1433,8 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -1390,6 +1450,8 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1398,6 +1460,8 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
             start_line: 5,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[], None).unwrap();
@@ -1409,6 +1473,8 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/C.tsx", &chunks_c, "h3", "", &[], None).unwrap();
 
@@ -1438,6 +1504,8 @@ fn needs_embedding_returns_true_for_chunk_only_file() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/Nav.tsx", &chunks, "hash_nav", "", &[], None).unwrap();
 
@@ -1460,6 +1528,8 @@ fn needs_embedding_returns_false_for_fully_embedded() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "hash_footer",
         &ce(embedding.clone()),
@@ -1486,6 +1556,8 @@ fn needs_embedding_returns_true_when_hash_changed() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "hash_v1",
         &ce(embedding.clone()),
@@ -1512,6 +1584,8 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -1528,6 +1602,8 @@ fn get_stats_reports_embedded_vs_total_chunks() {
             start_line: 5,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -1542,6 +1618,8 @@ fn get_stats_reports_embedded_vs_total_chunks() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks_b, "h2", "", &[], None).unwrap();
 
@@ -1569,6 +1647,8 @@ fn get_files_by_import_count_returns_most_imported_first() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[], None).unwrap();
     }
@@ -1637,6 +1717,8 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/useAuth.tsx", &hook_chunks, "h1", "", &[], None).unwrap();
 
@@ -1648,6 +1730,8 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/types.tsx", &typedef_chunks, "h2", "", &[], None).unwrap();
 
@@ -1659,6 +1743,8 @@ fn get_files_by_import_count_boosts_hook_component_files() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(
         &conn,
@@ -1709,6 +1795,8 @@ fn vec_search_sets_semantic_match_source() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -1738,6 +1826,8 @@ fn vec_search_sets_initial_score() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -1775,6 +1865,8 @@ fn get_import_counts_returns_correct_counts() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         }];
         replace_file_chunks_only(&conn, path, &chunks, hash, "", &[], None).unwrap();
     }
@@ -1851,6 +1943,8 @@ fn fts_chunks_deleted_with_file() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -1866,9 +1960,9 @@ fn fts_chunks_deleted_with_file() {
     assert!(results.is_empty());
 }
 
-// T-160: fts5_migration_from_v2_clears_file_hash
+// T-160: fts5_migration_from_v2_drops_chunks
 #[test]
-fn fts5_migration_from_v2_clears_file_hash() {
+fn fts5_migration_from_v2_drops_chunks() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -1880,6 +1974,8 @@ fn fts5_migration_from_v2_clears_file_hash() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -1891,21 +1987,15 @@ fn fts5_migration_from_v2_clears_file_hash() {
     )
     .unwrap();
 
-    // Re-init runs migration v2 → current. Migration drops fts_chunks and
-    // clears file_hash so `yomu index` repopulates on the next run.
     drop(conn);
     let conn = open_db(&db_path).unwrap();
 
-    let hash: String = conn
-        .query_row(
-            "SELECT file_hash FROM chunks WHERE file_path = 'src/x.tsx'",
-            [],
-            |row| row.get(0),
-        )
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        hash, "",
-        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
+        chunks_count, 0,
+        "v9 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -1921,6 +2011,8 @@ fn fts5_handles_special_characters_in_content() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -1943,6 +2035,8 @@ fn get_unembedded_chunks_for_file_returns_rows() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -1951,6 +2045,8 @@ fn get_unembedded_chunks_for_file_returns_rows() {
             start_line: 5,
             end_line: 8,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/Card.tsx", &chunks, "hash_card", "", &[], None).unwrap();
@@ -1983,6 +2079,8 @@ fn get_unembedded_chunks_for_file_excludes_embedded() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -2006,6 +2104,8 @@ fn get_imports_for_file_returns_stored_imports() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     let imports = "import { useState } from 'react'\nimport { Button } from './Button'";
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", imports, &[], None).unwrap();
@@ -2039,9 +2139,9 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
-// T-167: migration_v3_to_v4_creates_vocab_and_clears_file_hash
+// T-167: migration_v3_to_v9_creates_vocab_and_drops_chunks
 #[test]
-fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
+fn migration_v3_to_v9_creates_vocab_and_drops_chunks() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2054,6 +2154,8 @@ fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/migrate.ts", &chunks, "h1", "", &[], None).unwrap();
 
@@ -2076,7 +2178,7 @@ fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "8", "schema_version should be 8 after migration");
+    assert_eq!(version, "9", "schema_version should be 9 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -2087,21 +2189,15 @@ fn migration_v3_to_v4_creates_vocab_and_clears_file_hash() {
         .unwrap();
     assert!(
         exists,
-        "fts_chunks_vocab should exist after v3->v4 migration"
+        "fts_chunks_vocab should exist after v3->v9 migration"
     );
 
-    // chunks rows are kept across migration even though fts_chunks gets
-    // dropped; file_hash is cleared so `yomu index` repopulates the FTS.
-    let hash: String = conn
-        .query_row(
-            "SELECT file_hash FROM chunks WHERE file_path = 'src/migrate.ts'",
-            [],
-            |row| row.get(0),
-        )
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        hash, "",
-        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
+        chunks_count, 0,
+        "v9 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -2117,6 +2213,8 @@ fn get_file_mtimes_returns_stored_mtime() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/A.tsx", &chunks, "h1", "", &[], Some(now)).unwrap();
     replace_file_chunks_only(&conn, "src/B.tsx", &chunks, "h2", "", &[], None).unwrap();
@@ -2146,6 +2244,8 @@ fn replace_file_chunks_rejects_length_mismatch() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Other,
@@ -2154,6 +2254,8 @@ fn replace_file_chunks_rejects_length_mismatch() {
             start_line: 2,
             end_line: 2,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     let embeddings = vec![ce(vec![0.0_f32; EMBEDDING_DIMS])]; // 1 embedding for 2 chunks
@@ -2183,6 +2285,8 @@ fn insert_chunk_rejects_wrong_embedding_dims() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(wrong_dims),
@@ -2206,6 +2310,8 @@ fn fts_automerge_guard_restores_on_drop() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         }],
         "h1",
         "",
@@ -2230,6 +2336,8 @@ fn fts_automerge_guard_restores_on_drop() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         }],
         "h2",
         "",
@@ -2258,6 +2366,8 @@ fn new_chunk_with_parent_index_stores_parent_chunk_id() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
     let child = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2266,6 +2376,8 @@ fn new_chunk_with_parent_index_stores_parent_chunk_id() {
         start_line: 10,
         end_line: 20,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
 
     replace_file_chunks_only(
@@ -2312,6 +2424,8 @@ fn out_of_order_chunks_resolves_to_null() {
         start_line: 10,
         end_line: 20,
         parent_index: Some(1),
+        source_kind: None,
+        injection_flags: None,
     };
     let parent = NewChunk {
         chunk_type: &ChunkType::Component,
@@ -2320,6 +2434,8 @@ fn out_of_order_chunks_resolves_to_null() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
 
     replace_file_chunks_only(
@@ -2359,6 +2475,8 @@ fn innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
     let child = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2367,6 +2485,8 @@ fn innerfn_in_embed_path_not_in_vec_chunks_yes_in_fts() {
         start_line: 10,
         end_line: 20,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
 
     let data = FileData {
@@ -2408,6 +2528,8 @@ fn get_stats_returns_embeddable_and_total_chunks() {
             start_line: 1,
             end_line: 60,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::InnerFn,
@@ -2416,6 +2538,8 @@ fn get_stats_returns_embeddable_and_total_chunks() {
             start_line: 10,
             end_line: 20,
             parent_index: Some(0),
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -2424,6 +2548,8 @@ fn get_stats_returns_embeddable_and_total_chunks() {
             start_line: 70,
             end_line: 80,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/App.tsx", &chunks, "h1", "", &[], None).unwrap();
@@ -2450,6 +2576,8 @@ fn embed_percentage_uses_embeddable_chunks() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(embedding.clone()),
@@ -2470,6 +2598,8 @@ fn embed_percentage_uses_embeddable_chunks() {
             start_line: 5,
             end_line: 10,
             parent_index: Some(0),
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         None,
@@ -2498,6 +2628,8 @@ fn embed_path_with_innerfn_no_length_mismatch() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
     let inner1 = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2506,6 +2638,8 @@ fn embed_path_with_innerfn_no_length_mismatch() {
         start_line: 10,
         end_line: 15,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
     let inner2 = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2514,6 +2648,8 @@ fn embed_path_with_innerfn_no_length_mismatch() {
         start_line: 20,
         end_line: 25,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
 
     let data = FileData {
@@ -2552,6 +2688,8 @@ fn idf_uses_total_chunks_innerfn_included_non_negative() {
             start_line: 1,
             end_line: 60,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::InnerFn,
@@ -2560,6 +2698,8 @@ fn idf_uses_total_chunks_innerfn_included_non_negative() {
             start_line: 10,
             end_line: 20,
             parent_index: Some(0),
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/List.tsx", &chunks, "h1", "", &[], None).unwrap();
@@ -2598,6 +2738,8 @@ fn chunk_from_row_reads_parent_chunk_id() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
     let child = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2606,6 +2748,8 @@ fn chunk_from_row_reads_parent_chunk_id() {
         start_line: 10,
         end_line: 15,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
 
     replace_file_chunks_only(
@@ -2666,6 +2810,8 @@ fn chunk_from_row_reads_parent_chunk_id_name_search() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
     let child = NewChunk {
         chunk_type: &ChunkType::InnerFn,
@@ -2674,6 +2820,8 @@ fn chunk_from_row_reads_parent_chunk_id_name_search() {
         start_line: 10,
         end_line: 15,
         parent_index: Some(0),
+        source_kind: None,
+        injection_flags: None,
     };
 
     replace_file_chunks_only(
@@ -2734,6 +2882,8 @@ fn parent_chunk_search_result_has_no_parent_chunk_id() {
         start_line: 1,
         end_line: 60,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
 
     replace_file_chunks_only(
@@ -2773,6 +2923,8 @@ fn fts_stores_split_identifier_name() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -2802,6 +2954,8 @@ fn fts_stores_empty_name_for_none() {
         start_line: 1,
         end_line: 1,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/util.ts", &chunks, "h1", "", &[], None).unwrap();
 
@@ -2831,6 +2985,8 @@ fn fts_stores_file_path() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
 
@@ -2848,9 +3004,9 @@ fn fts_stores_file_path() {
     );
 }
 
-// T-557: migration_v6_to_v7_clears_file_hash_for_reindex
+// T-557: migration_v6_to_v9_drops_chunks_for_reindex
 #[test]
-fn migration_v6_to_v7_clears_file_hash_for_reindex() {
+fn migration_v6_to_v9_drops_chunks_for_reindex() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2862,6 +3018,8 @@ fn migration_v6_to_v7_clears_file_hash_for_reindex() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/data.rs", &chunks, "h1", "", &[], None).unwrap();
 
@@ -2887,18 +3045,14 @@ fn migration_v6_to_v7_clears_file_hash_for_reindex() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "8", "schema_version should be 8 after migration");
+    assert_eq!(version, "9", "schema_version should be 9 after migration");
 
-    let hash: String = conn
-        .query_row(
-            "SELECT file_hash FROM chunks WHERE file_path = 'src/data.rs'",
-            [],
-            |row| row.get(0),
-        )
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        hash, "",
-        "migration should clear file_hash so `yomu index` repopulates fts_chunks"
+        chunks_count, 0,
+        "v9 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -2917,6 +3071,8 @@ fn search_by_fts_finds_camelcase_by_split_keywords() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -2925,6 +3081,8 @@ fn search_by_fts_finds_camelcase_by_split_keywords() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/form.tsx", &chunks, "h1", "", &[], None).unwrap();
@@ -2983,6 +3141,8 @@ fn search_by_fts_finds_by_path_segment() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/auth/login.ts", &chunks, "h1", "", &[], None).unwrap();
 
@@ -3004,6 +3164,8 @@ fn search_by_fts_respects_type_filter() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Component,
@@ -3012,6 +3174,8 @@ fn search_by_fts_respects_type_filter() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
@@ -3048,6 +3212,8 @@ fn vec_search_respects_type_filter() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3066,6 +3232,8 @@ fn vec_search_respects_type_filter() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb.clone()),
@@ -3100,6 +3268,8 @@ fn vec_search_multi_respects_type_filter() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3116,6 +3286,8 @@ fn vec_search_multi_respects_type_filter() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb.clone()),
@@ -3142,6 +3314,8 @@ fn search_by_fts_excludes_ids() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         NewChunk {
             chunk_type: &ChunkType::Hook,
@@ -3150,6 +3324,8 @@ fn search_by_fts_excludes_ids() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
     ];
     replace_file_chunks_only(&conn, "src/auth.tsx", &chunks, "h1", "", &[], None).unwrap();
@@ -3183,6 +3359,8 @@ fn vec_chunks_embedding_retrievable_by_rowid() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3233,6 +3411,8 @@ fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3249,6 +3429,8 @@ fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3266,6 +3448,8 @@ fn get_chunks_for_from_target_file_only_excludes_inner_fn() {
             start_line: 2,
             end_line: 2,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         None,
@@ -3300,6 +3484,8 @@ fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3316,6 +3502,8 @@ fn get_chunks_for_from_target_with_symbol_returns_exact_match() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3349,6 +3537,8 @@ fn get_chunks_for_from_target_symbol_not_found_returns_empty() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3373,6 +3563,8 @@ fn get_chunks_for_files_returns_all_chunks_sorted() {
         start_line: start,
         end_line: start + 2,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     };
 
     insert_chunk(
@@ -3462,6 +3654,8 @@ fn get_sub_embeddings_for_chunks_returns_correct_bytes() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3502,6 +3696,8 @@ fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb_target.clone()),
@@ -3518,6 +3714,8 @@ fn vec_search_multi_keeps_min_distance_for_duplicate_chunk() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb_other.clone()),
@@ -3556,6 +3754,8 @@ fn search_by_fts_with_include_ids_filters_to_subset() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb.clone()),
@@ -3572,6 +3772,8 @@ fn search_by_fts_with_include_ids_filters_to_subset() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb.clone()),
@@ -3618,6 +3820,8 @@ fn vec_search_multi_returns_union() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h1",
         &ce(emb_a.clone()),
@@ -3634,6 +3838,8 @@ fn vec_search_multi_returns_union() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h2",
         &ce(emb_b.clone()),
@@ -3670,6 +3876,8 @@ fn search_by_fts_fallback_to_quoted_literal_on_sanitize_error() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         }],
         "h1",
         "",
@@ -3720,6 +3928,8 @@ fn bench_search_hot_path_5emb_50kw() {
                 start_line: 1,
                 end_line: 5,
                 parent_index: None,
+                source_kind: None,
+                injection_flags: None,
             },
             &format!("hash{i}"),
             &ce(emb),
@@ -3784,6 +3994,8 @@ fn search_by_fts_finds_japanese_prose_in_markdown() {
         start_line: 1,
         end_line: 1,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "docs/arch.md", &chunks, "h1", "", &[], None).unwrap();
 
@@ -3808,6 +4020,8 @@ fn search_by_fts_preserves_ascii_identifier_match() {
         start_line: 1,
         end_line: 1,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/Counter.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -3834,6 +4048,8 @@ fn search_by_fts_handles_short_query_without_panic() {
         start_line: 1,
         end_line: 1,
         parent_index: None,
+        source_kind: None,
+        injection_flags: None,
     }];
     replace_file_chunks_only(&conn, "src/x.tsx", &chunks, "h1", "", &[], None).unwrap();
 
@@ -3843,4 +4059,167 @@ fn search_by_fts_handles_short_query_without_panic() {
         search_by_fts(&conn, &[q], None, &HashSet::new(), None, 10, &[])
             .unwrap_or_else(|e| panic!("short query {q:?} should not error: {e}"));
     }
+}
+
+// T-007: schema_v9_chunks_table_includes_new_columns
+// Spec FR-001: chunks DDL declares source_kind and injection_flags as TEXT.
+#[test]
+fn schema_v9_chunks_table_includes_new_columns() {
+    let (conn, _dir) = test_db();
+
+    let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
+    let cols: Vec<(String, String)> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    let source_kind = cols.iter().find(|(name, _)| name == "source_kind");
+    let injection_flags = cols.iter().find(|(name, _)| name == "injection_flags");
+
+    assert!(
+        source_kind.is_some(),
+        "chunks must declare source_kind column"
+    );
+    assert!(
+        injection_flags.is_some(),
+        "chunks must declare injection_flags column"
+    );
+    assert_eq!(source_kind.unwrap().1, "TEXT");
+    assert_eq!(injection_flags.unwrap().1, "TEXT");
+}
+
+// T-008: opening_v8_store_drops_chunks_and_bumps_schema_version_to_9
+// Spec FR-002, BR-002: v8 → v9 migration drops chunks and recreates them.
+// V8_CHUNKS_DDL is the v8 schema inlined verbatim (no source_kind / injection_flags).
+#[test]
+fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_9() {
+    const V8_CHUNKS_DDL: &str = "
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            chunk_type TEXT NOT NULL,
+            name TEXT,
+            content TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            file_hash TEXT NOT NULL,
+            parent_chunk_id INTEGER REFERENCES chunks(id)
+        );
+        CREATE TABLE index_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    ";
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("v8.db");
+
+    {
+        let raw = Connection::open(&db_path).unwrap();
+        raw.execute_batch(V8_CHUNKS_DDL).unwrap();
+        raw.execute(
+            "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash, parent_chunk_id) \
+             VALUES ('src/x.ts', 'component', 'X', 'fn X() {}', 1, 1, 'h1', NULL)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO index_meta (key, value) VALUES ('schema_version', '8')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let conn = open_db(&db_path).unwrap();
+
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(chunks_count, 0, "v8 → v9 migration must drop all chunks");
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, "9");
+}
+
+// T-009: new_chunk_with_none_fields_persists_as_sql_null
+// Spec FR-005, BR-001: None → SQL NULL signals "matcher did not run".
+#[test]
+fn new_chunk_with_none_fields_persists_as_sql_null() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
+
+    let id = insert_chunk(
+        &conn,
+        "src/x.ts",
+        &NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: None,
+            content: "x",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+            source_kind: None,
+            injection_flags: None,
+        },
+        "h1",
+        &ce(embedding),
+        None,
+    )
+    .unwrap();
+
+    let (sk, ifl): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT source_kind, injection_flags FROM chunks WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sk, None, "source_kind: None must be stored as NULL");
+    assert_eq!(ifl, None, "injection_flags: None must be stored as NULL");
+}
+
+// T-010: new_chunk_with_some_fields_persists_as_values
+// Spec FR-004, FR-005: Some(text) → SQL text value.
+#[test]
+fn new_chunk_with_some_fields_persists_as_values() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
+
+    let id = insert_chunk(
+        &conn,
+        "src/x.ts",
+        &NewChunk {
+            chunk_type: &ChunkType::Other,
+            name: None,
+            content: "x",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+            source_kind: Some("src"),
+            injection_flags: Some("[]"),
+        },
+        "h1",
+        &ce(embedding),
+        None,
+    )
+    .unwrap();
+
+    let (sk, ifl): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT source_kind, injection_flags FROM chunks WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sk.as_deref(), Some("src"));
+    assert_eq!(ifl.as_deref(), Some("[]"));
 }

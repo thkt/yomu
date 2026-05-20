@@ -1114,6 +1114,25 @@ fn brief_integration_json_output_includes_chunks() {
 
 // --- ADR-0066 Group 2 exit code + JSON error envelope ---
 
+/// Returns the last line in stderr that begins with `{`, parsed as JSON.
+/// Tolerates leading `tracing` warn lines emitted by amici::migration when
+/// the shared `.yomu/index.db` is migrated by a concurrent subprocess.
+fn parse_last_json_envelope(stderr: &str) -> serde_json::Value {
+    let line = stderr
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .unwrap_or_else(|| panic!("no JSON envelope line in stderr: {stderr:?}"));
+    serde_json::from_str(line.trim())
+        .unwrap_or_else(|e| panic!("invalid JSON envelope: {e}: line={line:?}"))
+}
+
+/// True if stderr contains a line starting with `error:` (text-mode prefix),
+/// tolerating leading `tracing` warn lines.
+fn stderr_has_error_line(stderr: &str) -> bool {
+    stderr.lines().any(|l| l.starts_with("error:"))
+}
+
 // T-EC201: NoQuery surfaces as sysexits USAGE (64) in text mode.
 #[test]
 fn search_no_query_exits_with_sysexits_usage_text_mode() {
@@ -1131,8 +1150,8 @@ fn search_no_query_exits_with_sysexits_usage_text_mode() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.starts_with("error:"),
-        "expected text-mode 'error:' prefix: {stderr}"
+        stderr_has_error_line(&stderr),
+        "expected text-mode 'error:' line in stderr: {stderr}"
     );
 }
 
@@ -1152,8 +1171,7 @@ fn search_no_query_json_emits_usage_error_envelope() {
         output.status.code()
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|e| panic!("invalid JSON: {e}: {stderr}"));
+    let parsed = parse_last_json_envelope(&stderr);
     assert_eq!(parsed["error"]["code"], "USAGE_ERROR", "stderr: {stderr}");
     assert!(
         parsed["error"]["message"].is_string(),
@@ -1176,8 +1194,7 @@ fn search_no_query_json_envelope_includes_next_step_and_retryable() {
         .unwrap();
     assert!(!output.status.success(), "expected non-zero exit");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|e| panic!("invalid JSON: {e}: {stderr}"));
+    let parsed = parse_last_json_envelope(&stderr);
     assert!(
         parsed["error"]["next_step"].is_string(),
         "expected error.next_step string per FR-002: {stderr}"
@@ -1312,8 +1329,7 @@ fn impact_empty_target_json_envelope_includes_candidates_array() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|e| panic!("expected JSON envelope on stderr: {e}: {stderr}"));
+    let parsed = parse_last_json_envelope(&stderr);
     assert_eq!(
         parsed["error"]["code"], "USAGE_ERROR",
         "FR-001: empty target routes through InvalidInput → USAGE_ERROR: {stderr}"

@@ -19,8 +19,8 @@ pub(crate) fn insert_chunk_row(
     debug_assert!(chunk.start_line <= chunk.end_line, "start_line > end_line");
     debug_assert!(!chunk.content.is_empty(), "empty chunk content");
     conn.prepare_cached(
-        "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash, parent_chunk_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash, parent_chunk_id, source_kind, injection_flags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?
     .execute(rusqlite::params![
         file_path,
@@ -31,6 +31,8 @@ pub(crate) fn insert_chunk_row(
         chunk.end_line,
         file_hash,
         parent_chunk_id,
+        chunk.source_kind,
+        chunk.injection_flags,
     ])?;
     let chunk_id = conn.last_insert_rowid();
 

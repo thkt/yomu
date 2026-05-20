@@ -1,15 +1,19 @@
+use std::collections::HashSet;
+
 use rusqlite::Connection;
 use tempfile::tempdir;
 
-use yomu::storage::{StorageError, open_db};
+use yomu::storage::open_db;
 
-// T-526: open_db_detects_missing_column_in_stale_schema
+// T-526: open_db_recovers_stale_v5_schema_via_v9_migration
+// Per ADR-0069 the v9 migration drops `chunks` (and dependent tables) and
+// recreates them, so opening a stale v5 DB self-recovers without manual
+// intervention.
 #[test]
-fn open_db_detects_missing_column_in_stale_schema() {
+fn open_db_recovers_stale_v5_schema_via_v9_migration() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("index.db");
 
-    // Create a DB with old schema (no parent_chunk_id) and fake version = 5
     let conn = Connection::open(&db_path).unwrap();
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
@@ -29,24 +33,21 @@ fn open_db_detects_missing_column_in_stale_schema() {
     .unwrap();
     drop(conn);
 
-    let err = open_db(&db_path).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        matches!(err, StorageError::SchemaMismatch { .. }),
-        "expected SchemaMismatch, got: {msg}"
-    );
-    assert!(
-        msg.contains("parent_chunk_id"),
-        "should name the missing column: {msg}"
-    );
-    assert!(
-        msg.contains("index.db"),
-        "should include the DB path: {msg}"
-    );
-    assert!(
-        msg.contains("delete this file"),
-        "should suggest deleting the file: {msg}"
-    );
+    let conn = open_db(&db_path).expect("v9 migration must self-recover a v5 DB");
+
+    let cols: HashSet<String> = conn
+        .prepare("PRAGMA table_info(chunks)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for required in ["parent_chunk_id", "source_kind", "injection_flags"] {
+        assert!(
+            cols.contains(required),
+            "post-migration chunks must include `{required}`, got: {cols:?}"
+        );
+    }
 }
 
 // T-527: open_db_succeeds_with_current_schema

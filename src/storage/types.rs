@@ -142,6 +142,11 @@ pub struct NewChunk<'a> {
     pub start_line: u32,
     pub end_line: u32,
     pub parent_index: Option<usize>,
+    /// chunk 起源 (`vendor` / `test` / `src` の enum 文字列)。NULL = 未分類 (ADR-0069)。
+    pub source_kind: Option<&'a str>,
+    /// matcher の per-chunk 検出結果 (JSON 配列文字列)。
+    /// NULL = matcher 未走行、`"[]"` = 走行 + ヒットなし、`"[...]"` = 走行 + ヒット。
+    pub injection_flags: Option<&'a str>,
 }
 
 pub struct FileData<'a> {
