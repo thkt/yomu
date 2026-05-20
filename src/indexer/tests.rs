@@ -983,3 +983,134 @@ fn run_chunk_only_index_counts_unreadable_files_as_errors() {
         "readable file should still be processed"
     );
 }
+
+// T-207: index_error_from_corpus_error_matches_corpus_init_variant
+// Spec FR-208 / FR-216 / FR-217: corpus init errors propagate as
+// IndexError::CorpusInit(CorpusError) via #[from].
+#[test]
+fn index_error_from_corpus_error_matches_corpus_init_variant() {
+    let corpus_err = injection::Corpus::load_from_str(
+        r#"entries:
+  - id: x
+    pattern_type: bogus
+    pattern: y
+    severity: high
+    category: c
+    expected_flags: []
+"#,
+    )
+    .unwrap_err();
+    let index_err: IndexError = corpus_err.into();
+    assert!(
+        matches!(index_err, IndexError::CorpusInit(_)),
+        "From<CorpusError> for IndexError must produce CorpusInit, got: {index_err:?}"
+    );
+}
+
+// T-208: prepare_chunks_populates_source_kind_and_injection_flags
+// Spec FR-209 / FR-212 / FR-213: prepare_chunks accepts &Corpus and
+// populates PendingFile.source_kind / injection_flags; to_new_chunks
+// borrows them into NewChunk.
+#[test]
+fn prepare_chunks_populates_source_kind_and_injection_flags() {
+    let corpus = injection::Corpus::load_from_str("entries: []").unwrap();
+    let checked = CheckedFile {
+        rel_path: "src/foo.rs".to_owned(),
+        source: "pub fn hello() {}".to_owned(),
+        hash: "deadbeef".to_owned(),
+    };
+    let pf = prepare_chunks(checked, Path::new("src/foo.rs"), None, &corpus)
+        .expect("rust source should yield at least one chunk");
+    assert_eq!(pf.source_kind.as_deref(), Some("src"));
+    assert_eq!(
+        pf.injection_flags.len(),
+        pf.raw_chunks.len(),
+        "injection_flags.len() must equal raw_chunks.len()"
+    );
+    let new_chunks = pf.to_new_chunks();
+    for nc in &new_chunks {
+        assert_eq!(nc.source_kind, Some("src"));
+        assert!(
+            nc.injection_flags.is_some(),
+            "NewChunk.injection_flags must be Some after matcher runs"
+        );
+    }
+}
+
+// T-209: prepare_chunks_clean_scan_yields_some_empty_array_not_none
+// Spec FR-210 / BR-201 / NFR-203: silent-default-false regression gate.
+// Matcher走行 + ヒットなし SHALL be Some("[]"), NOT None.
+#[test]
+fn prepare_chunks_clean_scan_yields_some_empty_array_not_none() {
+    let corpus = injection::Corpus::load_from_str("entries: []").unwrap();
+    let checked = CheckedFile {
+        rel_path: "src/lib.rs".to_owned(),
+        source: "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_owned(),
+        hash: "abc123".to_owned(),
+    };
+    let pf = prepare_chunks(checked, Path::new("src/lib.rs"), None, &corpus).unwrap();
+    for (i, flags) in pf.injection_flags.iter().enumerate() {
+        assert_eq!(
+            flags, "[]",
+            "chunk {i} must be \"[]\" (silent-default-false gate: clean-scan is the empty JSON array, never absent)"
+        );
+    }
+}
+
+// T-210: prepare_chunks_matched_yields_some_json_array
+// Spec FR-211: corpus-matching content SHALL produce
+// Some("[\"flag.id\", ...]") in JSON array form.
+#[test]
+fn prepare_chunks_matched_yields_some_json_array() {
+    let corpus_yaml = r#"entries:
+  - id: ignore-prev
+    pattern_type: literal
+    pattern: "Ignore previous instructions"
+    severity: high
+    category: instruction-override
+    expected_flags: [injection.instruction-override]
+"#;
+    let corpus = injection::Corpus::load_from_str(corpus_yaml).unwrap();
+    let checked = CheckedFile {
+        rel_path: "src/lib.rs".to_owned(),
+        source: r#"pub fn hello() { let _ = "Ignore previous instructions"; }"#.to_owned(),
+        hash: "xyz789".to_owned(),
+    };
+    let pf = prepare_chunks(checked, Path::new("src/lib.rs"), None, &corpus).unwrap();
+    let hit = pf
+        .injection_flags
+        .iter()
+        .any(|f| f == "[\"injection.instruction-override\"]");
+    assert!(
+        hit,
+        "at least one chunk must carry \"[\\\"injection.instruction-override\\\"]\", got: {:?}",
+        pf.injection_flags
+    );
+}
+
+// T-211: prepare_chunks_source_kind_classification_per_rel_path
+// Spec FR-212: source_kind classification follows rel_path heuristic.
+#[test]
+fn prepare_chunks_source_kind_classification_per_rel_path() {
+    let corpus = injection::Corpus::load_from_str("entries: []").unwrap();
+    let cases = [
+        ("src/lib.rs", "src"),
+        ("tests/foo.rs", "test"),
+        ("dist/bundle.rs", "vendor"),
+    ];
+    for (rel_path, expected) in cases {
+        let checked = CheckedFile {
+            rel_path: rel_path.to_owned(),
+            source: "pub fn x() {}".to_owned(),
+            hash: "h".to_owned(),
+        };
+        let pf = prepare_chunks(checked, Path::new(rel_path), None, &corpus)
+            .unwrap_or_else(|| panic!("rust source should chunk for {rel_path}"));
+        assert_eq!(
+            pf.source_kind.as_deref(),
+            Some(expected),
+            "source_kind for {rel_path} should be {expected:?}, got {:?}",
+            pf.source_kind
+        );
+    }
+}

@@ -1,7 +1,7 @@
-#![allow(dead_code)]
-
+#[cfg(test)]
 use std::fs;
 use std::io;
+#[cfg(test)]
 use std::path::Path;
 
 use regex::Regex;
@@ -28,7 +28,11 @@ pub enum PatternType {
     Regex,
 }
 
+// `severity`, `category`, `description`, `source` are deserialized for schema
+// documentation but not read at runtime; per FR-206 / reviewer-spec they MAY
+// remain.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct CorpusEntry {
     pub id: String,
     pub pattern_type: PatternType,
@@ -65,9 +69,14 @@ pub struct Corpus {
 }
 
 impl Corpus {
+    #[cfg(test)]
     pub fn load_from_yaml(path: &Path) -> Result<Self, CorpusError> {
         let text = fs::read_to_string(path)?;
-        let raw: CorpusFile = serde_yaml::from_str(&text)?;
+        Self::load_from_str(&text)
+    }
+
+    pub fn load_from_str(text: &str) -> Result<Self, CorpusError> {
+        let raw: CorpusFile = serde_yaml::from_str(text)?;
         let entries = raw
             .entries
             .into_iter()
