@@ -1,3 +1,9 @@
+//! JSON envelope formatters for success-path routes.
+//!
+//! `degraded` and `notes` fields are always serialized (no `skip_serializing_if`)
+//! so consumers can read `obj.degraded` without an existence guard
+//! (OUTCOME.md Behavior #4, spec FR-001 / BR-002).
+
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
@@ -302,12 +308,16 @@ struct JsonMutationResult {
     files_errored: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     coverage: Option<String>,
+    degraded: bool,
+    notes: Vec<String>,
 }
 
 fn format_mutation_json(
     result: &indexer::IndexResult,
     stats: &storage::IndexStatus,
     include_skipped: bool,
+    degraded: bool,
+    notes: Vec<String>,
 ) -> String {
     let resp = JsonMutationResult {
         files_processed: result.files_processed,
@@ -319,6 +329,8 @@ fn format_mutation_json(
         },
         files_errored: result.files_errored,
         coverage: coverage_if_partial(stats),
+        degraded,
+        notes,
     };
     serde_json::to_string(&resp).unwrap()
 }
@@ -326,15 +338,19 @@ fn format_mutation_json(
 pub(super) fn format_index_json(
     result: &indexer::IndexResult,
     stats: &storage::IndexStatus,
+    degraded: bool,
+    notes: Vec<String>,
 ) -> String {
-    format_mutation_json(result, stats, true)
+    format_mutation_json(result, stats, true, degraded, notes)
 }
 
 pub(super) fn format_rebuild_json(
     result: &indexer::IndexResult,
     stats: &storage::IndexStatus,
+    degraded: bool,
+    notes: Vec<String>,
 ) -> String {
-    format_mutation_json(result, stats, false)
+    format_mutation_json(result, stats, false, degraded, notes)
 }
 
 #[derive(Serialize)]
@@ -344,15 +360,23 @@ struct JsonDryRunResult {
     total_files: u32,
     files_errored: u32,
     orphans_to_remove: u32,
+    degraded: bool,
+    notes: Vec<String>,
 }
 
-pub(super) fn format_dry_run_json(result: &indexer::DryRunResult) -> String {
+pub(super) fn format_dry_run_json(
+    result: &indexer::DryRunResult,
+    degraded: bool,
+    notes: Vec<String>,
+) -> String {
     let resp = JsonDryRunResult {
         files_to_process: result.files_to_process,
         files_to_skip: result.files_to_skip,
         total_files: result.total_files,
         files_errored: result.files_errored,
         orphans_to_remove: result.orphans_to_remove,
+        degraded,
+        notes,
     };
     serde_json::to_string(&resp).unwrap()
 }
@@ -366,17 +390,28 @@ struct JsonStatus {
     embed_percentage: u32,
     references: u32,
     last_indexed: Option<String>,
+    degraded: bool,
+    notes: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct JsonEmbedResult {
     embedded: u32,
+    degraded: bool,
+    notes: Vec<String>,
 }
 
-pub(super) fn format_embed_result(result: &indexer::EmbedResult, json: bool) -> String {
+pub(super) fn format_embed_result(
+    result: &indexer::EmbedResult,
+    json: bool,
+    degraded: bool,
+    notes: Vec<String>,
+) -> String {
     if json {
         let resp = JsonEmbedResult {
             embedded: result.chunks_embedded,
+            degraded,
+            notes,
         };
         return serde_json::to_string(&resp).unwrap();
     }
@@ -389,7 +424,12 @@ pub(super) fn format_embed_result(result: &indexer::EmbedResult, json: bool) -> 
     )
 }
 
-pub(super) fn format_status_json(stats: &storage::IndexStatus, ref_count: u32) -> String {
+pub(super) fn format_status_json(
+    stats: &storage::IndexStatus,
+    ref_count: u32,
+    degraded: bool,
+    notes: Vec<String>,
+) -> String {
     let resp = JsonStatus {
         files: stats.total_files,
         chunks: stats.total_chunks,
@@ -398,6 +438,8 @@ pub(super) fn format_status_json(stats: &storage::IndexStatus, ref_count: u32) -
         embed_percentage: stats.embed_percentage(),
         references: ref_count,
         last_indexed: stats.last_indexed_at.clone(),
+        degraded,
+        notes,
     };
     serde_json::to_string(&resp).unwrap()
 }
@@ -432,8 +474,12 @@ struct JsonImpactResult<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     semantic_related: Vec<JsonSemanticRelated<'a>>,
     total: usize,
+    degraded: bool,
+    notes: Vec<String>,
 }
 
+// 8 args per Spec NFR-002: envelope shape stability over arg-count cap.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn format_impact_json(
     target: &str,
     file_in_index: bool,
@@ -441,6 +487,8 @@ pub(super) fn format_impact_json(
     direct_refs: &HashMap<String, Vec<storage::DirectReference>>,
     symbol_refs: &[String],
     semantic_related: &[storage::SearchResult],
+    degraded: bool,
+    notes: Vec<String>,
 ) -> String {
     let deps: Vec<JsonDependent> = dependents
         .iter()
@@ -478,6 +526,8 @@ pub(super) fn format_impact_json(
         symbol_refs,
         semantic_related: sem,
         total: dependents.len(),
+        degraded,
+        notes,
     };
     serde_json::to_string(&resp).unwrap()
 }

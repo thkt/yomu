@@ -3005,3 +3005,292 @@ fn candidates_returns_empty_vec_for_invalid_input() {
     let e = YomuError::InvalidInput(InvalidInputKind::EmptyTarget);
     assert_eq!(e.candidates(), Vec::<String>::new());
 }
+
+// Phase 2.2b — degraded / notes coverage on 6 routes (issue #192).
+// Spec: .claude/workspace/planning/2026-05-20-192-phase-2-2b-degraded-notes/spec.md
+
+fn make_index_result(files_errored: u32) -> indexer::IndexResult {
+    indexer::IndexResult {
+        files_processed: 3,
+        chunks_created: 10,
+        files_skipped: 0,
+        files_errored,
+    }
+}
+
+fn make_index_status() -> storage::IndexStatus {
+    storage::IndexStatus {
+        total_files: 3,
+        total_chunks: 10,
+        embeddable_chunks: 10,
+        embedded_chunks: 10,
+        last_indexed_at: Some("2026-05-20".to_owned()),
+    }
+}
+
+fn make_partial_index_status() -> storage::IndexStatus {
+    // embedded < embeddable → triggers JsonMutationResult.coverage Some(...).
+    // Used by T-009 to assert notes never duplicates the coverage wording.
+    storage::IndexStatus {
+        total_files: 3,
+        total_chunks: 10,
+        embeddable_chunks: 10,
+        embedded_chunks: 4,
+        last_indexed_at: Some("2026-05-20".to_owned()),
+    }
+}
+
+fn make_dry_run_result(files_errored: u32) -> indexer::DryRunResult {
+    indexer::DryRunResult {
+        total_files: 10,
+        files_to_process: 5,
+        files_to_skip: 4,
+        files_errored,
+        orphans_to_remove: 0,
+    }
+}
+
+fn make_embed_result(chunks_embedded: u32, files_completed: u32) -> indexer::EmbedResult {
+    indexer::EmbedResult {
+        chunks_embedded,
+        files_completed,
+    }
+}
+
+// T-001: format_index_json with files_errored=2 marks degraded and explains why.
+// FR-002.
+#[test]
+fn format_index_json_with_errored_files_is_degraded() {
+    let result = make_index_result(2);
+    let stats = make_index_status();
+    let (degraded, notes) = super::degraded_for_chunk_errors(result.files_errored);
+
+    let json = format_index_json(&result, &stats, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "files_errored=2 should set degraded=true: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr
+            .iter()
+            .any(|n| n.as_str() == Some("failed to chunk 2 file(s)")),
+        "notes must contain failure description, got: {json}"
+    );
+}
+
+// T-002: format_index_json with no errors emits degraded=false and empty notes.
+// FR-002 (false branch) + FR-001 (key always present).
+#[test]
+fn format_index_json_with_no_errors_is_not_degraded() {
+    let result = make_index_result(0);
+    let stats = make_index_status();
+    let (degraded, notes) = super::degraded_for_chunk_errors(result.files_errored);
+
+    let json = format_index_json(&result, &stats, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], false,
+        "files_errored=0 should set degraded=false: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr.is_empty(),
+        "notes must be empty when not degraded, got: {json}"
+    );
+}
+
+// T-003: format_rebuild_json with files_errored=1 marks degraded.
+// FR-003.
+#[test]
+fn format_rebuild_json_with_errored_files_is_degraded() {
+    let result = indexer::IndexResult {
+        files_processed: 2,
+        chunks_created: 8,
+        files_skipped: 0,
+        files_errored: 1,
+    };
+    let stats = make_index_status();
+    let (degraded, notes) = super::degraded_for_chunk_errors(result.files_errored);
+
+    let json = format_rebuild_json(&result, &stats, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "rebuild with files_errored=1 should set degraded=true: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr
+            .iter()
+            .any(|n| n.as_str() == Some("failed to chunk 1 file(s)")),
+        "rebuild notes must contain failure description, got: {json}"
+    );
+}
+
+// T-004: format_dry_run_json with files_errored=1 marks degraded with check wording.
+// FR-004.
+#[test]
+fn format_dry_run_json_with_errored_files_is_degraded() {
+    let result = make_dry_run_result(1);
+    let (degraded, notes) = super::degraded_for_dry_run_errors(result.files_errored);
+
+    let json = format_dry_run_json(&result, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "dry_run with files_errored=1 should set degraded=true: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr
+            .iter()
+            .any(|n| n.as_str() == Some("check failed for 1 file(s)")),
+        "dry_run notes must contain check-failure description, got: {json}"
+    );
+}
+
+// T-005: format_embed_result with pending > chunks_embedded marks degraded
+// and reports both counts plus the skip count.
+// FR-005.
+#[test]
+fn format_embed_result_pending_exceeds_embedded_is_degraded() {
+    let pending = 5;
+    let result = make_embed_result(3, 2);
+    let (degraded, notes) = super::degraded_for_embed_skips(pending, result.chunks_embedded);
+
+    let json = format_embed_result(&result, true, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], true,
+        "pending=5 > embedded=3 should set degraded=true: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr
+            .iter()
+            .any(|n| n.as_str() == Some("embedded 3 of 5 chunks (2 skipped)")),
+        "embed notes must contain count breakdown, got: {json}"
+    );
+}
+
+// T-006: format_status_json with (false, vec![]) emits constant non-degraded envelope.
+// FR-006 (status is never degraded by this route's design).
+#[test]
+fn format_status_json_is_never_degraded() {
+    let stats = make_index_status();
+    let ref_count = 7;
+
+    let json = format_status_json(&stats, ref_count, false, vec![]);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], false,
+        "status must emit degraded=false: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(notes_arr.is_empty(), "status notes must be empty: {json}");
+}
+
+// T-007: format_impact_json with (false, vec![]) emits constant non-degraded envelope.
+// FR-006 (impact is never degraded by this route's design).
+#[test]
+fn format_impact_json_is_never_degraded() {
+    let dependents: Vec<storage::Dependent> = vec![];
+    let direct_refs: HashMap<String, Vec<storage::DirectReference>> = HashMap::new();
+    let symbol_refs: Vec<String> = vec![];
+    let semantic_related: Vec<storage::SearchResult> = vec![];
+
+    let json = format_impact_json(
+        "src/Button.tsx",
+        true,
+        &dependents,
+        &direct_refs,
+        &symbol_refs,
+        &semantic_related,
+        false,
+        vec![],
+    );
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], false,
+        "impact must emit degraded=false: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(notes_arr.is_empty(), "impact notes must be empty: {json}");
+}
+
+// T-009: format_index_json notes never duplicate the coverage wording.
+// FR-007 (negative assertion); paired with AS-002 (coverage field unchanged).
+#[test]
+fn format_index_json_notes_does_not_mention_coverage() {
+    // files_errored=1 forces degraded=true so notes is non-empty.
+    // partial embedding means JsonMutationResult.coverage is Some(...),
+    // so the JSON does contain the word "coverage" — but only in that field,
+    // never in the notes array.
+    let result = make_index_result(1);
+    let stats = make_partial_index_status();
+    let (degraded, notes) = super::degraded_for_chunk_errors(result.files_errored);
+
+    let json = format_index_json(&result, &stats, degraded, notes);
+    let parsed = parse_json(&json);
+
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        !notes_arr.is_empty(),
+        "precondition: notes non-empty: {json}"
+    );
+    assert!(
+        !notes_arr
+            .iter()
+            .any(|n| n.as_str().is_some_and(|s| s.contains("coverage"))),
+        "notes must not mention coverage (FR-007), got: {json}"
+    );
+}
+
+// T-010: format_embed_result with pending == chunks_embedded is not degraded.
+// FR-005 (boundary at equality) + BR-001 (coverage partiality is not a degradation).
+#[test]
+fn format_embed_result_full_completion_is_not_degraded() {
+    let pending = 5;
+    let result = make_embed_result(5, 5);
+    let (degraded, notes) = super::degraded_for_embed_skips(pending, result.chunks_embedded);
+
+    let json = format_embed_result(&result, true, degraded, notes);
+    let parsed = parse_json(&json);
+
+    assert_eq!(
+        parsed["degraded"], false,
+        "pending==embedded should set degraded=false: {json}"
+    );
+    let notes_arr = parsed["notes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
+    assert!(
+        notes_arr.is_empty(),
+        "notes must be empty when fully embedded: {json}"
+    );
+}

@@ -1214,3 +1214,75 @@ fn after_help_examples_present_for_all_commands() {
         );
     }
 }
+
+// T-008: degraded_and_notes_present_in_all_six_json_routes [Issue #192 Phase 2.2b]
+// FR-001: every JSON success envelope on index, rebuild, dry_run, embed, status,
+// and impact carries both `degraded` (boolean) and `notes` (array).
+//
+// Setup: indexed project with a single .tsx file plus an importer so impact has
+// a target. `yomu embed` runs against an indexed-but-empty-pending state (no
+// embedder configured; pending=0 → embed_with_spinners short-circuits) so the
+// JSON envelope is produced without requiring a model.
+#[test]
+fn degraded_and_notes_present_in_all_six_json_routes() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("Button.tsx"),
+        "export function Button() { return <button>Click</button>; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("App.tsx"),
+        "import { Button } from './Button';\nexport function App() { return <Button/>; }\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+
+    // Routes that produce JSON without external state.
+    // `embed` runs without GEMINI_API_KEY / YOMU_EMBED so it neither tries the
+    // network nor a downloaded model — pending=0 because the index does not
+    // exist yet at first call, so embed short-circuits to a default result.
+    // Order matters: embed runs before index so its pending count is 0.
+    let routes: &[(&str, &[&str])] = &[
+        ("index --dry-run", &["--json", "index", "--dry-run"]),
+        ("embed (pending=0)", &["--json", "embed"]),
+        ("index", &["--json", "index"]),
+        ("status", &["--json", "status"]),
+        ("rebuild", &["--json", "rebuild"]),
+        ("impact", &["--json", "impact", "src/Button.tsx"]),
+    ];
+
+    for (label, args) in routes {
+        let output = yomu_cmd()
+            .args(*args)
+            .current_dir(dir.path())
+            .env_remove("YOMU_EMBED")
+            .env_remove("GEMINI_API_KEY")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{label} should succeed, stderr: {stderr}, stdout: {stdout}"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|e| panic!("{label} should emit JSON: {e}\n{stdout}"));
+        assert!(
+            parsed["degraded"].is_boolean(),
+            "{label} must include `degraded` as boolean: {stdout}"
+        );
+        assert!(
+            parsed["notes"].is_array(),
+            "{label} must include `notes` as array: {stdout}"
+        );
+    }
+}
