@@ -1444,3 +1444,232 @@ fn index_source_kind_is_subset_of_src_and_test() {
         "src fixture must produce src source_kind, got: {kinds:?}"
     );
 }
+
+// Helper for T-318: project with a parsable Rust file under src/ plus a
+// parsable TypeScript file under vendor/. No .gitignore — vendor/ is reachable
+// by the walker unless `--exclude-vendor` filters it out. NOT pre-indexed:
+// each T-318 call site invokes `yomu index` (with or without the flag) itself.
+fn setup_vendor_project_unindexed() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let vendor = dir.path().join("vendor");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&vendor).unwrap();
+    fs::write(
+        src.join("lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .unwrap();
+    fs::write(
+        vendor.join("util.ts"),
+        "export function util() { return 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"vendor_e2e\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    dir
+}
+
+// T-318: index_exclude_vendor_drops_vendor_source_kind
+// Spec FR-318 (also exercises FR-315a, FR-315b, FR-316a, FR-316b, FR-316c,
+// FR-317a, FR-317b, FR-317c via the real CLI dispatch chain). Perspective:
+// State + Hazard (silent-default-false avoidance for `--exclude-vendor`).
+//
+// Given a project with `vendor/util.ts` (no .gitignore excluding it), invoking
+// `yomu index --exclude-vendor` SHALL leave 0 chunks with source_kind='vendor'
+// in the DB. Regression: a parallel fresh project indexed WITHOUT the flag
+// SHALL produce > 0 such chunks (so a flag that silently no-ops is caught).
+#[test]
+fn index_exclude_vendor_drops_vendor_source_kind() {
+    // Arrange — Act (flag ON): fresh tempdir + `yomu index --exclude-vendor`
+    let dir_excluded = setup_vendor_project_unindexed();
+    let out = yomu_cmd()
+        .args(["index", "--exclude-vendor"])
+        .current_dir(dir_excluded.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index --exclude-vendor failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Assert (flag ON): SQL count of source_kind='vendor' is 0
+    let db_path = dir_excluded.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let vendor_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE source_kind = 'vendor'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let total_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    drop(conn);
+    assert!(
+        total_count > 0,
+        "fixture must produce some chunks (src/lib.rs at minimum), got total={total_count}"
+    );
+    assert_eq!(
+        vendor_count, 0,
+        "FR-318: --exclude-vendor must drop vendor source_kind, got {vendor_count}/{total_count}"
+    );
+
+    // Arrange — Act (flag OFF, regression): separate fresh tempdir + `yomu index`
+    let dir_baseline = setup_vendor_project_unindexed();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir_baseline.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "baseline index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Assert (flag OFF, regression): vendor count must be > 0 so the flag has
+    // a non-vacuous effect (guards against the flag silently no-op'ing).
+    let db_path = dir_baseline.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let vendor_count_baseline: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE source_kind = 'vendor'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    assert!(
+        vendor_count_baseline > 0,
+        "regression: baseline `yomu index` (no flag) must produce vendor chunks for the \
+         --exclude-vendor flag to be non-vacuous, got {vendor_count_baseline}"
+    );
+}
+
+// T-319: search_json_emits_injection_check_and_per_chunk_flags
+// Spec FR-319a (top-level `injection_check`) + FR-319b (per-chunk
+// `injection_flags` when storage source is Some). Perspective: State +
+// Equivalence (one representative result with populated injection_flags).
+//
+// Given a project indexed with PR#2 populate enabled (default), `yomu --json
+// search "add"` SHALL emit a JSON object with `injection_check="ran"` at top
+// level and at least one `results[]` entry carrying `injection_flags`.
+#[test]
+fn search_json_emits_injection_check_and_per_chunk_flags() {
+    let dir = setup_injection_e2e_project();
+    let output = yomu_cmd()
+        .args(["--json", "search", "add", "--no-embed"])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json search failed: stdout={stdout}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+
+    // FR-319a: top-level injection_check = "ran" (mandatory, no skip_serializing_if).
+    assert_eq!(
+        parsed["injection_check"], "ran",
+        "FR-319a: response must include top-level injection_check='ran': {stdout}"
+    );
+
+    // FR-319b prerequisite: results[] must be non-empty so the per-chunk
+    // assertion exercises a real chunk.
+    let results = parsed["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("results must be an array: {stdout}"));
+    assert!(
+        !results.is_empty(),
+        "fixture must produce at least one matching chunk for query 'add': {stdout}"
+    );
+
+    // FR-319b: at least one result chunk SHALL include injection_flags
+    // (PR#2 populates every chunk with Some(...), so the field must surface
+    // through the JSON envelope).
+    let has_flags = results.iter().any(|r| r.get("injection_flags").is_some());
+    assert!(
+        has_flags,
+        "FR-319b: at least one result chunk must include injection_flags field \
+         (PR#2 populates every chunk): {stdout}"
+    );
+}
+
+// T-320: brief_json_emits_injection_check_and_per_chunk_flags
+// Spec FR-320a (top-level `injection_check`) + FR-320b (per-chunk
+// `injection_flags` when storage source is Some). Perspective: State +
+// Equivalence (seed-file chunk path is the obvious chunk source).
+//
+// Given a project indexed with PR#2 populate enabled, `yomu --json brief
+// "task" --seed-file src/lib.rs` SHALL emit a JSON object with
+// `injection_check="ran"` at top level and at least one `chunks[]` entry
+// carrying `injection_flags`.
+#[test]
+fn brief_json_emits_injection_check_and_per_chunk_flags() {
+    let dir = setup_injection_e2e_project();
+    let output = yomu_cmd()
+        .args([
+            "--json",
+            "brief",
+            "task",
+            "--seed-file",
+            "src/lib.rs",
+            "--no-embed",
+        ])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json brief failed: stdout={stdout}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+
+    // FR-320a: top-level injection_check = "ran" (mandatory).
+    assert_eq!(
+        parsed["injection_check"], "ran",
+        "FR-320a: response must include top-level injection_check='ran': {stdout}"
+    );
+
+    // FR-320b prerequisite: chunks[] must be non-empty (seed file always
+    // contributes).
+    let chunks = parsed["chunks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("chunks must be an array: {stdout}"));
+    assert!(
+        !chunks.is_empty(),
+        "seed file must contribute at least one chunk: {stdout}"
+    );
+
+    // FR-320b: at least one chunk SHALL include injection_flags (PR#2
+    // populates every chunk; field surfaces when source is Some(...)).
+    let has_flags = chunks.iter().any(|c| c.get("injection_flags").is_some());
+    assert!(
+        has_flags,
+        "FR-320b: at least one brief chunk must include injection_flags field \
+         (PR#2 populates every chunk): {stdout}"
+    );
+}

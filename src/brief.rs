@@ -10,6 +10,7 @@ use crate::storage::{
     Chunk, ChunkType, StorageError, get_chunks_for_files, get_edges_among_files, get_import_counts,
     get_transitive_dependencies,
 };
+use crate::tools::format::InjectionCheck;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SeedKind {
@@ -59,6 +60,7 @@ pub struct BriefChunk {
     pub chunk_type: ChunkType,
     pub content: String,
     pub included_reason: ChunkInclusionReason,
+    pub injection_flags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +127,7 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
                 chunk_type: c.chunk_type,
                 content: c.content,
                 included_reason: determine_reason(depth),
+                injection_flags: c.injection_flags,
             }
         })
         .collect()
@@ -289,6 +292,7 @@ pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<Bri
 struct JsonOutput<'a> {
     degraded: bool,
     chunks: Vec<JsonChunk<'a>>,
+    injection_check: InjectionCheck,
 }
 
 #[derive(Serialize)]
@@ -299,6 +303,8 @@ struct JsonChunk<'a> {
     chunk_type: &'static str,
     content: &'a str,
     included_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    injection_flags: Option<Vec<&'a str>>,
 }
 
 /// JSON CLI rendering (FR-012): emits
@@ -318,8 +324,13 @@ pub fn render_json(output: &BriefOutput) -> String {
                 chunk_type: c.chunk_type.as_str(),
                 content: &c.content,
                 included_reason: c.included_reason.to_string(),
+                injection_flags: c
+                    .injection_flags
+                    .as_ref()
+                    .map(|v| v.iter().map(String::as_str).collect()),
             })
             .collect(),
+        injection_check: InjectionCheck::Ran,
     };
     serde_json::to_string(&json).expect("BriefOutput JSON serialization is infallible")
 }

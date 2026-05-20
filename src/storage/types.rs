@@ -75,6 +75,12 @@ pub struct Chunk {
     pub start_line: u32,
     pub end_line: u32,
     pub parent_chunk_id: Option<i64>,
+    /// chunk 起源 (`vendor` / `test` / `src` の enum 文字列)。NULL = 未分類 (ADR-0069)。
+    pub source_kind: Option<String>,
+    /// matcher の per-chunk 検出結果。
+    /// `None` = matcher 未走行 (PR#1-era v9 行 / matcher 未走行 chunk)、
+    /// `Some(vec![])` = 走行 + ヒットなし、`Some(vec![...])` = 走行 + ヒット。
+    pub injection_flags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

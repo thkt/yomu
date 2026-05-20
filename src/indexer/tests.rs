@@ -246,7 +246,7 @@ fn run_chunk_only_index_stores_chunks_without_embeddings() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let result = run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
     assert_eq!(result.files_processed, 2);
     assert!(result.chunks_created >= 2);
@@ -296,7 +296,7 @@ fn run_incremental_embed_within_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(&conn, dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path(), false).unwrap();
     let stats_before = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats_before.embedded_chunks, 0);
 
@@ -327,7 +327,7 @@ fn run_incremental_embed_exhausts_budget() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(&conn, dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
     let result = run_incremental_embed(&conn, &MockEmbedder::default(), 2, None).unwrap();
 
@@ -837,7 +837,7 @@ fn run_chunk_only_index_handles_rust_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let result = run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
     assert_eq!(result.files_processed, 1);
     assert_eq!(result.chunks_created, 2);
@@ -863,10 +863,10 @@ fn run_chunk_only_index_skips_unchanged_files() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let r1 = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let r1 = run_chunk_only_index(&conn, dir.path(), false).unwrap();
     assert_eq!(r1.files_processed, 1);
 
-    let r2 = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let r2 = run_chunk_only_index(&conn, dir.path(), false).unwrap();
     assert_eq!(r2.files_processed, 0);
     assert_eq!(r2.files_skipped, 1);
 }
@@ -883,9 +883,9 @@ fn run_chunk_only_index_force_reindexes() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(&conn, dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
-    let r2 = run_chunk_only_index_force(&conn, dir.path()).unwrap();
+    let r2 = run_chunk_only_index_force(&conn, dir.path(), false).unwrap();
     assert_eq!(r2.files_processed, 1);
     assert_eq!(r2.files_skipped, 0);
 }
@@ -903,7 +903,7 @@ fn run_chunk_only_index_removes_deleted_file_chunks() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let r1 = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let r1 = run_chunk_only_index(&conn, dir.path(), false).unwrap();
     assert_eq!(r1.files_processed, 2);
     assert_eq!(
         storage::get_stats(&conn.lock().unwrap())
@@ -914,7 +914,7 @@ fn run_chunk_only_index_removes_deleted_file_chunks() {
 
     fs::remove_file(src_dir.join("B.tsx")).unwrap();
 
-    run_chunk_only_index(&conn, dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path(), false).unwrap();
     let stats = storage::get_stats(&conn.lock().unwrap()).unwrap();
     assert_eq!(stats.total_files, 1, "orphaned file should be removed");
 }
@@ -934,7 +934,7 @@ fn run_chunk_only_index_stores_imports_in_file_context() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    run_chunk_only_index(&conn, dir.path()).unwrap();
+    run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
     let contexts = storage::get_file_contexts(&conn.lock().unwrap(), &["src/App.tsx"]).unwrap();
     assert_eq!(contexts.len(), 1);
@@ -969,7 +969,7 @@ fn run_chunk_only_index_counts_unreadable_files_as_errors() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let result = run_chunk_only_index(&conn, dir.path()).unwrap();
+    let result = run_chunk_only_index(&conn, dir.path(), false).unwrap();
 
     fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -1085,6 +1085,71 @@ fn prepare_chunks_matched_yields_some_json_array() {
         hit,
         "at least one chunk must carry \"[\\\"injection.instruction-override\\\"]\", got: {:?}",
         pf.injection_flags
+    );
+}
+
+// T-315b: run_chunk_only_index_inner_propagates_exclude_vendor
+//
+// Spec FR-315a / FR-315b: `run_chunk_only_index_inner` accepts
+// `exclude_vendor: bool` and propagates to `walker::walk_source_files`.
+//
+// Two independent tempdirs (identical layout: `src/lib.rs` + `vendor/util.rs`)
+// drive the propagation through to the chunks table. The
+// `source_kind = 'vendor'` row count differentiates the two branches:
+//
+// | exclude_vendor | expected vendor chunk count |
+// | -------------- | --------------------------- |
+// | true           | == 0                        |
+// | false          | > 0                         |
+//
+// Perspective: Combination (decision table above) + State (observable DB
+// state corroborates the propagation).
+#[test]
+fn run_chunk_only_index_inner_propagates_exclude_vendor() {
+    fn setup_files_with_vendor(root: &Path) {
+        for (name, body) in [
+            ("src/lib.rs", "pub fn keep() {}"),
+            ("vendor/util.rs", "pub fn drop_me() {}"),
+        ] {
+            let path = root.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, body).unwrap();
+        }
+    }
+
+    fn vendor_chunk_count(conn: &Arc<Mutex<storage::Db>>) -> i64 {
+        conn.lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE source_kind = 'vendor'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    // Case A: exclude_vendor=true → vendor row count must be 0.
+    let dir_a = tempdir().unwrap();
+    setup_files_with_vendor(dir_a.path());
+    let db_a = dir_a.path().join(".yomu").join("index.db");
+    let conn_a = Arc::new(Mutex::new(storage::open_db(&db_a).unwrap()));
+    run_chunk_only_index_inner(&conn_a, dir_a.path(), false, true).unwrap();
+    let count_a = vendor_chunk_count(&conn_a);
+    assert_eq!(
+        count_a, 0,
+        "exclude_vendor=true must propagate so walker drops vendor/, got {count_a} vendor chunks"
+    );
+
+    // Case B: exclude_vendor=false → vendor row count must be > 0 (PR#2 baseline).
+    let dir_b = tempdir().unwrap();
+    setup_files_with_vendor(dir_b.path());
+    let db_b = dir_b.path().join(".yomu").join("index.db");
+    let conn_b = Arc::new(Mutex::new(storage::open_db(&db_b).unwrap()));
+    run_chunk_only_index_inner(&conn_b, dir_b.path(), false, false).unwrap();
+    let count_b = vendor_chunk_count(&conn_b);
+    assert!(
+        count_b > 0,
+        "exclude_vendor=false must keep PR#2 baseline (walker includes vendor/), got {count_b} vendor chunks"
     );
 }
 

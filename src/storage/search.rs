@@ -66,6 +66,14 @@ fn build_semantic_results(
 }
 
 fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
+    let injection_flags_json: Option<String> = row.get(offset + 8)?;
+    let injection_flags = injection_flags_json.and_then(|s| {
+        serde_json::from_str::<Vec<String>>(&s)
+            .inspect_err(|e| {
+                tracing::warn!(error = %e, "injection_flags JSON parse failed, treating as None");
+            })
+            .ok()
+    });
     Ok(Chunk {
         file_path: row.get(offset)?,
         chunk_type: ChunkType::from_db(row.get::<_, String>(offset + 1)?.as_ref()),
@@ -74,6 +82,8 @@ fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
         start_line: row.get(offset + 4)?,
         end_line: row.get(offset + 5)?,
         parent_chunk_id: row.get(offset + 6)?,
+        source_kind: row.get(offset + 7)?,
+        injection_flags,
     })
 }
 
@@ -175,7 +185,7 @@ pub fn search_by_fts(
 
     let mut sql = format!(
         "SELECT c.id, c.file_path, c.chunk_type, c.name, c.content,
-                c.start_line, c.end_line, c.parent_chunk_id,
+                c.start_line, c.end_line, c.parent_chunk_id, c.source_kind, c.injection_flags,
                 {BM25_EXPR}
          FROM fts_chunks f
          INNER JOIN chunks c ON c.id = f.rowid
@@ -194,7 +204,7 @@ pub fn search_by_fts(
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
-        let bm25_score: f64 = row.get(8)?;
+        let bm25_score: f64 = row.get(10)?;
         let abs = (bm25_score as f32).abs();
         let base_score = abs / (1.0 + abs);
         Ok(SearchResult {
@@ -211,7 +221,7 @@ pub fn search_by_fts(
 
 pub fn get_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Option<Chunk>, StorageError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
+        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id, source_kind, injection_flags
          FROM chunks WHERE id = ?1",
     )?;
     match stmt.query_row([chunk_id], |row| chunk_from_row(row, 0)) {
@@ -234,7 +244,7 @@ pub fn get_chunks_by_ids(
         return Ok(HashMap::new());
     }
     let mut sql = format!(
-        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id \
+        "SELECT id, file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id, source_kind, injection_flags \
          FROM chunks WHERE id IN ({})",
         anon_placeholders(ids.len())
     );
@@ -262,7 +272,7 @@ pub fn get_chunks_for_files(conn: &Connection, paths: &[&str]) -> Result<Vec<Chu
     }
     let placeholders = in_placeholders(paths.len());
     let sql = format!(
-        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id
+        "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id, source_kind, injection_flags
          FROM chunks WHERE file_path IN ({placeholders})
          ORDER BY file_path, start_line"
     );
