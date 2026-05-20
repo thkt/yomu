@@ -103,7 +103,7 @@ fn search_rejects_long_query() {
         .search(Some(&long_query), 10, 0, &[], false, None)
         .unwrap_err();
     assert!(
-        err.to_string().contains("maximum length"),
+        err.to_string().contains("max length"),
         "expected max length error, got: {}",
         err
     );
@@ -2674,7 +2674,7 @@ fn io_err() -> io::Error {
 // T-EC101: InvalidInput → UsageError (64)
 #[test]
 fn error_code_invalid_input_is_usage_error() {
-    let err = YomuError::InvalidInput("bad".into());
+    let err = YomuError::InvalidInput(InvalidInputKind::EmptyQuery);
     assert_eq!(err.error_code(), ErrorCode::UsageError);
     assert_eq!(err.exit_code(), ExitCode::from(64));
 }
@@ -2794,4 +2794,214 @@ fn yomu_config_default_matches_empty_lookup() {
     assert_eq!(default.embed_disabled, empty.embed_disabled);
     assert_eq!(default.rerank_enabled, empty.rerank_enabled);
     assert_eq!(default.embed_budget, empty.embed_budget);
+}
+
+// --- Issue #192 Phase 2.2a: InvalidInputKind + YomuError methods ---
+//
+// Spec: .claude/workspace/planning/2026-05-20-192-phase-2-2a-error-payload/spec.md
+
+// T-001: 8 InvalidInputKind variants are constructible and exhaustively matched.
+// FR-001: classify each invalid-input case as one of 8 named variants.
+// The `match` has no `_` arm so adding a 9th variant breaks compilation.
+#[test]
+fn invalid_input_kind_has_eight_variants_with_exhaustive_match() {
+    let kinds = [
+        InvalidInputKind::PathTraversal {
+            path: "x".to_owned(),
+        },
+        InvalidInputKind::EmptyQuery,
+        InvalidInputKind::QueryTooLong {
+            max: 1000,
+            actual: 1500,
+        },
+        InvalidInputKind::QueryOrFromRequired,
+        InvalidInputKind::EmptyTarget,
+        InvalidInputKind::EmptyIndex,
+        InvalidInputKind::EmptyTask,
+        InvalidInputKind::SeedSymbolUnimplemented,
+    ];
+    let mut seen = 0_u8;
+    for kind in &kinds {
+        match kind {
+            InvalidInputKind::PathTraversal { .. } => seen |= 1 << 0,
+            InvalidInputKind::EmptyQuery => seen |= 1 << 1,
+            InvalidInputKind::QueryTooLong { .. } => seen |= 1 << 2,
+            InvalidInputKind::QueryOrFromRequired => seen |= 1 << 3,
+            InvalidInputKind::EmptyTarget => seen |= 1 << 4,
+            InvalidInputKind::EmptyIndex => seen |= 1 << 5,
+            InvalidInputKind::EmptyTask => seen |= 1 << 6,
+            InvalidInputKind::SeedSymbolUnimplemented => seen |= 1 << 7,
+        }
+    }
+    assert_eq!(
+        seen, 0xFF,
+        "expected all 8 InvalidInputKind variants to be visited, got bitmask {seen:#010b}"
+    );
+}
+
+// T-002: next_step for EmptyQuery returns the kind-specific guidance string.
+// FR-002, BR-002.
+#[test]
+fn next_step_for_empty_query_returns_search_or_stdin_hint() {
+    let e = YomuError::InvalidInput(InvalidInputKind::EmptyQuery);
+    assert_eq!(
+        e.next_step(),
+        Some("run `yomu search \"<query>\"` or pipe a query via stdin".to_owned())
+    );
+}
+
+// T-003: next_step for QueryTooLong embeds the `max` value verbatim.
+// FR-002. Uses U+2264 (≤) per spec mapping table.
+#[test]
+fn next_step_for_query_too_long_includes_max_characters() {
+    let e = YomuError::InvalidInput(InvalidInputKind::QueryTooLong {
+        max: 1000,
+        actual: 1500,
+    });
+    assert_eq!(
+        e.next_step(),
+        Some("shorten query to ≤ 1000 characters".to_owned())
+    );
+}
+
+// T-004: next_step for EmbedderUnavailable suggests model download + env opt-out.
+// FR-002, AS-002.
+#[test]
+fn next_step_for_embedder_unavailable_recommends_download_or_disable() {
+    let e = YomuError::EmbedderUnavailable("test".into());
+    assert_eq!(
+        e.next_step(),
+        Some("run `yomu model download`, or set `YOMU_EMBED=0` for FTS-only mode".to_owned())
+    );
+}
+
+// T-005: next_step for Index errors recommends `yomu rebuild`.
+// FR-002.
+#[test]
+fn next_step_for_index_error_recommends_rebuild() {
+    let inner = indexer::IndexError::Internal("x".into());
+    let e = YomuError::Index(inner);
+    assert_eq!(
+        e.next_step(),
+        Some("run `yomu rebuild` to recreate the index".to_owned())
+    );
+}
+
+// T-006: next_step for Storage errors recommends a permissions/disk check.
+// FR-002.
+#[test]
+fn next_step_for_storage_error_recommends_permission_check() {
+    let inner = storage::StorageError::LengthMismatch {
+        chunks: 1,
+        embeddings: 0,
+    };
+    let e = YomuError::Storage(inner);
+    assert_eq!(
+        e.next_step(),
+        Some("check `.yomu/index.db` permissions and disk space".to_owned())
+    );
+}
+
+// T-007: next_step for Internal errors recommends a bug report.
+// FR-002.
+#[test]
+fn next_step_for_internal_error_recommends_bug_report() {
+    let e = YomuError::Internal("bug".into());
+    assert_eq!(
+        e.next_step(),
+        Some("file a bug report with the reproduction command and `RUST_BACKTRACE=1`".to_owned())
+    );
+}
+
+// T-008: next_step for Io returns None (no actionable recommendation).
+// FR-V01.
+#[test]
+fn next_step_for_io_error_returns_none() {
+    let e = YomuError::Io(io::Error::other("x"));
+    assert_eq!(e.next_step(), None);
+}
+
+// T-009: next_step for Query returns None until Query subtypes gain hints.
+// FR-V01. Spec references QueryError::NoQuery, but YomuError::Query wraps
+// crate::query::QueryError (Storage / Embed / Internal). Internal is the
+// representative variant for FR-V01 coverage; see Suggestions for spec fix.
+#[test]
+fn next_step_for_query_error_returns_none() {
+    let inner = query::QueryError::Internal("x".into());
+    let e = YomuError::Query(inner);
+    assert_eq!(e.next_step(), None);
+}
+
+// T-010: retryable=true for EmbedderUnavailable (recoverable via model download).
+// FR-006, BR-001, AS-002.
+#[test]
+fn retryable_for_embedder_unavailable_is_true() {
+    let e = YomuError::EmbedderUnavailable("x".into());
+    assert!(e.retryable(), "EmbedderUnavailable must be retryable");
+}
+
+// T-011: retryable=false for Storage (disk/permission errors do not self-heal).
+// FR-006, BR-001.
+#[test]
+fn retryable_for_storage_error_is_false() {
+    let inner = storage::StorageError::LengthMismatch {
+        chunks: 1,
+        embeddings: 0,
+    };
+    let e = YomuError::Storage(inner);
+    assert!(
+        !e.retryable(),
+        "Storage errors are not immediately retryable"
+    );
+}
+
+// T-012: retryable=false for Io.
+// FR-006, BR-001.
+#[test]
+fn retryable_for_io_error_is_false() {
+    let e = YomuError::Io(io::Error::other("x"));
+    assert!(!e.retryable(), "Io errors are not immediately retryable");
+}
+
+// T-013: retryable=false for Index.
+// FR-006, BR-001.
+#[test]
+fn retryable_for_index_error_is_false() {
+    let inner = indexer::IndexError::Internal("x".into());
+    let e = YomuError::Index(inner);
+    assert!(!e.retryable(), "Index errors are not immediately retryable");
+}
+
+// T-014: retryable=false for Internal (logic bugs do not recover on retry).
+// FR-006, BR-001.
+#[test]
+fn retryable_for_internal_error_is_false() {
+    let e = YomuError::Internal("x".into());
+    assert!(!e.retryable(), "Internal errors are not retryable");
+}
+
+// T-015: retryable=false for Query.
+// FR-006, BR-001.
+#[test]
+fn retryable_for_query_error_is_false() {
+    let inner = query::QueryError::Internal("x".into());
+    let e = YomuError::Query(inner);
+    assert!(!e.retryable(), "Query errors are not immediately retryable");
+}
+
+// T-016: retryable=false for InvalidInput (caller must supply different input).
+// FR-006, BR-001.
+#[test]
+fn retryable_for_invalid_input_is_false() {
+    let e = YomuError::InvalidInput(InvalidInputKind::EmptyQuery);
+    assert!(!e.retryable(), "InvalidInput errors are not retryable");
+}
+
+// T-017: candidates() returns empty Vec for every variant in this PR.
+// FR-V02. Dynamic provisioning is deferred to a follow-up PR; the field
+// is wired but always empty so the envelope shape stays stable at v0.17.0.
+#[test]
+fn candidates_returns_empty_vec_for_invalid_input() {
+    let e = YomuError::InvalidInput(InvalidInputKind::EmptyTarget);
+    assert_eq!(e.candidates(), Vec::<String>::new());
 }

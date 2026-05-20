@@ -1161,6 +1161,33 @@ fn search_no_query_json_emits_usage_error_envelope() {
     );
 }
 
+// T-022: `yomu --json search` (no query, empty stdin) emits an envelope
+// containing the kind-specific next_step plus retryable: false.
+// Spec: Issue #192 Phase 2.2a — FR-002, FR-005.
+// This is the integration counterpart to T-002 (next_step) and T-016
+// (retryable=false for InvalidInput): the agent reading stderr must see
+// both fields so it can branch without re-parsing the message.
+#[test]
+fn search_no_query_json_envelope_includes_next_step_and_retryable() {
+    let output = yomu_cmd()
+        .args(["--json", "search"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "expected non-zero exit");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let parsed: serde_json::Value = serde_json::from_str(stderr.trim())
+        .unwrap_or_else(|e| panic!("invalid JSON: {e}: {stderr}"));
+    assert!(
+        parsed["error"]["next_step"].is_string(),
+        "expected error.next_step string per FR-002: {stderr}"
+    );
+    assert_eq!(
+        parsed["error"]["retryable"], false,
+        "expected error.retryable=false per FR-005/FR-006 for InvalidInput: {stderr}"
+    );
+}
+
 // T-700: after_help_examples_present_for_all_commands [Issue #192 Phase 2.3]
 #[test]
 fn after_help_examples_present_for_all_commands() {

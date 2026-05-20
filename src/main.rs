@@ -14,7 +14,8 @@ use yomu::brief;
 use yomu::error::{self, ErrorCode};
 use yomu::io::write_output;
 use yomu::tools::{
-    MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError, YomuOptions,
+    InvalidInputKind, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError,
+    YomuOptions,
 };
 
 #[derive(Parser)]
@@ -162,17 +163,29 @@ enum ModelCommand {
 }
 
 #[derive(Debug)]
+enum NoQueryReason {
+    /// stdin is a terminal and no query argument was provided.
+    Terminal,
+    /// stdin was piped but contained no query content.
+    EmptyStdin,
+}
+
+#[derive(Debug)]
 enum QueryError {
-    /// No query available (terminal, empty stdin) — expected with --from
-    NoQuery(String),
-    /// I/O failure reading stdin — must propagate
+    /// No query available — expected with --from, an error otherwise.
+    NoQuery(NoQueryReason),
+    /// I/O failure reading stdin — must propagate.
     Io(String),
 }
 
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoQuery(msg) | Self::Io(msg) => f.write_str(msg),
+            Self::NoQuery(NoQueryReason::Terminal) => {
+                f.write_str("query required: pass as argument or pipe via stdin")
+            }
+            Self::NoQuery(NoQueryReason::EmptyStdin) => f.write_str("empty query from stdin"),
+            Self::Io(msg) => f.write_str(msg),
         }
     }
 }
@@ -263,8 +276,12 @@ fn main() -> ExitCode {
             } else {
                 let query = match resolve_query(query) {
                     Ok(q) => q,
-                    Err(e @ QueryError::NoQuery(_)) => {
-                        return emit_error_code(&e.to_string(), ErrorCode::UsageError, json);
+                    Err(QueryError::NoQuery(reason)) => {
+                        let kind = match reason {
+                            NoQueryReason::Terminal => InvalidInputKind::QueryOrFromRequired,
+                            NoQueryReason::EmptyStdin => InvalidInputKind::EmptyQuery,
+                        };
+                        return emit_error(&YomuError::InvalidInput(kind), json);
                     }
                     Err(e @ QueryError::Io(_)) => {
                         return emit_error_code(&e.to_string(), ErrorCode::IoError, json);
@@ -323,7 +340,23 @@ fn main() -> ExitCode {
 }
 
 fn emit_error(err: &YomuError, json: bool) -> ExitCode {
-    emit_error_code(&err.to_string(), err.error_code(), json)
+    let code = err.error_code();
+    let message = err.to_string();
+    if json {
+        eprintln!(
+            "{}",
+            error::render_json_error_with(
+                code,
+                &message,
+                err.next_step(),
+                &err.candidates(),
+                err.retryable(),
+            )
+        );
+    } else {
+        exit_error(&message);
+    }
+    ExitCode::from(code.exit_code())
 }
 
 fn emit_error_code(message: &str, code: ErrorCode, json: bool) -> ExitCode {
@@ -399,9 +432,7 @@ fn resolve_query_with(
         Some(q) if q != "-" => Ok(q),
         _ => {
             if stdin_is_terminal {
-                return Err(QueryError::NoQuery(
-                    "query required: pass as argument or pipe via stdin".into(),
-                ));
+                return Err(QueryError::NoQuery(NoQueryReason::Terminal));
             }
             let mut buf = String::new();
             stdin
@@ -409,7 +440,7 @@ fn resolve_query_with(
                 .map_err(|e| QueryError::Io(format!("failed to read from stdin: {e}")))?;
             let trimmed = buf.trim();
             if trimmed.is_empty() {
-                return Err(QueryError::NoQuery("empty query from stdin".into()));
+                return Err(QueryError::NoQuery(NoQueryReason::EmptyStdin));
             }
             Ok(trimmed.to_owned())
         }

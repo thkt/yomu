@@ -70,9 +70,9 @@ fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
 
 fn validate_path(path: &str) -> Result<(), YomuError> {
     if path.contains("..") || Path::new(path).is_absolute() {
-        return Err(YomuError::InvalidInput(format!(
-            "'{path}' must be a relative path and must not contain '..'"
-        )));
+        return Err(YomuError::InvalidInput(InvalidInputKind::PathTraversal {
+            path: path.to_owned(),
+        }));
     }
     Ok(())
 }
@@ -138,13 +138,34 @@ impl Default for YomuConfig {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidInputKind {
+    #[error("'{path}' must be a relative path and must not contain '..'")]
+    PathTraversal { path: String },
+    #[error("query must not be empty")]
+    EmptyQuery,
+    #[error("query exceeds max length ({actual} > {max})")]
+    QueryTooLong { max: usize, actual: usize },
+    #[error("query or --from is required")]
+    QueryOrFromRequired,
+    #[error("target must not be empty")]
+    EmptyTarget,
+    #[error("index is empty — run `yomu index` first, or use `yomu search` which auto-indexes")]
+    EmptyIndex,
+    #[error("task must not be empty")]
+    EmptyTask,
+    #[error("--seed-symbol is not yet implemented; use --seed-file")]
+    SeedSymbolUnimplemented,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum YomuError {
     #[error("storage error: {0}")]
     Storage(#[from] storage::StorageError),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
-    #[error("{0}")]
-    InvalidInput(String),
+    #[error(transparent)]
+    InvalidInput(#[from] InvalidInputKind),
     #[error("{0}")]
     Index(#[from] indexer::IndexError),
     #[error("internal error: {0}")]
@@ -153,6 +174,34 @@ pub enum YomuError {
     Query(#[from] QueryError),
     #[error("{0}")]
     EmbedderUnavailable(String),
+}
+
+impl InvalidInputKind {
+    /// Kind-specific recommendation an AI agent can follow without parsing
+    /// the message (FR-002, BR-002). Every variant carries a concrete next
+    /// step; the optional layer lives at [`YomuError::next_step`].
+    pub fn next_step(&self) -> String {
+        match self {
+            Self::PathTraversal { .. } => "use a relative path inside the project root".to_owned(),
+            Self::EmptyQuery => {
+                "run `yomu search \"<query>\"` or pipe a query via stdin".to_owned()
+            }
+            Self::QueryTooLong { max, .. } => format!("shorten query to ≤ {max} characters"),
+            Self::QueryOrFromRequired => {
+                "run `yomu search \"<query>\"` or `yomu search --from <file>`".to_owned()
+            }
+            Self::EmptyTarget => "provide a target path, e.g. `yomu impact src/foo.rs`".to_owned(),
+            Self::EmptyIndex => {
+                "run `yomu index` first, or use `yomu search` which auto-indexes".to_owned()
+            }
+            Self::EmptyTask => {
+                "provide a task description, e.g. `yomu brief \"add OAuth login\"`".to_owned()
+            }
+            Self::SeedSymbolUnimplemented => {
+                "use `--seed-file` instead of `--seed-symbol`".to_owned()
+            }
+        }
+    }
 }
 
 impl YomuError {
@@ -166,6 +215,40 @@ impl YomuError {
             Self::Io(_) => ErrorCode::IoError,
             Self::EmbedderUnavailable(_) => ErrorCode::TempFailure,
         }
+    }
+
+    /// ADR-0060 next_step: kind-specific recommendation for the agent.
+    /// `None` for variants without an actionable agent recommendation
+    /// (`Io`, `Query`).
+    pub fn next_step(&self) -> Option<String> {
+        match self {
+            Self::InvalidInput(kind) => Some(kind.next_step()),
+            Self::Index(_) => Some("run `yomu rebuild` to recreate the index".to_owned()),
+            Self::Storage(_) => {
+                Some("check `.yomu/index.db` permissions and disk space".to_owned())
+            }
+            Self::Io(_) | Self::Query(_) => None,
+            Self::EmbedderUnavailable(_) => Some(
+                "run `yomu model download`, or set `YOMU_EMBED=0` for FTS-only mode".to_owned(),
+            ),
+            Self::Internal(_) => Some(
+                "file a bug report with the reproduction command and `RUST_BACKTRACE=1`".to_owned(),
+            ),
+        }
+    }
+
+    /// ADR-0060 candidates: always empty in this PR (FR-V02). Dynamic
+    /// provisioning (e.g. listing index files for `EmptyTarget`) is deferred
+    /// to a follow-up PR; the field is wired so envelope shape stays stable.
+    pub fn candidates(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// ADR-0060 retryable: `true` only when immediate retry can recover
+    /// (`EmbedderUnavailable` after a model download). All other variants
+    /// require a different input or operator action (BR-001).
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::EmbedderUnavailable(_))
     }
 }
 
@@ -246,12 +329,13 @@ impl Yomu {
     ) -> Result<String, YomuError> {
         if let Some(q) = query {
             if q.is_empty() {
-                return Err(YomuError::InvalidInput("query must not be empty".into()));
+                return Err(YomuError::InvalidInput(InvalidInputKind::EmptyQuery));
             }
             if q.len() > MAX_QUERY_LENGTH {
-                return Err(YomuError::InvalidInput(format!(
-                    "query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
-                )));
+                return Err(YomuError::InvalidInput(InvalidInputKind::QueryTooLong {
+                    max: MAX_QUERY_LENGTH,
+                    actual: q.len(),
+                }));
             }
         }
 
@@ -267,7 +351,7 @@ impl Yomu {
         }
 
         let query =
-            query.ok_or_else(|| YomuError::InvalidInput("query or --from is required".into()))?;
+            query.ok_or_else(|| YomuError::InvalidInput(InvalidInputKind::QueryOrFromRequired))?;
 
         let embedder = self.get_embedder();
         let offset = offset.min(MAX_SEARCH_OFFSET);
@@ -461,15 +545,12 @@ impl Yomu {
         semantic: bool,
     ) -> Result<String, YomuError> {
         if target.is_empty() {
-            return Err(YomuError::InvalidInput("target must not be empty".into()));
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTarget));
         }
 
         let stats = self.with_db(storage::get_stats)?;
         if stats.total_chunks == 0 {
-            return Err(YomuError::InvalidInput(
-                "index is empty — run `yomu index` first, or use `yomu search` which auto-indexes"
-                    .into(),
-            ));
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyIndex));
         }
 
         let (file_path, parsed_symbol) = parse_impact_target(target);
@@ -667,7 +748,7 @@ impl Yomu {
 
     pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
         if task.task.trim().is_empty() {
-            return Err(YomuError::InvalidInput("task must not be empty".into()));
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTask));
         }
         if task
             .seeds
@@ -675,7 +756,7 @@ impl Yomu {
             .any(|s| matches!(s.kind, brief::SeedKind::Symbol))
         {
             return Err(YomuError::InvalidInput(
-                "--seed-symbol is not yet implemented; use --seed-file".into(),
+                InvalidInputKind::SeedSymbolUnimplemented,
             ));
         }
 
