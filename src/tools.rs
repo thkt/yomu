@@ -91,6 +91,54 @@ pub(crate) fn parse_impact_target(target: &str) -> (&str, Option<&str>) {
     (target, None)
 }
 
+/// Routes with no current degraded condition (status, impact) per FR-006:
+/// the constants are emitted so the envelope shape stays uniform across all
+/// six JSON success routes.
+fn never_degraded() -> (bool, Vec<String>) {
+    (false, Vec::new())
+}
+
+/// degraded signal for chunking-mutation routes (index, rebuild) per FR-002 / FR-003.
+/// Single source of truth for the note wording so production and tests stay in sync.
+pub(super) fn degraded_for_chunk_errors(files_errored: u32) -> (bool, Vec<String>) {
+    if files_errored > 0 {
+        (
+            true,
+            vec![format!("failed to chunk {} file(s)", files_errored)],
+        )
+    } else {
+        (false, Vec::new())
+    }
+}
+
+/// degraded signal for dry-run preview per FR-004.
+pub(super) fn degraded_for_dry_run_errors(files_errored: u32) -> (bool, Vec<String>) {
+    if files_errored > 0 {
+        (
+            true,
+            vec![format!("check failed for {} file(s)", files_errored)],
+        )
+    } else {
+        (false, Vec::new())
+    }
+}
+
+/// degraded signal for embed when fewer chunks landed than requested per FR-005.
+pub(super) fn degraded_for_embed_skips(pending: u32, chunks_embedded: u32) -> (bool, Vec<String>) {
+    let skipped = pending.saturating_sub(chunks_embedded);
+    if skipped > 0 {
+        (
+            true,
+            vec![format!(
+                "embedded {} of {} chunks ({} skipped)",
+                chunks_embedded, pending, skipped
+            )],
+        )
+    } else {
+        (false, Vec::new())
+    }
+}
+
 /// Runtime options for [`Yomu::new`] / [`Yomu::with_root`].
 ///
 /// Each field is OR-merged with the corresponding env var, so either source
@@ -479,7 +527,8 @@ impl Yomu {
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
-            return Ok(format_index_json(&chunk_result, &stats));
+            let (degraded, notes) = degraded_for_chunk_errors(chunk_result.files_errored);
+            return Ok(format_index_json(&chunk_result, &stats, degraded, notes));
         }
 
         let mut text = format!(
@@ -499,7 +548,8 @@ impl Yomu {
         let preview = indexer::dry_run_index(&self.conn, &self.root, force)?;
 
         if json {
-            return Ok(format_dry_run_json(&preview));
+            let (degraded, notes) = degraded_for_dry_run_errors(preview.files_errored);
+            return Ok(format_dry_run_json(&preview, degraded, notes));
         }
 
         let mut text = format!(
@@ -523,7 +573,8 @@ impl Yomu {
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
-            return Ok(format_rebuild_json(&chunk_result, &stats));
+            let (degraded, notes) = degraded_for_chunk_errors(chunk_result.files_errored);
+            return Ok(format_rebuild_json(&chunk_result, &stats, degraded, notes));
         }
 
         let mut text = format!(
@@ -585,6 +636,7 @@ impl Yomu {
         };
 
         if json {
+            let (degraded, notes) = never_degraded();
             return Ok(format_impact_json(
                 target,
                 file_in_index,
@@ -592,6 +644,8 @@ impl Yomu {
                 &direct_refs,
                 &symbol_refs,
                 &semantic_related,
+                degraded,
+                notes,
             ));
         }
 
@@ -623,7 +677,8 @@ impl Yomu {
         })?;
 
         if json {
-            return Ok(format_status_json(&stats, ref_count));
+            let (degraded, notes) = never_degraded();
+            return Ok(format_status_json(&stats, ref_count, degraded, notes));
         }
 
         Ok(format!(
@@ -676,8 +731,16 @@ impl Yomu {
         )?;
 
         match result {
-            Some(r) => Ok(format_embed_result(&r, json)),
-            None => Ok(format_embed_result(&indexer::EmbedResult::default(), json)),
+            Some(r) => {
+                let (degraded, notes) = degraded_for_embed_skips(pending, r.chunks_embedded);
+                Ok(format_embed_result(&r, json, degraded, notes))
+            }
+            None => Ok(format_embed_result(
+                &indexer::EmbedResult::default(),
+                json,
+                false,
+                Vec::new(),
+            )),
         }
     }
 
