@@ -47,7 +47,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 const DDL_FTS_CHUNKS: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path, tokenize='trigram')";
 
@@ -82,7 +82,9 @@ const DDL: &str = "
         start_line INTEGER NOT NULL,
         end_line INTEGER NOT NULL,
         file_hash TEXT NOT NULL,
-        parent_chunk_id INTEGER REFERENCES chunks(id)
+        parent_chunk_id INTEGER REFERENCES chunks(id),
+        source_kind TEXT,
+        injection_flags TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);
     CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(file_hash);
@@ -153,6 +155,8 @@ fn verify_required_columns(conn: &Connection, path: &Path) -> Result<(), Storage
         "end_line",
         "file_hash",
         "parent_chunk_id",
+        "source_kind",
+        "injection_flags",
     ];
 
     let mut stmt = conn.prepare("PRAGMA table_info(chunks)")?;
@@ -195,9 +199,9 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
     }
     tracing::info!(from, to, "Migrating schema from v{from} to v{to}");
 
-    // v2 → v4 are no-ops: the v6 → v7 step below drops fts_chunks and the
-    // v7 → v8 step clears file_hash, so any pre-v5 FTS work would be discarded
-    // immediately afterward.
+    // The v8 → v9 step below drops every chunks-related table, so v4 → v8
+    // work on `chunks` / `fts_*` / `vec_chunks` is wiped. Only the v5 → v6
+    // ALTER on `file_context` survives — v9 does not touch that table.
 
     // v4 → v5: add parent_chunk_id for subchunk extraction
     if from < 5 && !column_exists(conn, "SELECT parent_chunk_id FROM chunks LIMIT 0")? {
@@ -235,6 +239,28 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         // leaving embedded_chunk_ids permanently empty after the migration.
         conn.execute_batch("UPDATE chunks SET file_hash = ''")?;
         notify_schema_change("yomu", "embeddings", 0, "yomu index");
+    }
+
+    // v8 → v9: add source_kind / injection_flags to chunks via drop-and-recreate.
+    // ADR-0069 accepts the reindex cost in exchange for forbidding ALTER ADD
+    // COLUMN. chunks.id restarts at 1 after recreation; old fts_chunks /
+    // vec_chunks / embedded_chunk_ids rows would collide via rowid on the next
+    // INSERT, so drop and recreate the dependent tables together.
+    if from < 9 {
+        let _span = tracing::info_span!("migration_v9", path = %path.display()).entered();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS chunks; \
+             DROP TABLE IF EXISTS embedded_chunk_ids; \
+             DROP TABLE IF EXISTS vec_chunks; \
+             DROP TABLE IF EXISTS fts_chunks_vocab; \
+             DROP TABLE IF EXISTS fts_chunks;",
+        )?;
+        conn.execute_batch(DDL)?;
+        conn.execute_batch(&ddl_vec_chunks())?;
+        conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
+        notify_schema_change("yomu", "chunks v9", 0, "yomu index");
     }
 
     Ok(())

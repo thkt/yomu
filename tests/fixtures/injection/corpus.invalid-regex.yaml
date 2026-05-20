@@ -1,0 +1,11 @@
+# Used by T-011 (Spec FR-V01). The YAML itself parses fine, but the regex
+# pattern "[unterminated" is not a valid regular expression. The matcher must
+# fail at corpus-load time rather than panic at match time.
+entries:
+  - id: "invalid-001"
+    pattern_type: regex
+    pattern: "[unterminated"
+    severity: high
+    category: instruction-override
+    expected_flags:
+      - injection.instruction-override

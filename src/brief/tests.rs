@@ -64,6 +64,8 @@ fn insert_test_chunk(conn: &Connection, file_path: &str, name: &'static str, sta
             start_line: start,
             end_line: start + 2,
             parent_index: None,
+            source_kind: None,
+            injection_flags: None,
         },
         "h",
         &ce(vec![0.0_f32; EMBEDDING_DIMS]),

@@ -1,0 +1,3 @@
+# Used by T-006 (Spec FR-009). Zero-entry corpus must load successfully and
+# `check_chunk` must return an empty Vec for any input.
+entries: []

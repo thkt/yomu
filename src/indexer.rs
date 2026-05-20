@@ -1,5 +1,6 @@
 pub mod chunker;
 mod embed;
+mod injection;
 pub mod walker;
 
 use sha2::{Digest, Sha256};
@@ -70,6 +71,8 @@ impl PendingFile {
                 start_line: c.start_line,
                 end_line: c.end_line,
                 parent_index: c.parent_index,
+                source_kind: None,
+                injection_flags: None,
             })
             .collect()
     }

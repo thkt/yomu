@@ -1,0 +1,17 @@
+# Used by T-005 (Spec FR-007, BR-004). Two entries that both match the same
+# content. The matcher must return the flags in corpus-entry order.
+entries:
+  - id: "multi-first"
+    pattern_type: literal
+    pattern: "SUDO"
+    severity: high
+    category: instruction-override
+    expected_flags:
+      - injection.first-flag
+  - id: "multi-second"
+    pattern_type: regex
+    pattern: "SUDO.*EXEC"
+    severity: high
+    category: instruction-override
+    expected_flags:
+      - injection.second-flag
