@@ -48,6 +48,10 @@ pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
 const BRIEF_MAX_INFERRED_SEEDS: u32 = 5;
 
+/// Upper bound for the EmptyTarget `candidates` retry list emitted to agents.
+/// A short, scannable list is the actionable shape per ADR-0060.
+pub const MAX_EMPTY_TARGET_CANDIDATES: usize = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum IndexState {
     Empty,
@@ -197,7 +201,7 @@ pub enum InvalidInputKind {
     #[error("query or --from is required")]
     QueryOrFromRequired,
     #[error("target must not be empty")]
-    EmptyTarget,
+    EmptyTarget { candidates: Vec<String> },
     #[error("index is empty — run `yomu index` first, or use `yomu search` which auto-indexes")]
     EmptyIndex,
     #[error("task must not be empty")]
@@ -238,7 +242,9 @@ impl InvalidInputKind {
             Self::QueryOrFromRequired => {
                 "run `yomu search \"<query>\"` or `yomu search --from <file>`".to_owned()
             }
-            Self::EmptyTarget => "provide a target path, e.g. `yomu impact src/foo.rs`".to_owned(),
+            Self::EmptyTarget { .. } => {
+                "provide a target path, e.g. `yomu impact src/foo.rs`".to_owned()
+            }
             Self::EmptyIndex => {
                 "run `yomu index` first, or use `yomu search` which auto-indexes".to_owned()
             }
@@ -285,11 +291,15 @@ impl YomuError {
         }
     }
 
-    /// ADR-0060 candidates: always empty in this PR (FR-V02). Dynamic
-    /// provisioning (e.g. listing index files for `EmptyTarget`) is deferred
-    /// to a follow-up PR; the field is wired so envelope shape stays stable.
+    /// ADR-0060 candidates: file paths the agent can try next. Currently
+    /// only `EmptyTarget` carries them (lexicographically-first
+    /// `MAX_EMPTY_TARGET_CANDIDATES` indexed paths); all other variants
+    /// return an empty vector (FR-001 / BR-004 / #197).
     pub fn candidates(&self) -> Vec<String> {
-        Vec::new()
+        match self {
+            Self::InvalidInput(InvalidInputKind::EmptyTarget { candidates }) => candidates.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// ADR-0060 retryable: `true` only when immediate retry can recover
@@ -587,6 +597,22 @@ impl Yomu {
         Ok(text)
     }
 
+    /// Lexicographically-first `max` indexed file paths. Used to populate
+    /// `EmptyTarget.candidates` when impact is invoked with an empty target
+    /// (#197). Storage failures degrade to an empty vector so the primary
+    /// `UsageError` code is preserved (FR-004 / BR-002). Ordering is
+    /// alphabetical (not ranked) to keep results deterministic across runs.
+    fn first_indexed_paths(&self, max: usize) -> Vec<String> {
+        self.with_db(storage::get_all_file_paths)
+            .map(|set| {
+                let mut v: Vec<String> = set.into_iter().collect();
+                v.sort();
+                v.truncate(max);
+                v
+            })
+            .unwrap_or_default()
+    }
+
     pub fn impact(
         &self,
         target: &str,
@@ -596,7 +622,10 @@ impl Yomu {
         semantic: bool,
     ) -> Result<String, YomuError> {
         if target.is_empty() {
-            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTarget));
+            let candidates = self.first_indexed_paths(MAX_EMPTY_TARGET_CANDIDATES);
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTarget {
+                candidates,
+            }));
         }
 
         let stats = self.with_db(storage::get_stats)?;
