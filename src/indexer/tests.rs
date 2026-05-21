@@ -1021,7 +1021,7 @@ fn prepare_chunks_populates_source_kind_and_injection_flags() {
     };
     let pf = prepare_chunks(checked, Path::new("src/foo.rs"), None, &corpus)
         .expect("rust source should yield at least one chunk");
-    assert_eq!(pf.source_kind.as_deref(), Some("src"));
+    assert_eq!(pf.source_kind, Some(SourceKind::Src));
     assert_eq!(
         pf.injection_flags.len(),
         pf.raw_chunks.len(),
@@ -1029,7 +1029,7 @@ fn prepare_chunks_populates_source_kind_and_injection_flags() {
     );
     let new_chunks = pf.to_new_chunks();
     for nc in &new_chunks {
-        assert_eq!(nc.source_kind, Some("src"));
+        assert_eq!(nc.source_kind, Some(SourceKind::Src));
         assert!(
             nc.injection_flags.is_some(),
             "NewChunk.injection_flags must be Some after matcher runs"
@@ -1159,9 +1159,9 @@ fn run_chunk_only_index_inner_propagates_exclude_vendor() {
 fn prepare_chunks_source_kind_classification_per_rel_path() {
     let corpus = injection::Corpus::load_from_str("entries: []").unwrap();
     let cases = [
-        ("src/lib.rs", "src"),
-        ("tests/foo.rs", "test"),
-        ("dist/bundle.rs", "vendor"),
+        ("src/lib.rs", SourceKind::Src),
+        ("tests/foo.rs", SourceKind::Test),
+        ("dist/bundle.rs", SourceKind::Vendor),
     ];
     for (rel_path, expected) in cases {
         let checked = CheckedFile {
@@ -1172,7 +1172,7 @@ fn prepare_chunks_source_kind_classification_per_rel_path() {
         let pf = prepare_chunks(checked, Path::new(rel_path), None, &corpus)
             .unwrap_or_else(|| panic!("rust source should chunk for {rel_path}"));
         assert_eq!(
-            pf.source_kind.as_deref(),
+            pf.source_kind,
             Some(expected),
             "source_kind for {rel_path} should be {expected:?}, got {:?}",
             pf.source_kind

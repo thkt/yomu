@@ -8,7 +8,7 @@ use rurico::storage::{fts_quote, prepare_match_query};
 use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter, types::ToSql};
 
 use super::{
-    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders,
+    Chunk, ChunkType, MatchSource, SearchResult, SourceKind, StorageError, anon_placeholders,
     fts_normalization, in_placeholders,
 };
 
@@ -82,7 +82,9 @@ fn chunk_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Chunk> {
         start_line: row.get(offset + 4)?,
         end_line: row.get(offset + 5)?,
         parent_chunk_id: row.get(offset + 6)?,
-        source_kind: row.get(offset + 7)?,
+        source_kind: row
+            .get::<_, Option<String>>(offset + 7)?
+            .map(|s| SourceKind::from_db(s.as_ref())),
         injection_flags,
     })
 }

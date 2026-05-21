@@ -4,6 +4,8 @@ pub mod injection;
 mod source_kind;
 pub mod walker;
 
+pub use crate::storage::SourceKind;
+
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
@@ -61,7 +63,7 @@ struct PendingFile {
     parsed_imports: Vec<chunker::ParsedImport>,
     hash: String,
     mtime_epoch: Option<i64>,
-    source_kind: Option<String>,
+    source_kind: Option<SourceKind>,
     /// One JSON array string per `raw_chunks` element. Invariant:
     /// `injection_flags.len() == raw_chunks.len()`. Clean-scan is `"[]"`,
     /// hit is `"[\"flag.id\", ...]"`. PR#2 always produces `Some` at the
@@ -82,7 +84,7 @@ impl PendingFile {
                 start_line: c.start_line,
                 end_line: c.end_line,
                 parent_index: c.parent_index,
-                source_kind: self.source_kind.as_deref(),
+                source_kind: self.source_kind,
                 injection_flags: Some(flags.as_str()),
             })
             .collect()
@@ -199,7 +201,7 @@ fn prepare_chunks(
         .map(|d| d.as_secs() as i64);
 
     let imports_text = file_chunks.imports.join("\n");
-    let source_kind = Some(source_kind::classify(&checked.rel_path).to_owned());
+    let source_kind = Some(source_kind::classify(&checked.rel_path));
     let injection_flags: Vec<String> = file_chunks
         .chunks
         .iter()

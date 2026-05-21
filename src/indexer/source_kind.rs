@@ -1,8 +1,11 @@
-//! Path-based classification of source files into `"vendor"` / `"test"` / `"src"`.
+//! Path-based classification of source files into [`SourceKind::Vendor`] /
+//! [`SourceKind::Test`] / [`SourceKind::Src`].
 //!
 //! Precedence per FR-202: vendor > test > src.
 
 use std::path::Path;
+
+use crate::storage::SourceKind;
 
 const VENDOR_DIRS: &[&str] = &[
     "node_modules",
@@ -21,10 +24,10 @@ const JS_EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "cjs"];
 
 const RS_GO_PY_EXTS: &[&str] = &["rs", "go", "py"];
 
-/// Classify a relative path into one of `"vendor"`, `"test"`, or `"src"`.
+/// Classify a relative path into a [`SourceKind`].
 ///
 /// Precedence: vendor > test > src (FR-202).
-pub fn classify(rel_path: &str) -> &'static str {
+pub fn classify(rel_path: &str) -> SourceKind {
     let components: Vec<&str> = Path::new(rel_path)
         .components()
         .filter_map(|c| c.as_os_str().to_str())
@@ -34,15 +37,15 @@ pub fn classify(rel_path: &str) -> &'static str {
     let ancestors = &components[..ancestor_count];
 
     if ancestors.iter().any(|c| VENDOR_DIRS.contains(c)) {
-        return "vendor";
+        return SourceKind::Vendor;
     }
     if ancestors.iter().any(|c| TEST_DIRS.contains(c)) {
-        return "test";
+        return SourceKind::Test;
     }
     if components.last().is_some_and(|f| is_test_filename(f)) {
-        return "test";
+        return SourceKind::Test;
     }
-    "src"
+    SourceKind::Src
 }
 
 fn is_test_filename(name: &str) -> bool {
@@ -84,8 +87,8 @@ mod tests {
         for input in cases {
             assert_eq!(
                 classify(input),
-                "vendor",
-                "expected \"vendor\" for input {input:?}"
+                SourceKind::Vendor,
+                "expected SourceKind::Vendor for input {input:?}"
             );
         }
     }
@@ -99,8 +102,8 @@ mod tests {
     //
     // | row | extension match | dir match | expected |
     // | --- | --------------- | --------- | -------- |
-    // | a   | T               | F         | "test"   |
-    // | b   | F               | T         | "test"   |
+    // | a   | T               | F         | Test     |
+    // | b   | F               | T         | Test     |
     //
     // FR: FR-201, FR-204
     #[test]
@@ -109,8 +112,8 @@ mod tests {
         for input in extension_cases {
             assert_eq!(
                 classify(input),
-                "test",
-                "expected \"test\" (extension branch) for input {input:?}"
+                SourceKind::Test,
+                "expected SourceKind::Test (extension branch) for input {input:?}"
             );
         }
 
@@ -118,8 +121,8 @@ mod tests {
         for input in directory_cases {
             assert_eq!(
                 classify(input),
-                "test",
-                "expected \"test\" (directory branch) for input {input:?}"
+                SourceKind::Test,
+                "expected SourceKind::Test (directory branch) for input {input:?}"
             );
         }
     }
@@ -127,7 +130,7 @@ mod tests {
     // T-203: non_vendor_non_test_paths_return_src
     //
     // Perspective: Branch (fallback). Both vendor and test predicates are
-    // false; the function must fall through to "src".
+    // false; the function must fall through to `SourceKind::Src`.
     //
     // FR: FR-201
     #[test]
@@ -136,8 +139,8 @@ mod tests {
         for input in cases {
             assert_eq!(
                 classify(input),
-                "src",
-                "expected \"src\" for input {input:?}"
+                SourceKind::Src,
+                "expected SourceKind::Src for input {input:?}"
             );
         }
     }
@@ -146,11 +149,11 @@ mod tests {
     //
     // Perspective: Combination + Hazard. Decision table for the precedence
     // rule (BR-202): when both vendor and test predicates are true, the
-    // result must be "vendor".
+    // result must be `SourceKind::Vendor`.
     //
     // | row | vendor match | test match | expected |
     // | --- | ------------ | ---------- | -------- |
-    // |  1  | T            | T          | "vendor" |
+    // |  1  | T            | T          | Vendor   |
     //
     // Inputs exercise the row from multiple angles (extension-based test
     // signal nested under vendor; directory-based test signal nested under
@@ -167,8 +170,8 @@ mod tests {
         for input in cases {
             assert_eq!(
                 classify(input),
-                "vendor",
-                "expected \"vendor\" (precedence over test) for input {input:?}"
+                SourceKind::Vendor,
+                "expected SourceKind::Vendor (precedence over test) for input {input:?}"
             );
         }
     }

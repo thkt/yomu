@@ -6,7 +6,7 @@ use tracing_test::traced_test;
 
 use super::*;
 use crate::storage::{
-    EMBEDDING_DIMS, NewChunk, RefKind, Reference, ce, insert_chunk, open_db,
+    EMBEDDING_DIMS, NewChunk, RefKind, Reference, SourceKind, ce, insert_chunk, open_db,
     replace_file_references,
 };
 
@@ -420,7 +420,7 @@ fn render_json_emits_per_chunk_source_kind() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Seed,
-            source_kind: Some("src".to_owned()),
+            source_kind: Some(SourceKind::Src),
             injection_flags: None,
         }],
         degraded: false,

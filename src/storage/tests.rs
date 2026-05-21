@@ -4433,7 +4433,7 @@ fn new_chunk_with_some_fields_persists_as_values() {
             start_line: 1,
             end_line: 1,
             parent_index: None,
-            source_kind: Some("src"),
+            source_kind: Some(SourceKind::Src),
             injection_flags: Some("[]"),
         },
         "h1",
@@ -4470,13 +4470,13 @@ fn chunk_struct_carries_source_kind_and_injection_flags() {
         start_line: 1,
         end_line: 3,
         parent_chunk_id: None,
-        source_kind: Some("src".into()),
+        source_kind: Some(SourceKind::Src),
         injection_flags: Some(vec!["flag.a".into()]),
     };
 
     assert_eq!(
-        chunk.source_kind.as_deref(),
-        Some("src"),
+        chunk.source_kind,
+        Some(SourceKind::Src),
         "Chunk.source_kind must expose the supplied value"
     );
     assert_eq!(
@@ -4504,7 +4504,7 @@ fn chunk_from_row_reads_source_kind_and_parses_injection_flags_json() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
-        source_kind: Some("src"),
+        source_kind: Some(SourceKind::Src),
         injection_flags: Some("[\"flag.a\",\"flag.b\"]"),
     }];
     replace_file_chunks_only(&conn, "src/a.rs", &chunks, "h1", "", &[], None).unwrap();
@@ -4522,8 +4522,8 @@ fn chunk_from_row_reads_source_kind_and_parses_injection_flags_json() {
         .expect("chunk must be readable by id");
 
     assert_eq!(
-        chunk.source_kind.as_deref(),
-        Some("src"),
+        chunk.source_kind,
+        Some(SourceKind::Src),
         "chunk_from_row must read source_kind at offset+7"
     );
     assert_eq!(
@@ -4551,7 +4551,7 @@ fn chunk_from_row_degrades_malformed_injection_flags_to_none() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
-        source_kind: Some("src"),
+        source_kind: Some(SourceKind::Src),
         injection_flags: Some("{malformed"),
     }];
     replace_file_chunks_only(&conn, "src/b.rs", &chunks, "h1", "", &[], None).unwrap();
@@ -4573,8 +4573,8 @@ fn chunk_from_row_degrades_malformed_injection_flags_to_none() {
         "malformed injection_flags JSON must degrade to None without panic"
     );
     assert_eq!(
-        chunk.source_kind.as_deref(),
-        Some("src"),
+        chunk.source_kind,
+        Some(SourceKind::Src),
         "source_kind must remain readable even when injection_flags JSON is malformed"
     );
 }
@@ -4596,7 +4596,7 @@ fn get_chunk_by_id_projects_source_kind_and_injection_flags() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
-        source_kind: Some("test"),
+        source_kind: Some(SourceKind::Test),
         injection_flags: Some("[\"flag.x\"]"),
     }];
     replace_file_chunks_only(&conn, "src/c.rs", &chunks, "h1", "", &[], None).unwrap();
@@ -4614,8 +4614,8 @@ fn get_chunk_by_id_projects_source_kind_and_injection_flags() {
         .expect("get_chunk_by_id must return Some for an existing id");
 
     assert_eq!(
-        chunk.source_kind.as_deref(),
-        Some("test"),
+        chunk.source_kind,
+        Some(SourceKind::Test),
         "get_chunk_by_id SELECT must include source_kind column"
     );
     assert_eq!(
@@ -4643,7 +4643,7 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
             start_line: 1,
             end_line: 3,
             parent_index: None,
-            source_kind: Some("src"),
+            source_kind: Some(SourceKind::Src),
             injection_flags: Some("[\"flag.1\"]"),
         },
         NewChunk {
@@ -4653,7 +4653,7 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
             start_line: 5,
             end_line: 7,
             parent_index: None,
-            source_kind: Some("vendor"),
+            source_kind: Some(SourceKind::Vendor),
             injection_flags: Some("[]"),
         },
         NewChunk {
@@ -4663,7 +4663,7 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
             start_line: 9,
             end_line: 11,
             parent_index: None,
-            source_kind: Some("test"),
+            source_kind: Some(SourceKind::Test),
             injection_flags: Some("[\"flag.2\",\"flag.3\"]"),
         },
     ];
@@ -4687,8 +4687,8 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
 
     let one = map.get(&ids[0]).expect("id[0] must be present");
     assert_eq!(
-        one.source_kind.as_deref(),
-        Some("src"),
+        one.source_kind,
+        Some(SourceKind::Src),
         "row 1 source_kind must be projected"
     );
     assert_eq!(
@@ -4699,8 +4699,8 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
 
     let two = map.get(&ids[1]).expect("id[1] must be present");
     assert_eq!(
-        two.source_kind.as_deref(),
-        Some("vendor"),
+        two.source_kind,
+        Some(SourceKind::Vendor),
         "row 2 source_kind must be projected"
     );
     assert_eq!(
@@ -4711,8 +4711,8 @@ fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
 
     let three = map.get(&ids[2]).expect("id[2] must be present");
     assert_eq!(
-        three.source_kind.as_deref(),
-        Some("test"),
+        three.source_kind,
+        Some(SourceKind::Test),
         "row 3 source_kind must be projected"
     );
     assert_eq!(
@@ -4739,7 +4739,7 @@ fn get_chunks_for_files_projects_source_kind_and_injection_flags() {
         start_line: 1,
         end_line: 2,
         parent_index: None,
-        source_kind: Some("src"),
+        source_kind: Some(SourceKind::Src),
         injection_flags: Some("[\"flag.a\"]"),
     }];
     replace_file_chunks_only(&conn, "src/a.rs", &a_chunks, "ha", "", &[], None).unwrap();
@@ -4751,7 +4751,7 @@ fn get_chunks_for_files_projects_source_kind_and_injection_flags() {
         start_line: 1,
         end_line: 2,
         parent_index: None,
-        source_kind: Some("test"),
+        source_kind: Some(SourceKind::Test),
         injection_flags: Some("[]"),
     }];
     replace_file_chunks_only(&conn, "src/b.rs", &b_chunks, "hb", "", &[], None).unwrap();
@@ -4772,8 +4772,8 @@ fn get_chunks_for_files_projects_source_kind_and_injection_flags() {
     );
 
     assert_eq!(
-        chunks[0].source_kind.as_deref(),
-        Some("src"),
+        chunks[0].source_kind,
+        Some(SourceKind::Src),
         "src/a.rs source_kind must be projected"
     );
     assert_eq!(
@@ -4783,8 +4783,8 @@ fn get_chunks_for_files_projects_source_kind_and_injection_flags() {
     );
 
     assert_eq!(
-        chunks[1].source_kind.as_deref(),
-        Some("test"),
+        chunks[1].source_kind,
+        Some(SourceKind::Test),
         "src/b.rs source_kind must be projected"
     );
     assert_eq!(
@@ -4811,7 +4811,7 @@ fn search_by_fts_projects_source_kind_and_injection_flags() {
         start_line: 1,
         end_line: 3,
         parent_index: None,
-        source_kind: Some("src"),
+        source_kind: Some(SourceKind::Src),
         injection_flags: Some("[\"flag.alpha\"]"),
     }];
     replace_file_chunks_only(&conn, "src/alpha.rs", &chunks, "h1", "", &[], None).unwrap();
@@ -4828,8 +4828,8 @@ fn search_by_fts_projects_source_kind_and_injection_flags() {
         .expect("must find the alpha chunk in FTS results");
 
     assert_eq!(
-        hit.chunk.source_kind.as_deref(),
-        Some("src"),
+        hit.chunk.source_kind,
+        Some(SourceKind::Src),
         "search_by_fts SELECT must include source_kind column"
     );
     assert_eq!(

@@ -6,7 +6,8 @@ use rurico::embed::ChunkedEmbedding;
 use crate::text::split_identifier;
 
 use super::{
-    ChunkType, FileData, NewChunk, Reference, StorageError, fts_normalization, normalize_for_fts,
+    ChunkType, FileData, NewChunk, Reference, SourceKind, StorageError, fts_normalization,
+    normalize_for_fts,
 };
 
 pub(crate) fn insert_chunk_row(
@@ -31,7 +32,7 @@ pub(crate) fn insert_chunk_row(
         chunk.end_line,
         file_hash,
         parent_chunk_id,
-        chunk.source_kind,
+        chunk.source_kind.map(SourceKind::as_str),
         chunk.injection_flags,
     ])?;
     let chunk_id = conn.last_insert_rowid();

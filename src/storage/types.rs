@@ -1,6 +1,38 @@
 use std::io;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Vendor,
+    Test,
+    Src,
+}
+
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vendor => "vendor",
+            Self::Test => "test",
+            Self::Src => "src",
+        }
+    }
+
+    pub fn from_db(s: &str) -> Self {
+        match s {
+            "vendor" => Self::Vendor,
+            "test" => Self::Test,
+            "src" => Self::Src,
+            other => {
+                tracing::warn!(
+                    source_kind = other,
+                    "Unknown source_kind in DB, defaulting to Src"
+                );
+                Self::Src
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkType {
     Component,
@@ -75,8 +107,8 @@ pub struct Chunk {
     pub start_line: u32,
     pub end_line: u32,
     pub parent_chunk_id: Option<i64>,
-    /// chunk 起源 (`vendor` / `test` / `src` の enum 文字列)。NULL = 未分類 (ADR-0069)。
-    pub source_kind: Option<String>,
+    /// chunk 起源 (`Vendor` / `Test` / `Src`)。NULL = 未分類 (ADR-0069)。
+    pub source_kind: Option<SourceKind>,
     /// matcher の per-chunk 検出結果。
     /// `None` = matcher 未走行 (PR#1-era v9 行 / matcher 未走行 chunk)、
     /// `Some(vec![])` = 走行 + ヒットなし、`Some(vec![...])` = 走行 + ヒット。
@@ -148,8 +180,8 @@ pub struct NewChunk<'a> {
     pub start_line: u32,
     pub end_line: u32,
     pub parent_index: Option<usize>,
-    /// chunk 起源 (`vendor` / `test` / `src` の enum 文字列)。NULL = 未分類 (ADR-0069)。
-    pub source_kind: Option<&'a str>,
+    /// chunk 起源 (`Vendor` / `Test` / `Src`)。NULL = 未分類 (ADR-0069)。
+    pub source_kind: Option<SourceKind>,
     /// matcher の per-chunk 検出結果 (JSON 配列文字列)。
     /// NULL = matcher 未走行、`"[]"` = 走行 + ヒットなし、`"[...]"` = 走行 + ヒット。
     pub injection_flags: Option<&'a str>,
