@@ -283,8 +283,9 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
              DROP TABLE IF EXISTS fts_chunks_vocab; \
              DROP TABLE IF EXISTS fts_chunks;",
         )?;
-        // Mirror v9 file_references wipe: dropping chunks invalidates the
-        // references; the next reindex repopulates per surviving file (F-005).
+        // Wipe file_references: dropping chunks invalidates the source_file /
+        // target_file rows (F-005). The next reindex repopulates per surviving
+        // file via replace_file_references.
         conn.execute_batch("DELETE FROM file_references")?;
         conn.execute_batch(DDL)?;
         conn.execute_batch(&ddl_vec_chunks())?;

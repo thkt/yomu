@@ -4215,6 +4215,44 @@ fn opening_v8_store_drops_stale_file_references() {
     );
 }
 
+// T-009b: opening_v9_store_drops_stale_file_references
+// F-005 v10-block isolation. T-009 covers the v8 starting path, which runs
+// BOTH the v9 and v10 migration blocks sequentially. Removing the DELETE from
+// either block alone would still leave T-009 green because the other block's
+// DELETE runs. This companion test starts at v9, so only the v10 block runs
+// and the assertion isolates that block's behavior. Mirrors T-307's roll-back
+// pattern at line 4231.
+#[test]
+fn opening_v9_store_drops_stale_file_references() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("v9_refs.db");
+
+    {
+        let conn = open_db(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind) \
+             VALUES ('src/deleted.rs', 'src/other.rs', 'Other', 'named')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE index_meta SET value = '9' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    }
+
+    let conn = open_db(&db_path).unwrap();
+
+    let refs_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM file_references", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        refs_count, 0,
+        "F-005: v9 → v10 migration alone must wipe file_references"
+    );
+}
+
 // ── PR#3 Phase 2: schema v10 bump (FR-307a, FR-307b, FR-307c) ──
 
 // T-307: opening_v9_store_drops_chunks_and_bumps_schema_version_to_10
