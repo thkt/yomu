@@ -60,6 +60,7 @@ pub struct BriefChunk {
     pub chunk_type: ChunkType,
     pub content: String,
     pub included_reason: ChunkInclusionReason,
+    pub source_kind: Option<String>,
     pub injection_flags: Option<Vec<String>>,
 }
 
@@ -127,6 +128,7 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
                 chunk_type: c.chunk_type,
                 content: c.content,
                 included_reason: determine_reason(depth),
+                source_kind: c.source_kind,
                 injection_flags: c.injection_flags,
             }
         })
@@ -304,13 +306,13 @@ struct JsonChunk<'a> {
     content: &'a str,
     included_reason: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    source_kind: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     injection_flags: Option<Vec<&'a str>>,
 }
 
-/// JSON CLI rendering (FR-012): emits
-/// `{"degraded": bool, "chunks": [{"file_path", "start_line", "end_line",
-/// "chunk_type", "content", "included_reason"}]}`. Compact (no pretty),
-/// suitable for `jq` piping.
+/// Renders `BriefOutput` as compact JSON for FR-012 (jq-friendly,
+/// no pretty-printing). See `JsonOutput` / `JsonChunk` for the shape.
 pub fn render_json(output: &BriefOutput) -> String {
     let json = JsonOutput {
         degraded: output.degraded,
@@ -324,6 +326,7 @@ pub fn render_json(output: &BriefOutput) -> String {
                 chunk_type: c.chunk_type.as_str(),
                 content: &c.content,
                 included_reason: c.included_reason.to_string(),
+                source_kind: c.source_kind.as_deref(),
                 injection_flags: c
                     .injection_flags
                     .as_ref()
