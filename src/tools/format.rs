@@ -264,7 +264,7 @@ struct JsonChunk<'a> {
     content: &'a str,
     parent_chunk_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    source_kind: Option<&'a str>,
+    source_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     injection_flags: Option<Vec<&'a str>>,
 }
@@ -293,7 +293,7 @@ pub(super) fn format_results_json(
             score: r.score,
             content: &r.chunk.content,
             parent_chunk_id: r.chunk.parent_chunk_id,
-            source_kind: r.chunk.source_kind.as_deref(),
+            source_kind: r.chunk.source_kind.map(storage::SourceKind::as_str),
             injection_flags: r
                 .chunk
                 .injection_flags
@@ -575,7 +575,7 @@ mod tests {
         }
     }
 
-    fn sample_chunk_with_source_kind<'a>(source_kind: Option<&'a str>) -> JsonChunk<'a> {
+    fn sample_chunk_with_source_kind(source_kind: Option<&'static str>) -> JsonChunk<'static> {
         JsonChunk {
             file: "src/foo.rs",
             name: "foo",
@@ -657,7 +657,7 @@ mod tests {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
-                source_kind: Some("src".to_owned()),
+                source_kind: Some(storage::SourceKind::Src),
                 injection_flags: Some(vec!["x".to_owned()]),
             },
             chunk_id: Some(1),
@@ -702,7 +702,7 @@ mod tests {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
-                source_kind: Some("src".to_owned()),
+                source_kind: Some(storage::SourceKind::Src),
                 injection_flags: None,
             },
             chunk_id: Some(1),

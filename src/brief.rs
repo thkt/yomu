@@ -8,8 +8,8 @@ use serde::Serialize;
 
 use crate::injection_check::InjectionCheck;
 use crate::storage::{
-    Chunk, ChunkType, StorageError, get_chunks_for_files, get_edges_among_files, get_import_counts,
-    get_transitive_dependencies,
+    Chunk, ChunkType, SourceKind, StorageError, get_chunks_for_files, get_edges_among_files,
+    get_import_counts, get_transitive_dependencies,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +60,7 @@ pub struct BriefChunk {
     pub chunk_type: ChunkType,
     pub content: String,
     pub included_reason: ChunkInclusionReason,
-    pub source_kind: Option<String>,
+    pub source_kind: Option<SourceKind>,
     pub injection_flags: Option<Vec<String>>,
 }
 
@@ -306,7 +306,7 @@ struct JsonChunk<'a> {
     content: &'a str,
     included_reason: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    source_kind: Option<&'a str>,
+    source_kind: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     injection_flags: Option<Vec<&'a str>>,
 }
@@ -326,7 +326,7 @@ pub fn render_json(output: &BriefOutput) -> String {
                 chunk_type: c.chunk_type.as_str(),
                 content: &c.content,
                 included_reason: c.included_reason.to_string(),
-                source_kind: c.source_kind.as_deref(),
+                source_kind: c.source_kind.map(SourceKind::as_str),
                 injection_flags: c
                     .injection_flags
                     .as_ref()
