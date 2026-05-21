@@ -14,8 +14,8 @@ use yomu::brief;
 use yomu::error::{self, ErrorCode};
 use yomu::io::write_output;
 use yomu::tools::{
-    InvalidInputKind, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError,
-    YomuOptions,
+    IndexRunOptions, InvalidInputKind, MAX_IMPACT_DEPTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu,
+    YomuError, YomuOptions,
 };
 
 #[derive(Parser)]
@@ -317,20 +317,28 @@ fn main() -> ExitCode {
             dry_run,
             exclude_vendor,
         } => {
+            let opts = IndexRunOptions {
+                force: false,
+                exclude_vendor,
+            };
             if dry_run {
-                yomu.dry_run_index(false, json, exclude_vendor)
+                yomu.dry_run_index(opts, json)
             } else {
-                yomu.index(json, exclude_vendor)
+                yomu.index(opts, json)
             }
         }
         Command::Rebuild {
             dry_run,
             exclude_vendor,
         } => {
+            let opts = IndexRunOptions {
+                force: true,
+                exclude_vendor,
+            };
             if dry_run {
-                yomu.dry_run_index(true, json, exclude_vendor)
+                yomu.dry_run_index(opts, json)
             } else {
-                yomu.rebuild(json, exclude_vendor)
+                yomu.rebuild(opts, json)
             }
         }
         Command::Impact {

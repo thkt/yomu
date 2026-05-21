@@ -156,6 +156,26 @@ pub struct YomuOptions {
     pub log_query: bool,
 }
 
+/// Behavioral options for index / rebuild / dry-run paths.
+///
+/// `force` is consumed only by [`Yomu::dry_run_index`] (where it predicts
+/// rebuild vs index semantics). [`Yomu::index`] and [`Yomu::rebuild`]
+/// **ignore** `force` entirely — they are hard-wired to `false` and `true`
+/// respectively. The struct is shared across all three for call-site parity
+/// (Issue #206 / PR#3 Spec AS-307); callers of `index` / `rebuild` should
+/// leave `force` at its default.
+///
+/// `json` stays a separate parameter because it controls presentation, not
+/// indexing behavior.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct IndexRunOptions {
+    /// Predict rebuild semantics in [`Yomu::dry_run_index`]. Ignored by
+    /// [`Yomu::index`] and [`Yomu::rebuild`].
+    pub force: bool,
+    /// Skip vendor directories (`node_modules`, `vendor`, etc.).
+    pub exclude_vendor: bool,
+}
+
 /// Env-derived runtime configuration for [`Yomu::with_root`].
 ///
 /// Production callers obtain this via [`YomuConfig::from_env`]; tests use
@@ -532,8 +552,9 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn index(&self, json: bool, exclude_vendor: bool) -> Result<String, YomuError> {
-        let chunk_result = indexer::run_chunk_only_index(&self.conn, &self.root, exclude_vendor)?;
+    pub fn index(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
+        let chunk_result =
+            indexer::run_chunk_only_index(&self.conn, &self.root, opts.exclude_vendor)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
@@ -554,13 +575,9 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn dry_run_index(
-        &self,
-        force: bool,
-        json: bool,
-        exclude_vendor: bool,
-    ) -> Result<String, YomuError> {
-        let preview = indexer::dry_run_index(&self.conn, &self.root, force, exclude_vendor)?;
+    pub fn dry_run_index(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
+        let preview =
+            indexer::dry_run_index(&self.conn, &self.root, opts.force, opts.exclude_vendor)?;
 
         if json {
             let (degraded, notes) = degraded_for_dry_run_errors(preview.files_errored);
@@ -583,9 +600,9 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn rebuild(&self, json: bool, exclude_vendor: bool) -> Result<String, YomuError> {
+    pub fn rebuild(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
         let chunk_result =
-            indexer::run_chunk_only_index_force(&self.conn, &self.root, exclude_vendor)?;
+            indexer::run_chunk_only_index_force(&self.conn, &self.root, opts.exclude_vendor)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
