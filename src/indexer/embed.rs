@@ -120,7 +120,9 @@ fn fetch_unembedded_file(
     conn: &Arc<Mutex<Db>>,
     file_path: &str,
 ) -> Result<(Vec<i64>, Vec<String>), IndexError> {
-    let conn_guard = conn.lock().unwrap();
+    let conn_guard = conn
+        .lock()
+        .expect("DB lock poisoned (fetch_unembedded_file)");
     let rows = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
     let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
@@ -187,7 +189,7 @@ fn embed_file_chunks(
     let pairs: Vec<(i64, ChunkedEmbedding)> = chunk_ids.into_iter().zip(embeddings).collect();
     let n = pairs.len() as u32;
     {
-        let conn_guard = conn.lock().unwrap();
+        let conn_guard = conn.lock().expect("DB lock poisoned (embed_file_chunks)");
         storage::add_chunked_embeddings(&conn_guard, &pairs)?;
     }
     Ok(Some(n))
@@ -213,7 +215,9 @@ pub fn run_incremental_embed_with_progress(
     mut on_progress: impl FnMut(u32),
 ) -> Result<EmbedResult, IndexError> {
     let ordered_files = {
-        let conn_guard = conn.lock().unwrap();
+        let conn_guard = conn
+            .lock()
+            .expect("DB lock poisoned (run_incremental_embed_with_progress)");
         order_files_for_embedding(&conn_guard, type_hints)?
     };
 

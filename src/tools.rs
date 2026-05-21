@@ -866,7 +866,7 @@ impl Yomu {
         let conn = self
             .conn
             .lock()
-            .expect("brief seed inference: lock poisoned");
+            .expect("DB lock poisoned (embedder_seed_paths)");
         let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[]).map_err(
             degrade_with_warn(
                 "brief seed inference: vec_search",
@@ -888,7 +888,7 @@ impl Yomu {
         let conn = self
             .conn
             .lock()
-            .expect("brief seed inference fts fallback: lock poisoned");
+            .expect("DB lock poisoned (fts_fallback_seed_paths)");
         let results = storage::search_by_fts(
             &conn,
             &keyword_refs,
@@ -962,7 +962,7 @@ impl Yomu {
     where
         F: FnOnce(&storage::Db) -> Result<T, storage::StorageError>,
     {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().expect("DB lock poisoned (Yomu::with_db)");
         f(&conn).map_err(YomuError::from)
     }
 

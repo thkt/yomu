@@ -536,7 +536,7 @@ pub fn search(
         }
     };
 
-    let conn = conn.lock().unwrap();
+    let conn = conn.lock().expect("DB lock poisoned (query::search)");
     let (results, stages) = search_pipeline(
         &conn,
         query,

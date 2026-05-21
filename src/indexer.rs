@@ -281,7 +281,7 @@ fn remove_orphans(
     conn: &Arc<Mutex<Db>>,
     current_rel_paths: &HashSet<String>,
 ) -> Result<(), IndexError> {
-    let conn = conn.lock().unwrap();
+    let conn = conn.lock().expect("DB lock poisoned (remove_orphans)");
     let indexed_paths = storage::get_all_file_paths(&conn)?;
 
     let orphans: Vec<_> = indexed_paths
@@ -381,7 +381,7 @@ pub fn dry_run_index(
     let mut files_errored = 0u32;
     let mut current_rel_paths = HashSet::with_capacity(files.len());
 
-    let conn_guard = conn.lock().unwrap();
+    let conn_guard = conn.lock().expect("DB lock poisoned (dry_run_index)");
     for file_path in &files {
         let rel_path = to_rel_path(root, file_path);
         current_rel_paths.insert(rel_path.clone());
@@ -434,7 +434,9 @@ fn run_chunk_only_index_inner(
         let mut files_errored = 0u32;
         let mut current_rel_paths = HashSet::with_capacity(files.len());
 
-        let conn_guard = conn.lock().unwrap();
+        let conn_guard = conn
+            .lock()
+            .expect("DB lock poisoned (run_chunk_only_index_inner)");
         let _automerge = storage::FtsAutomergeGuard::new(&conn_guard)?;
 
         for file_path in &files {
