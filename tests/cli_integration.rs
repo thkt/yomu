@@ -1668,11 +1668,7 @@ fn search_json_emits_per_chunk_source_kind() {
         &dir,
         &["--json", "search", "add", "--no-embed"],
         "results",
-        |r| {
-            r.get("source_kind")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| s == "src")
-        },
+        |r| r["source_kind"].as_str() == Some("src"),
         "FR-009a: at least one result chunk must carry source_kind='src' \
          (default classification for non-vendor/non-test files)",
     );
@@ -1699,11 +1695,7 @@ fn brief_json_emits_per_chunk_source_kind() {
             "--no-embed",
         ],
         "chunks",
-        |c| {
-            c.get("source_kind")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| s == "src")
-        },
+        |c| c["source_kind"].as_str() == Some("src"),
         "FR-009a: at least one brief chunk must carry source_kind='src'",
     );
 }

@@ -311,10 +311,8 @@ struct JsonChunk<'a> {
     injection_flags: Option<Vec<&'a str>>,
 }
 
-/// JSON CLI rendering (FR-012): emits
-/// `{"degraded": bool, "chunks": [{"file_path", "start_line", "end_line",
-/// "chunk_type", "content", "included_reason"}]}`. Compact (no pretty),
-/// suitable for `jq` piping.
+/// Renders `BriefOutput` as compact JSON for FR-012 (jq-friendly,
+/// no pretty-printing). See `JsonOutput` / `JsonChunk` for the shape.
 pub fn render_json(output: &BriefOutput) -> String {
     let json = JsonOutput {
         degraded: output.degraded,
