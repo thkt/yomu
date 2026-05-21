@@ -696,7 +696,7 @@ fn format_results_grouped_shows_score_for_all() {
 #[test]
 fn index_works_without_api_key() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
-    let text = y.index(false, false).unwrap();
+    let text = y.index(IndexRunOptions::default(), false).unwrap();
     assert!(text.contains("complete"), "expected success: {text}");
 }
 
@@ -714,7 +714,7 @@ fn index_chunks_without_embedding() {
         ),
     ]);
 
-    let text = y.index(false, false).unwrap();
+    let text = y.index(IndexRunOptions::default(), false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
     assert!(
         text.contains("Embedding coverage:"),
@@ -733,7 +733,7 @@ fn index_chunks_without_embedding() {
 #[test]
 fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
     let chunks_before = {
         let c = y.conn.lock().unwrap();
@@ -747,7 +747,7 @@ fn rebuild_re_parses_all_files() {
     )
     .unwrap();
 
-    let text = y.rebuild(false, false).unwrap();
+    let text = y.rebuild(IndexRunOptions::default(), false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
 
     let chunks_after = {
@@ -1337,7 +1337,7 @@ fn dry_run_index_does_not_write_to_db() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    let text = y.dry_run_index(false, false, false).unwrap();
+    let text = y.dry_run_index(IndexRunOptions::default(), false).unwrap();
     assert!(
         text.contains("2 files to process"),
         "should report files to process: {text}"
@@ -1363,7 +1363,7 @@ fn dry_run_index_shows_skip_for_unchanged() {
 
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.dry_run_index(false, false, false).unwrap();
+    let text = y.dry_run_index(IndexRunOptions::default(), false).unwrap();
     assert!(
         text.contains("0 files to process"),
         "all files should be skipped: {text}"
@@ -1564,7 +1564,7 @@ fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
 
     let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
 
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
     let result = y
         .search(Some("handleSubmit"), 10, 0, &[], false, None)
@@ -1588,7 +1588,7 @@ fn below_threshold_no_subchunks_in_index() {
   return <div><button onClick={handleClick}>{count}</button></div>;
 }"#;
     let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", fixture)]);
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
     let stats = y.status(false).unwrap();
     assert!(
@@ -1952,7 +1952,7 @@ fn embed_embedder_unavailable_returns_error() {
         dir.path().to_path_buf(),
         Err(DegradedReason::NotInstalled),
     );
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
     let result = y.embed(false);
     assert!(
@@ -1970,7 +1970,7 @@ fn embed_disabled_returns_embedder_unavailable() {
         dir.path().to_path_buf(),
         Err(DegradedReason::Disabled),
     );
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
     let result = y.embed(false);
     assert!(
@@ -2062,7 +2062,7 @@ fn index_json_returns_valid_json() {
         ("src/A.tsx", "export function A() {}"),
         ("src/B.tsx", "export function B() {}"),
     ]);
-    let json = y.index(true, false).unwrap();
+    let json = y.index(IndexRunOptions::default(), true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_processed"], 2);
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
@@ -2078,9 +2078,9 @@ fn index_json_returns_valid_json() {
 #[test]
 fn rebuild_json_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
-    y.index(false, false).unwrap();
+    y.index(IndexRunOptions::default(), false).unwrap();
 
-    let json = y.rebuild(true, false).unwrap();
+    let json = y.rebuild(IndexRunOptions::default(), true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_processed"], 1);
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
@@ -2099,7 +2099,7 @@ fn dry_run_index_json_returns_valid_json() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    let json = y.dry_run_index(false, true, false).unwrap();
+    let json = y.dry_run_index(IndexRunOptions::default(), true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_to_process"], 2);
     assert_eq!(parsed["files_to_skip"], 0);
@@ -2114,7 +2114,7 @@ fn dry_run_index_json_shows_skip_for_unchanged() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.dry_run_index(false, true, false).unwrap();
+    let json = y.dry_run_index(IndexRunOptions::default(), true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_to_process"], 0);
     assert_eq!(parsed["files_to_skip"], 1);
