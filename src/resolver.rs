@@ -89,50 +89,6 @@ impl Resolver {
         let candidate = base_dir.join(source);
         self.probe_path(&candidate)
     }
-
-    /// Follow re-export chain through barrel files. Returns files excluding start.
-    #[cfg(test)]
-    pub fn resolve_reexport_chain(&self, start_file: &str) -> Vec<String> {
-        use crate::indexer::chunker::parse_reexports;
-        use std::collections::HashSet;
-
-        let mut result = Vec::new();
-        let mut visited = HashSet::new();
-        visited.insert(start_file.to_owned());
-        let mut current = start_file.to_owned();
-
-        loop {
-            let abs_path = self.root.join(&current);
-            let content = match fs::read_to_string(&abs_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(file = %current, error = %e, "Failed to read file in re-export chain");
-                    break;
-                }
-            };
-
-            let ext = current.rsplit('.').next().unwrap_or("ts");
-            let reexports = parse_reexports(&content, ext);
-
-            let mut found_next = false;
-            for re in &reexports {
-                if let Some(resolved) = self.resolve(&re.source, &current) {
-                    if visited.contains(&resolved) {
-                        continue;
-                    }
-                    visited.insert(resolved.clone());
-                    result.push(resolved.clone());
-                    current = resolved;
-                    found_next = true;
-                    break;
-                }
-            }
-            if !found_next {
-                break;
-            }
-        }
-        result
-    }
 }
 
 pub trait Resolve {
@@ -217,11 +173,56 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::fs;
 
     use tempfile::tempdir;
 
     use super::*;
+    use crate::indexer::chunker::parse_reexports;
+
+    /// Test-only helper: follow re-export chains through barrel files, returning
+    /// resolved file paths in traversal order (excluding the start). Kept inside
+    /// the test module so the cfg(test) symbol does not leak into the Resolver
+    /// API surface (Issue #141 TEST-005 / RC-016).
+    fn resolve_reexport_chain(resolver: &Resolver, start_file: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        visited.insert(start_file.to_owned());
+        let mut current = start_file.to_owned();
+
+        loop {
+            let abs_path = resolver.root.join(&current);
+            let content = match fs::read_to_string(&abs_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(file = %current, error = %e, "Failed to read file in re-export chain");
+                    break;
+                }
+            };
+
+            let ext = current.rsplit('.').next().unwrap_or("ts");
+            let reexports = parse_reexports(&content, ext);
+
+            let mut found_next = false;
+            for re in &reexports {
+                if let Some(resolved) = resolver.resolve(&re.source, &current) {
+                    if visited.contains(&resolved) {
+                        continue;
+                    }
+                    visited.insert(resolved.clone());
+                    result.push(resolved.clone());
+                    current = resolved;
+                    found_next = true;
+                    break;
+                }
+            }
+            if !found_next {
+                break;
+            }
+        }
+        result
+    }
 
     // T-327: resolve_relative_tsx
     #[test]
@@ -479,7 +480,7 @@ mod tests {
         fs::write(src.join("b.ts"), "export { X } from './a';").unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        let chain = resolver.resolve_reexport_chain("src/a.ts");
+        let chain = resolve_reexport_chain(&resolver, "src/a.ts");
         assert_eq!(chain, vec!["src/b.ts".to_owned()]);
     }
 
@@ -494,7 +495,7 @@ mod tests {
         fs::write(src.join("c.ts"), "export const X = 1;").unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        let chain = resolver.resolve_reexport_chain("src/a.ts");
+        let chain = resolve_reexport_chain(&resolver, "src/a.ts");
         assert_eq!(chain, vec!["src/b.ts".to_owned(), "src/c.ts".to_owned()]);
     }
 
@@ -507,7 +508,7 @@ mod tests {
         fs::write(src.join("a.ts"), "export const X = 1;").unwrap();
 
         let resolver = Resolver::new(tmp.path());
-        let chain = resolver.resolve_reexport_chain("src/a.ts");
+        let chain = resolve_reexport_chain(&resolver, "src/a.ts");
         assert!(chain.is_empty());
     }
 

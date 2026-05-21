@@ -181,9 +181,14 @@ fn check_file(
     }))
 }
 
+/// Build a [`PendingFile`] from already-loaded source. The function is pure:
+/// it does not touch the filesystem — callers must supply `mtime_epoch` (read
+/// via [`fs_optional::read_mtime_epoch`]) so tests can drive the chunking
+/// pipeline without writing fixtures.
 fn prepare_chunks(
     checked: CheckedFile,
     file_path: &Path,
+    mtime_epoch: Option<i64>,
     crate_name: Option<&str>,
     corpus: &injection::Corpus,
 ) -> Option<PendingFile> {
@@ -193,8 +198,6 @@ fn prepare_chunks(
         tracing::debug!(file = %checked.rel_path, "Skipped (no chunks)");
         return None;
     }
-
-    let mtime_epoch = fs_optional::read_mtime_epoch(file_path);
 
     let imports_text = file_chunks.imports.join("\n");
     let source_kind = Some(source_kind::classify(&checked.rel_path));
@@ -245,7 +248,14 @@ fn process_file(
         CheckResult::Skip => return Ok(FileOutcome::Skipped),
         CheckResult::Error => return Ok(FileOutcome::Errored),
     };
-    let Some(pf) = prepare_chunks(checked, file_path, rust_resolver.crate_name(), corpus) else {
+    let mtime_epoch = fs_optional::read_mtime_epoch(file_path);
+    let Some(pf) = prepare_chunks(
+        checked,
+        file_path,
+        mtime_epoch,
+        rust_resolver.crate_name(),
+        corpus,
+    ) else {
         return Ok(FileOutcome::Skipped);
     };
     let n = pf.raw_chunks.len() as u32;
