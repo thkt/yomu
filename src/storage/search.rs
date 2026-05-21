@@ -140,7 +140,6 @@ pub fn vec_search(
     Ok(build_semantic_results(best, &meta, limit))
 }
 
-#[allow(clippy::cast_possible_truncation)]
 pub fn search_by_fts(
     conn: &Connection,
     keywords: &[&str],
@@ -207,7 +206,14 @@ pub fn search_by_fts(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
         let bm25_score: f64 = row.get(10)?;
-        let abs = (bm25_score as f32).abs();
+        // Saturate to the f32 range so an extreme bm25 magnitude cannot become ±INF and
+        // produce NaN through `abs / (1.0 + abs)` below.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "value saturated to f32 range by clamp()"
+        )]
+        let bm25_f32 = bm25_score.clamp(f64::from(f32::MIN), f64::from(f32::MAX)) as f32;
+        let abs = bm25_f32.abs();
         let base_score = abs / (1.0 + abs);
         Ok(SearchResult {
             chunk: chunk_from_row(row, 1)?,

@@ -133,9 +133,18 @@ impl IndexStatus {
         }
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn embed_percentage(&self) -> u32 {
-        (self.embed_coverage() as f64 * 100.0) as u32
+        // Truncate (floor) rather than round so partial coverage like 199/200 reports
+        // 99 — only fully complete coverage (1.0) is allowed to surface as 100.
+        // `embed_coverage()` is bounded to [0.0, 1.0] by construction, so the product
+        // is in [0.0, 100.0]; the trailing clamp(0, 100) is defense-in-depth.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "input <= 100.0 by embed_coverage() invariant; trailing clamp is defense-in-depth"
+        )]
+        let pct = (self.embed_coverage() * 100.0) as u32;
+        pct.clamp(0, 100)
     }
 }
 

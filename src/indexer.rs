@@ -198,7 +198,7 @@ fn prepare_chunks(
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64);
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
 
     let imports_text = file_chunks.imports.join("\n");
     let source_kind = Some(source_kind::classify(&checked.rel_path));
