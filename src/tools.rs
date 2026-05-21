@@ -1,5 +1,5 @@
 mod embedder;
-mod format;
+pub(crate) mod format;
 mod reranker;
 
 use std::collections::{HashMap, HashSet};
@@ -532,8 +532,8 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn index(&self, json: bool) -> Result<String, YomuError> {
-        let chunk_result = indexer::run_chunk_only_index(&self.conn, &self.root)?;
+    pub fn index(&self, json: bool, exclude_vendor: bool) -> Result<String, YomuError> {
+        let chunk_result = indexer::run_chunk_only_index(&self.conn, &self.root, exclude_vendor)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
@@ -554,8 +554,13 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn dry_run_index(&self, force: bool, json: bool) -> Result<String, YomuError> {
-        let preview = indexer::dry_run_index(&self.conn, &self.root, force)?;
+    pub fn dry_run_index(
+        &self,
+        force: bool,
+        json: bool,
+        exclude_vendor: bool,
+    ) -> Result<String, YomuError> {
+        let preview = indexer::dry_run_index(&self.conn, &self.root, force, exclude_vendor)?;
 
         if json {
             let (degraded, notes) = degraded_for_dry_run_errors(preview.files_errored);
@@ -578,8 +583,9 @@ impl Yomu {
         Ok(text)
     }
 
-    pub fn rebuild(&self, json: bool) -> Result<String, YomuError> {
-        let chunk_result = indexer::run_chunk_only_index_force(&self.conn, &self.root)?;
+    pub fn rebuild(&self, json: bool, exclude_vendor: bool) -> Result<String, YomuError> {
+        let chunk_result =
+            indexer::run_chunk_only_index_force(&self.conn, &self.root, exclude_vendor)?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
@@ -907,7 +913,7 @@ impl Yomu {
     }
 
     fn try_rechunk(&self) -> Option<String> {
-        match indexer::run_chunk_only_index(&self.conn, &self.root) {
+        match indexer::run_chunk_only_index(&self.conn, &self.root, false) {
             Ok(r) if r.files_errored > 0 => Some(format!(
                 "{} files had errors during re-indexing",
                 r.files_errored
@@ -919,7 +925,7 @@ impl Yomu {
 
     fn handle_empty_index(&self) -> Result<bool, YomuError> {
         tracing::info!("Index is empty, running chunk-only index");
-        indexer::run_chunk_only_index(&self.conn, &self.root)?;
+        indexer::run_chunk_only_index(&self.conn, &self.root, false)?;
         Ok(true)
     }
 

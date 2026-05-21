@@ -364,8 +364,9 @@ pub fn dry_run_index(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
     force: bool,
+    exclude_vendor: bool,
 ) -> Result<DryRunResult, IndexError> {
-    let files = walker::walk_source_files(root);
+    let files = walker::walk_source_files(root, exclude_vendor);
     let total_files = files.len() as u32;
     let mut files_to_process = 0u32;
     let mut files_to_skip = 0u32;
@@ -403,11 +404,12 @@ fn run_chunk_only_index_inner(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
     force: bool,
+    exclude_vendor: bool,
 ) -> Result<IndexResult, IndexError> {
     const CORPUS_YAML: &str = include_str!("../tests/fixtures/injection/corpus.yaml");
     let corpus = injection::Corpus::load_from_str(CORPUS_YAML)?;
 
-    let files = walker::walk_source_files(root);
+    let files = walker::walk_source_files(root, exclude_vendor);
     tracing::info!(
         file_count = files.len(),
         force,
@@ -479,15 +481,20 @@ fn run_chunk_only_index_inner(
     })
 }
 
-pub fn run_chunk_only_index(conn: &Arc<Mutex<Db>>, root: &Path) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, false)
+pub fn run_chunk_only_index(
+    conn: &Arc<Mutex<Db>>,
+    root: &Path,
+    exclude_vendor: bool,
+) -> Result<IndexResult, IndexError> {
+    run_chunk_only_index_inner(conn, root, false, exclude_vendor)
 }
 
 pub fn run_chunk_only_index_force(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
+    exclude_vendor: bool,
 ) -> Result<IndexResult, IndexError> {
-    run_chunk_only_index_inner(conn, root, true)
+    run_chunk_only_index_inner(conn, root, true, exclude_vendor)
 }
 
 #[cfg(test)]

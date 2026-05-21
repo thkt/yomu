@@ -220,7 +220,7 @@ fn search_incremental_embeds_chunked_only() {
         Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     {
         let c = y.conn.lock().unwrap();
@@ -337,7 +337,7 @@ fn search_degraded_with_results_shows_note() {
         Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 3, None).unwrap();
 
     let db_path = dir.path().join(".yomu").join("index.db");
@@ -370,6 +370,8 @@ fn format_results_grouped_renders_file_header_and_context() {
             start_line: 5,
             end_line: 7,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: None,
         distance: 0.15,
@@ -423,6 +425,8 @@ fn format_results_grouped_groups_same_file_chunks() {
                 start_line: 1,
                 end_line: 5,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: 0.1,
@@ -438,6 +442,8 @@ fn format_results_grouped_groups_same_file_chunks() {
                 start_line: 7,
                 end_line: 10,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: 0.2,
@@ -471,6 +477,8 @@ fn format_results_grouped_deduplicates_siblings() {
             start_line: 5,
             end_line: 7,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -522,6 +530,8 @@ fn format_results_grouped_omits_empty_imports() {
             start_line: 1,
             end_line: 3,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -552,6 +562,8 @@ fn format_results_grouped_omits_empty_siblings() {
             start_line: 1,
             end_line: 3,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: None,
         distance: 0.1,
@@ -583,6 +595,8 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: 0.5,
@@ -598,6 +612,8 @@ fn format_results_grouped_sorts_files_by_best_similarity() {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: 0.1,
@@ -631,6 +647,8 @@ fn format_results_grouped_shows_score_for_all() {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: 0.5,
@@ -646,6 +664,8 @@ fn format_results_grouped_shows_score_for_all() {
                 start_line: 1,
                 end_line: 3,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: None,
             distance: f32::INFINITY,
@@ -676,7 +696,7 @@ fn format_results_grouped_shows_score_for_all() {
 #[test]
 fn index_works_without_api_key() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
-    let text = y.index(false).unwrap();
+    let text = y.index(false, false).unwrap();
     assert!(text.contains("complete"), "expected success: {text}");
 }
 
@@ -694,7 +714,7 @@ fn index_chunks_without_embedding() {
         ),
     ]);
 
-    let text = y.index(false).unwrap();
+    let text = y.index(false, false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
     assert!(
         text.contains("Embedding coverage:"),
@@ -713,7 +733,7 @@ fn index_chunks_without_embedding() {
 #[test]
 fn rebuild_re_parses_all_files() {
     let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
     let chunks_before = {
         let c = y.conn.lock().unwrap();
@@ -727,7 +747,7 @@ fn rebuild_re_parses_all_files() {
     )
     .unwrap();
 
-    let text = y.rebuild(false).unwrap();
+    let text = y.rebuild(false, false).unwrap();
     assert!(text.contains("complete"), "expected completion: {text}");
 
     let chunks_after = {
@@ -1036,7 +1056,7 @@ fn integration_index_then_impact() {
         ("src/C.tsx", "export function C() { return <div/>; }"),
     ]);
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 6, None).unwrap();
 
     let text = y.impact("src/C.tsx", None, 3, false, false).unwrap();
@@ -1183,7 +1203,7 @@ fn ensure_indexed_partially_embedded_triggers_embed() {
         Arc::new(MockEmbedder::default()),
     );
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let stats_before = {
         let c = y.conn.lock().unwrap();
@@ -1238,7 +1258,7 @@ fn search_without_embedder_skips_embed_attempt() {
     let (y, _dir) =
         test_yomu_with_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     {
         let c = y.conn.lock().unwrap();
@@ -1261,7 +1281,7 @@ fn search_json_format_returns_valid_json() {
         "src/Button.tsx",
         "export function Button() { return <button/>; }",
     )]);
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1289,7 +1309,7 @@ fn search_json_format_returns_valid_json() {
 fn search_json_format_empty_results() {
     let (y, _dir) =
         test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y
         .search(Some("zzzznonexistent"), 10, 0, &[], true, None)
@@ -1317,7 +1337,7 @@ fn dry_run_index_does_not_write_to_db() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    let text = y.dry_run_index(false, false).unwrap();
+    let text = y.dry_run_index(false, false, false).unwrap();
     assert!(
         text.contains("2 files to process"),
         "should report files to process: {text}"
@@ -1341,9 +1361,9 @@ fn dry_run_index_shows_skip_for_unchanged() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.dry_run_index(false, false).unwrap();
+    let text = y.dry_run_index(false, false, false).unwrap();
     assert!(
         text.contains("0 files to process"),
         "all files should be skipped: {text}"
@@ -1361,7 +1381,7 @@ fn search_json_format_degraded_includes_flag() {
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
         Arc::new(FailingEmbedder::all_fail("service unavailable")),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1388,6 +1408,8 @@ fn innerfn_hit_shows_parent_context_in_text_output() {
             start_line: 10,
             end_line: 13,
             parent_chunk_id: Some(42),
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: Some(43),
         distance: 0.15,
@@ -1409,6 +1431,8 @@ fn innerfn_hit_shows_parent_context_in_text_output() {
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
     );
     let text = format_results_grouped(&results, &ctx, &parent_chunks);
@@ -1430,6 +1454,8 @@ fn parent_hit_no_duplicate_parent_display() {
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
         chunk_id: Some(42),
         distance: 0.1,
@@ -1465,6 +1491,8 @@ fn json_output_includes_parent_chunk_id() {
                 start_line: 10,
                 end_line: 13,
                 parent_chunk_id: Some(42),
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: Some(43),
             distance: 0.2,
@@ -1480,6 +1508,8 @@ fn json_output_includes_parent_chunk_id() {
                 start_line: 1,
                 end_line: 5,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: Some(1),
             distance: 0.3,
@@ -1534,7 +1564,7 @@ fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
 
     let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
 
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
     let result = y
         .search(Some("handleSubmit"), 10, 0, &[], false, None)
@@ -1558,7 +1588,7 @@ fn below_threshold_no_subchunks_in_index() {
   return <div><button onClick={handleClick}>{count}</button></div>;
 }"#;
     let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", fixture)]);
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
     let stats = y.status(false).unwrap();
     assert!(
@@ -1581,6 +1611,8 @@ fn parent_and_child_both_in_results_no_duplicate() {
                 start_line: 1,
                 end_line: 20,
                 parent_chunk_id: None,
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: Some(parent_id),
             distance: 0.1,
@@ -1596,6 +1628,8 @@ fn parent_and_child_both_in_results_no_duplicate() {
                 start_line: 10,
                 end_line: 13,
                 parent_chunk_id: Some(parent_id),
+                source_kind: None,
+                injection_flags: None,
             },
             chunk_id: Some(43),
             distance: 0.15,
@@ -1618,6 +1652,8 @@ fn parent_and_child_both_in_results_no_duplicate() {
             start_line: 1,
             end_line: 20,
             parent_chunk_id: None,
+            source_kind: None,
+            injection_flags: None,
         },
     );
     let text = format_results_grouped(&results, &ctx, &parent_chunks);
@@ -1685,7 +1721,7 @@ fn search_with_not_installed_shows_note() {
         "export function Button() { return <div/>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1732,7 +1768,7 @@ fn search_with_backend_unavailable_shows_note() {
         dir.path().to_path_buf(),
         Err(DegradedReason::BackendUnavailable),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1753,7 +1789,7 @@ fn search_with_probe_failed_shows_note() {
         dir.path().to_path_buf(),
         Err(DegradedReason::ProbeFailed),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1787,7 +1823,7 @@ fn disabled_no_user_note_in_search() {
         dir.path().to_path_buf(),
         Err(DegradedReason::Disabled),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
     assert!(
@@ -1831,7 +1867,7 @@ fn json_notes_present_when_degraded() {
     let (conn, dir) =
         setup_test_files(&[("src/Card.tsx", "export function Card() { return <div/>; }")]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -1860,7 +1896,7 @@ fn embed_pending_chunks_returns_count() {
         "export function Button() { return <div>button</div>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y.embed(false).unwrap();
     assert!(
@@ -1897,7 +1933,7 @@ fn embed_json_format() {
         "export function Button() { return <div>button</div>; }",
     )]);
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.embed(true).unwrap();
     let parsed = parse_json(&json);
@@ -1916,7 +1952,7 @@ fn embed_embedder_unavailable_returns_error() {
         dir.path().to_path_buf(),
         Err(DegradedReason::NotInstalled),
     );
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
     let result = y.embed(false);
     assert!(
@@ -1934,7 +1970,7 @@ fn embed_disabled_returns_embedder_unavailable() {
         dir.path().to_path_buf(),
         Err(DegradedReason::Disabled),
     );
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
     let result = y.embed(false);
     assert!(
@@ -1973,7 +2009,7 @@ fn json_notes_outcome_degraded_fallback() {
         &[("src/Card.tsx", "export function Card() { return <div/>; }")],
         Arc::new(FailingEmbedder::all_fail("inference error")),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -2003,7 +2039,7 @@ fn json_notes_backend_unavailable() {
         dir.path().to_path_buf(),
         Err(DegradedReason::BackendUnavailable),
     );
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -2026,7 +2062,7 @@ fn index_json_returns_valid_json() {
         ("src/A.tsx", "export function A() {}"),
         ("src/B.tsx", "export function B() {}"),
     ]);
-    let json = y.index(true).unwrap();
+    let json = y.index(true, false).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_processed"], 2);
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
@@ -2042,9 +2078,9 @@ fn index_json_returns_valid_json() {
 #[test]
 fn rebuild_json_returns_valid_json() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
-    y.index(false).unwrap();
+    y.index(false, false).unwrap();
 
-    let json = y.rebuild(true).unwrap();
+    let json = y.rebuild(true, false).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_processed"], 1);
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
@@ -2063,7 +2099,7 @@ fn dry_run_index_json_returns_valid_json() {
         ("src/B.tsx", "export function B() {}"),
     ]);
 
-    let json = y.dry_run_index(false, true).unwrap();
+    let json = y.dry_run_index(false, true, false).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_to_process"], 2);
     assert_eq!(parsed["files_to_skip"], 0);
@@ -2076,9 +2112,9 @@ fn dry_run_index_json_returns_valid_json() {
 #[test]
 fn dry_run_index_json_shows_skip_for_unchanged() {
     let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path()).unwrap();
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.dry_run_index(false, true).unwrap();
+    let json = y.dry_run_index(false, true, false).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_to_process"], 0);
     assert_eq!(parsed["files_to_skip"], 1);

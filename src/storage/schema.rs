@@ -47,7 +47,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 const DDL_FTS_CHUNKS: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path, tokenize='trigram')";
 
@@ -261,6 +261,28 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         conn.execute_batch(DDL_FTS_CHUNKS)?;
         conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
         notify_schema_change("yomu", "chunks v9", 0, "yomu index");
+    }
+
+    // v9 → v10: close PR#1 contract loop. PR#1-era v9 DBs may contain rows
+    // with NULL `source_kind` / `injection_flags`. Once PR#3 emits
+    // `injection_check = "ran"` at the response level, those NULLs would lie
+    // to consumers. Drop + recreate the same dependent set as v9 so the next
+    // `yomu index` repopulates the columns uniformly.
+    if from < 10 {
+        let _span = tracing::info_span!("migration_v10", path = %path.display()).entered();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS chunks; \
+             DROP TABLE IF EXISTS embedded_chunk_ids; \
+             DROP TABLE IF EXISTS vec_chunks; \
+             DROP TABLE IF EXISTS fts_chunks_vocab; \
+             DROP TABLE IF EXISTS fts_chunks;",
+        )?;
+        conn.execute_batch(DDL)?;
+        conn.execute_batch(&ddl_vec_chunks())?;
+        conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
+        notify_schema_change("yomu", "chunks v10", 0, "yomu index");
     }
 
     Ok(())

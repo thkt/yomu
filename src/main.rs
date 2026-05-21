@@ -72,6 +72,9 @@ Examples:
         /// Show what would be indexed without writing to the database
         #[arg(long)]
         dry_run: bool,
+        /// Skip files classified as vendor (e.g. node_modules, vendor/, dist/) at walker time. Default off.
+        #[arg(long)]
+        exclude_vendor: bool,
     },
     /// Rebuild chunk index from scratch. No API calls.
     #[command(after_help = "\
@@ -82,6 +85,9 @@ Examples:
         /// Show what would be rebuilt without writing to the database
         #[arg(long)]
         dry_run: bool,
+        /// Skip files classified as vendor (e.g. node_modules, vendor/, dist/) at walker time. Default off.
+        #[arg(long)]
+        exclude_vendor: bool,
     },
     /// Analyze impact of changes to a file or symbol.
     #[command(after_help = "\
@@ -290,18 +296,24 @@ fn main() -> ExitCode {
                 yomu.search(Some(&query), limit, offset, &path, json, None)
             }
         }
-        Command::Index { dry_run } => {
+        Command::Index {
+            dry_run,
+            exclude_vendor,
+        } => {
             if dry_run {
-                yomu.dry_run_index(false, json)
+                yomu.dry_run_index(false, json, exclude_vendor)
             } else {
-                yomu.index(json)
+                yomu.index(json, exclude_vendor)
             }
         }
-        Command::Rebuild { dry_run } => {
+        Command::Rebuild {
+            dry_run,
+            exclude_vendor,
+        } => {
             if dry_run {
-                yomu.dry_run_index(true, json)
+                yomu.dry_run_index(true, json, exclude_vendor)
             } else {
-                yomu.rebuild(json)
+                yomu.rebuild(json, exclude_vendor)
             }
         }
         Command::Impact {

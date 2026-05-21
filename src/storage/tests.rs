@@ -1,4 +1,5 @@
 use tempfile::{TempDir, tempdir};
+use tracing_test::traced_test;
 
 use super::*;
 
@@ -1995,7 +1996,7 @@ fn fts5_migration_from_v2_drops_chunks() {
         .unwrap();
     assert_eq!(
         chunks_count, 0,
-        "v9 migration must drop chunks so `yomu index` repopulates them"
+        "v10 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -2139,9 +2140,9 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
-// T-167: migration_v3_to_v9_creates_vocab_and_drops_chunks
+// T-167: migration_v3_to_v10_creates_vocab_and_drops_chunks
 #[test]
-fn migration_v3_to_v9_creates_vocab_and_drops_chunks() {
+fn migration_v3_to_v10_creates_vocab_and_drops_chunks() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2178,7 +2179,7 @@ fn migration_v3_to_v9_creates_vocab_and_drops_chunks() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "9", "schema_version should be 9 after migration");
+    assert_eq!(version, "10", "schema_version should be 10 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -2189,7 +2190,7 @@ fn migration_v3_to_v9_creates_vocab_and_drops_chunks() {
         .unwrap();
     assert!(
         exists,
-        "fts_chunks_vocab should exist after v3->v9 migration"
+        "fts_chunks_vocab should exist after v3->v10 migration"
     );
 
     let chunks_count: i64 = conn
@@ -2197,7 +2198,7 @@ fn migration_v3_to_v9_creates_vocab_and_drops_chunks() {
         .unwrap();
     assert_eq!(
         chunks_count, 0,
-        "v9 migration must drop chunks so `yomu index` repopulates them"
+        "v10 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -3004,9 +3005,9 @@ fn fts_stores_file_path() {
     );
 }
 
-// T-557: migration_v6_to_v9_drops_chunks_for_reindex
+// T-557: migration_v6_to_v10_drops_chunks_for_reindex
 #[test]
-fn migration_v6_to_v9_drops_chunks_for_reindex() {
+fn migration_v6_to_v10_drops_chunks_for_reindex() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -3045,14 +3046,14 @@ fn migration_v6_to_v9_drops_chunks_for_reindex() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "9", "schema_version should be 9 after migration");
+    assert_eq!(version, "10", "schema_version should be 10 after migration");
 
     let chunks_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
         chunks_count, 0,
-        "v9 migration must drop chunks so `yomu index` repopulates them"
+        "v10 migration must drop chunks so `yomu index` repopulates them"
     );
 }
 
@@ -4061,10 +4062,10 @@ fn search_by_fts_handles_short_query_without_panic() {
     }
 }
 
-// T-007: schema_v9_chunks_table_includes_new_columns
+// T-007: schema_v10_chunks_table_includes_new_columns
 // Spec FR-001: chunks DDL declares source_kind and injection_flags as TEXT.
 #[test]
-fn schema_v9_chunks_table_includes_new_columns() {
+fn schema_v10_chunks_table_includes_new_columns() {
     let (conn, _dir) = test_db();
 
     let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
@@ -4091,11 +4092,11 @@ fn schema_v9_chunks_table_includes_new_columns() {
     assert_eq!(injection_flags.unwrap().1, "TEXT");
 }
 
-// T-008: opening_v8_store_drops_chunks_and_bumps_schema_version_to_9
-// Spec FR-002, BR-002: v8 → v9 migration drops chunks and recreates them.
+// T-008: opening_v8_store_drops_chunks_and_bumps_schema_version_to_10
+// Spec FR-002, BR-002: v8 → v10 migration drops chunks and recreates them.
 // V8_CHUNKS_DDL is the v8 schema inlined verbatim (no source_kind / injection_flags).
 #[test]
-fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_9() {
+fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_10() {
     const V8_CHUNKS_DDL: &str = "
         CREATE TABLE chunks (
             id INTEGER PRIMARY KEY,
@@ -4138,7 +4139,7 @@ fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_9() {
     let chunks_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(chunks_count, 0, "v8 → v9 migration must drop all chunks");
+    assert_eq!(chunks_count, 0, "v8 → v10 migration must drop all chunks");
 
     let version: String = conn
         .query_row(
@@ -4147,7 +4148,133 @@ fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_9() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "9");
+    assert_eq!(version, "10");
+}
+
+// ── PR#3 Phase 2: schema v10 bump (FR-307a, FR-307b, FR-307c) ──
+
+// T-307: opening_v9_store_drops_chunks_and_bumps_schema_version_to_10
+//
+// Perspective: State (v9 → v10 transition) + Hazard (pre-existing v9 chunk
+// rows must be wiped to close the codex P1 contract loop where NULL-column
+// chunks would be served back as `injection_check = "ran"`).
+// Spec FR-307b / FR-307c / BR-305: v9 → v10 migration SHALL drop chunks (+
+// embedded_chunk_ids / vec_chunks / fts_chunks / fts_chunks_vocab), recreate
+// them, and call `notify_schema_change("yomu", "chunks v10", 0, "yomu index")`
+// so the user is told to run `yomu index` again.
+#[traced_test]
+#[test]
+fn opening_v9_store_drops_chunks_and_bumps_schema_version_to_10() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("v9.db");
+
+    // Use the production `open_db` path to seed the v9 schema. Today this
+    // already lands at v9; after Phase 2 the same call lands at v10, but the
+    // explicit roll-back below pins the starting point regardless.
+    {
+        let conn = open_db(&db_path).unwrap();
+        let chunks = vec![NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("legacy"),
+            content: "fn legacy() {}",
+            start_line: 1,
+            end_line: 1,
+            parent_index: None,
+            source_kind: None,
+            injection_flags: None,
+        }];
+        replace_file_chunks_only(&conn, "src/legacy.rs", &chunks, "h1", "", &[], None).unwrap();
+
+        // Roll the stored schema_version back to "9" so re-opening forces the
+        // v9 → v10 migration step to run.
+        conn.execute(
+            "UPDATE index_meta SET value = '9' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Re-open triggers migration v9 → v10.
+    let conn = open_db(&db_path).unwrap();
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        version, "10",
+        "schema_version must be bumped to 10 after v9 → v10 migration"
+    );
+
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        chunks_count, 0,
+        "v9 → v10 migration must drop chunks so `yomu index` repopulates them"
+    );
+
+    assert!(
+        logs_contain("chunks v10"),
+        "v9 → v10 migration must emit notify_schema_change(\"yomu\", \"chunks v10\", ...)"
+    );
+}
+
+// T-308: fresh_db_initializes_at_schema_version_10
+//
+// Perspective: Equivalence (fresh-DB init path) + Boundary (no prior
+// schema_version row → migrate from 0 lands at SCHEMA_VERSION).
+// Spec FR-307a: SCHEMA_VERSION const SHALL be 10. A fresh DB SHALL be
+// initialized at v10 with the 9 chunks columns present.
+#[test]
+fn fresh_db_initializes_at_schema_version_10() {
+    let (conn, _dir) = test_db();
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        version, "10",
+        "fresh DB must initialize at schema_version = 10"
+    );
+
+    let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
+    let column_names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    // FR-307a: chunks at v10 must carry the 9 SELECT columns from FR-303
+    // (id is the implicit PRIMARY KEY; file_hash exists in DDL but is not
+    // part of the FR-303 projection — assert it stays present for full DDL
+    // coverage). Total expected = 11 declared columns.
+    let required = [
+        "id",
+        "file_path",
+        "chunk_type",
+        "name",
+        "content",
+        "start_line",
+        "end_line",
+        "file_hash",
+        "parent_chunk_id",
+        "source_kind",
+        "injection_flags",
+    ];
+    for col in required {
+        assert!(
+            column_names.iter().any(|c| c == col),
+            "fresh v10 chunks table must declare column {col:?}; got {column_names:?}"
+        );
+    }
 }
 
 // T-009: new_chunk_with_none_fields_persists_as_sql_null
@@ -4222,4 +4349,397 @@ fn new_chunk_with_some_fields_persists_as_values() {
         .unwrap();
     assert_eq!(sk.as_deref(), Some("src"));
     assert_eq!(ifl.as_deref(), Some("[]"));
+}
+
+// ── PR#3 Phase 1: storage Chunk + SELECT 9-column projection (FR-301..306) ──
+
+// T-301: chunk_struct_carries_source_kind_and_injection_flags
+//
+// Perspective: Equivalence (struct construction with populated optional fields).
+// Spec FR-301 / FR-301b: storage::Chunk SHALL gain source_kind + injection_flags
+// fields. Constructing the struct literal locks the public surface.
+#[test]
+fn chunk_struct_carries_source_kind_and_injection_flags() {
+    let chunk = Chunk {
+        file_path: "src/a.rs".into(),
+        chunk_type: ChunkType::RustFn,
+        name: Some("alpha".into()),
+        content: "fn alpha() {}".into(),
+        start_line: 1,
+        end_line: 3,
+        parent_chunk_id: None,
+        source_kind: Some("src".into()),
+        injection_flags: Some(vec!["flag.a".into()]),
+    };
+
+    assert_eq!(
+        chunk.source_kind.as_deref(),
+        Some("src"),
+        "Chunk.source_kind must expose the supplied value"
+    );
+    assert_eq!(
+        chunk.injection_flags.as_deref(),
+        Some(&["flag.a".to_owned()][..]),
+        "Chunk.injection_flags must expose the supplied Vec<String>"
+    );
+}
+
+// T-302: chunk_from_row_reads_source_kind_and_parses_injection_flags_json
+//
+// Perspective: Equivalence (well-formed JSON array) + Branch (Some path of
+// injection_flags JSON parse).
+// Spec FR-302 / FR-302b: chunk_from_row SHALL read source_kind at offset+7 and
+// parse injection_flags JSON at offset+8 via serde_json::from_str::<Vec<String>>.
+// chunk_from_row is private; we exercise it through get_chunk_by_id (offset 0).
+#[test]
+fn chunk_from_row_reads_source_kind_and_parses_injection_flags_json() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("alpha"),
+        content: "fn alpha() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: Some("src"),
+        injection_flags: Some("[\"flag.a\",\"flag.b\"]"),
+    }];
+    replace_file_chunks_only(&conn, "src/a.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM chunks WHERE file_path = 'src/a.rs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let chunk = get_chunk_by_id(&conn, id)
+        .unwrap()
+        .expect("chunk must be readable by id");
+
+    assert_eq!(
+        chunk.source_kind.as_deref(),
+        Some("src"),
+        "chunk_from_row must read source_kind at offset+7"
+    );
+    assert_eq!(
+        chunk.injection_flags.as_deref(),
+        Some(&["flag.a".to_owned(), "flag.b".to_owned()][..]),
+        "chunk_from_row must parse injection_flags JSON array into Vec<String>"
+    );
+}
+
+// T-302b: chunk_from_row_degrades_malformed_injection_flags_to_none
+//
+// Perspective: Error (malformed JSON input) + Hazard (must not panic on bad
+// DB content).
+// Spec FR-302c: chunk_from_row SHALL log a warn and return injection_flags=None
+// on JSON parse failure. SHALL NOT panic. Tracing capture is informational only
+// (per task note); we assert the binary-equivalence "None + no panic".
+#[test]
+fn chunk_from_row_degrades_malformed_injection_flags_to_none() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("beta"),
+        content: "fn beta() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: Some("src"),
+        injection_flags: Some("{malformed"),
+    }];
+    replace_file_chunks_only(&conn, "src/b.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM chunks WHERE file_path = 'src/b.rs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let chunk = get_chunk_by_id(&conn, id)
+        .unwrap()
+        .expect("malformed injection_flags must not cause SELECT failure");
+
+    assert_eq!(
+        chunk.injection_flags, None,
+        "malformed injection_flags JSON must degrade to None without panic"
+    );
+    assert_eq!(
+        chunk.source_kind.as_deref(),
+        Some("src"),
+        "source_kind must remain readable even when injection_flags JSON is malformed"
+    );
+}
+
+// T-303: get_chunk_by_id_projects_source_kind_and_injection_flags
+//
+// Perspective: Branch (single-row SELECT path) + Equivalence (one chunk fully
+// populated).
+// Spec FR-303: get_chunk_by_id SQL SHALL SELECT 9 columns including
+// source_kind / injection_flags.
+#[test]
+fn get_chunk_by_id_projects_source_kind_and_injection_flags() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("gamma"),
+        content: "fn gamma() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: Some("test"),
+        injection_flags: Some("[\"flag.x\"]"),
+    }];
+    replace_file_chunks_only(&conn, "src/c.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM chunks WHERE file_path = 'src/c.rs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let chunk = get_chunk_by_id(&conn, id)
+        .unwrap()
+        .expect("get_chunk_by_id must return Some for an existing id");
+
+    assert_eq!(
+        chunk.source_kind.as_deref(),
+        Some("test"),
+        "get_chunk_by_id SELECT must include source_kind column"
+    );
+    assert_eq!(
+        chunk.injection_flags.as_deref(),
+        Some(&["flag.x".to_owned()][..]),
+        "get_chunk_by_id SELECT must include injection_flags column"
+    );
+}
+
+// T-304: get_chunks_by_ids_projects_source_kind_and_injection_flags
+//
+// Perspective: Equivalence (3 rows, each fully populated) + Boundary (offset 1
+// arithmetic in chunk_from_row, called out explicitly in FR-304).
+// Spec FR-304: get_chunks_by_ids SQL SHALL SELECT 10 columns (id + the 9 from
+// FR-303), with chunk_from_row(row, 1) offset matching.
+#[test]
+fn get_chunks_by_ids_projects_source_kind_and_injection_flags() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("one"),
+            content: "fn one() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+            source_kind: Some("src"),
+            injection_flags: Some("[\"flag.1\"]"),
+        },
+        NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("two"),
+            content: "fn two() {}",
+            start_line: 5,
+            end_line: 7,
+            parent_index: None,
+            source_kind: Some("vendor"),
+            injection_flags: Some("[]"),
+        },
+        NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("three"),
+            content: "fn three() {}",
+            start_line: 9,
+            end_line: 11,
+            parent_index: None,
+            source_kind: Some("test"),
+            injection_flags: Some("[\"flag.2\",\"flag.3\"]"),
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/multi.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let ids: Vec<i64> = conn
+        .prepare("SELECT id FROM chunks WHERE file_path = 'src/multi.rs' ORDER BY start_line")
+        .unwrap()
+        .query_map([], |row| row.get::<_, i64>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(ids.len(), 3, "fixture must insert 3 chunks");
+
+    let map = get_chunks_by_ids(&conn, &ids, None, &[]).unwrap();
+    assert_eq!(
+        map.len(),
+        3,
+        "get_chunks_by_ids must return one entry per requested id"
+    );
+
+    let one = map.get(&ids[0]).expect("id[0] must be present");
+    assert_eq!(
+        one.source_kind.as_deref(),
+        Some("src"),
+        "row 1 source_kind must be projected"
+    );
+    assert_eq!(
+        one.injection_flags.as_deref(),
+        Some(&["flag.1".to_owned()][..]),
+        "row 1 injection_flags must be parsed via offset+1+8 = offset 9"
+    );
+
+    let two = map.get(&ids[1]).expect("id[1] must be present");
+    assert_eq!(
+        two.source_kind.as_deref(),
+        Some("vendor"),
+        "row 2 source_kind must be projected"
+    );
+    assert_eq!(
+        two.injection_flags.as_deref(),
+        Some(&[] as &[String]),
+        "row 2 injection_flags must parse '[]' into Some(empty Vec)"
+    );
+
+    let three = map.get(&ids[2]).expect("id[2] must be present");
+    assert_eq!(
+        three.source_kind.as_deref(),
+        Some("test"),
+        "row 3 source_kind must be projected"
+    );
+    assert_eq!(
+        three.injection_flags.as_deref(),
+        Some(&["flag.2".to_owned(), "flag.3".to_owned()][..]),
+        "row 3 injection_flags must parse multi-element array"
+    );
+}
+
+// T-305: get_chunks_for_files_projects_source_kind_and_injection_flags
+//
+// Perspective: Equivalence (multi-file, sorted output) + Boundary (offset 0
+// path of chunk_from_row).
+// Spec FR-305: get_chunks_for_files SQL SHALL SELECT the same 9 columns as
+// FR-303.
+#[test]
+fn get_chunks_for_files_projects_source_kind_and_injection_flags() {
+    let (conn, _dir) = test_db();
+
+    let a_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("a1"),
+        content: "fn a1() {}",
+        start_line: 1,
+        end_line: 2,
+        parent_index: None,
+        source_kind: Some("src"),
+        injection_flags: Some("[\"flag.a\"]"),
+    }];
+    replace_file_chunks_only(&conn, "src/a.rs", &a_chunks, "ha", "", &[], None).unwrap();
+
+    let b_chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("b1"),
+        content: "fn b1() {}",
+        start_line: 1,
+        end_line: 2,
+        parent_index: None,
+        source_kind: Some("test"),
+        injection_flags: Some("[]"),
+    }];
+    replace_file_chunks_only(&conn, "src/b.rs", &b_chunks, "hb", "", &[], None).unwrap();
+
+    let chunks = get_chunks_for_files(&conn, &["src/a.rs", "src/b.rs"]).unwrap();
+    assert_eq!(
+        chunks.len(),
+        2,
+        "get_chunks_for_files must return one row per chunk across the two files"
+    );
+
+    // Output is sorted by (file_path, start_line); "src/a.rs" precedes "src/b.rs".
+    let order: Vec<&str> = chunks.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["src/a.rs", "src/b.rs"],
+        "results must be sorted by file_path"
+    );
+
+    assert_eq!(
+        chunks[0].source_kind.as_deref(),
+        Some("src"),
+        "src/a.rs source_kind must be projected"
+    );
+    assert_eq!(
+        chunks[0].injection_flags.as_deref(),
+        Some(&["flag.a".to_owned()][..]),
+        "src/a.rs injection_flags must be parsed"
+    );
+
+    assert_eq!(
+        chunks[1].source_kind.as_deref(),
+        Some("test"),
+        "src/b.rs source_kind must be projected"
+    );
+    assert_eq!(
+        chunks[1].injection_flags.as_deref(),
+        Some(&[] as &[String]),
+        "src/b.rs injection_flags must parse '[]' into Some(empty Vec)"
+    );
+}
+
+// T-306: search_by_fts_projects_source_kind_and_injection_flags
+//
+// Perspective: Branch (FTS join SELECT path) + Boundary (bm25 offset moves
+// from 8 to 9 to make room for the two new columns).
+// Spec FR-306: search_by_fts SQL SHALL SELECT c.id + 9 columns + bm25 score.
+// Result row reading SHALL move bm25 score from offset 8 to offset 9.
+#[test]
+fn search_by_fts_projects_source_kind_and_injection_flags() {
+    let (conn, _dir) = test_db();
+
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("alpha"),
+        content: "fn alpha() { let _ = 1; }",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: Some("src"),
+        injection_flags: Some("[\"flag.alpha\"]"),
+    }];
+    replace_file_chunks_only(&conn, "src/alpha.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let results = search_by_fts(&conn, &["alpha"], None, &HashSet::new(), None, 10, &[]).unwrap();
+    assert!(
+        !results.is_empty(),
+        "FTS must find the chunk by content keyword 'alpha'"
+    );
+
+    let hit = results
+        .iter()
+        .find(|r| r.chunk.file_path == "src/alpha.rs")
+        .expect("must find the alpha chunk in FTS results");
+
+    assert_eq!(
+        hit.chunk.source_kind.as_deref(),
+        Some("src"),
+        "search_by_fts SELECT must include source_kind column"
+    );
+    assert_eq!(
+        hit.chunk.injection_flags.as_deref(),
+        Some(&["flag.alpha".to_owned()][..]),
+        "search_by_fts SELECT must include injection_flags and parse JSON"
+    );
+    // bm25 score is read at the new offset (9); a positive score proves the
+    // index moved without colliding with the chunk projection columns.
+    assert!(
+        hit.score > 0.0,
+        "bm25 score must remain readable at the shifted offset (offset 9), got {}",
+        hit.score
+    );
 }

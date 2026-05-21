@@ -82,6 +82,7 @@ fn make_brief_chunk(file_path: &str, content: &str) -> BriefChunk {
         chunk_type: ChunkType::RustFn,
         content: content.to_owned(),
         included_reason: ChunkInclusionReason::Forward(1),
+        injection_flags: None,
     }
 }
 
@@ -136,6 +137,7 @@ fn render_json_emits_spec_shape() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Forward(2),
+            injection_flags: None,
         }],
         degraded: true,
         total_chunks: 1,
@@ -163,6 +165,7 @@ fn render_json_includes_seed_and_modkinds() {
         chunk_type: ChunkType::Other,
         content: "".to_owned(),
         included_reason: reason,
+        injection_flags: None,
     };
     let output = BriefOutput {
         chunks: vec![
@@ -190,6 +193,7 @@ fn render_plain_outputs_separator_and_header() {
         chunk_type: ChunkType::RustFn,
         content: content.to_owned(),
         included_reason: ChunkInclusionReason::Seed,
+        injection_flags: None,
     };
     let output = BriefOutput {
         chunks: vec![
@@ -231,6 +235,7 @@ fn render_plain_prepends_degraded_note() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Seed,
+            injection_flags: None,
         }],
         degraded: true,
         total_chunks: 1,
@@ -361,4 +366,58 @@ fn expand_plan_is_deterministic() {
     assert_eq!(signature(&first), signature(&second));
     assert_eq!(first.total_chunks, second.total_chunks);
     assert_eq!(first.total_bytes, second.total_bytes);
+}
+
+// T-314: render_json_emits_per_chunk_injection_flags
+#[test]
+fn render_json_emits_per_chunk_injection_flags() {
+    let output = BriefOutput {
+        chunks: vec![BriefChunk {
+            file_path: "src/foo.rs".to_owned(),
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::RustFn,
+            content: "fn foo() {}".to_owned(),
+            included_reason: ChunkInclusionReason::Seed,
+            injection_flags: Some(vec!["y".to_owned()]),
+        }],
+        degraded: false,
+        total_chunks: 1,
+        total_bytes: 11,
+    };
+
+    let rendered = render_json(&output);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        parsed["chunks"][0]["injection_flags"][0], "y",
+        "FR-311b/FR-313b: BriefChunk.injection_flags must propagate to JsonChunk, got: {parsed}"
+    );
+    assert_eq!(
+        parsed["chunks"][0]["injection_flags"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "per-chunk injection_flags must contain exactly the supplied entries, got: {parsed}"
+    );
+}
+
+// T-315: render_json_emits_injection_check_even_with_empty_chunks
+#[test]
+fn render_json_emits_injection_check_even_with_empty_chunks() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded: false,
+        total_chunks: 0,
+        total_bytes: 0,
+    };
+
+    let rendered = render_json(&output);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        parsed["injection_check"], "ran",
+        "BR-302: injection_check must be present at top level even when chunks is empty (no skip_serializing_if), got: {parsed}"
+    );
 }
