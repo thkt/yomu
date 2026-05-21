@@ -1390,6 +1390,42 @@ fn setup_injection_e2e_project() -> TempDir {
     dir
 }
 
+/// Runs `yomu` with `args`, parses stdout as JSON, requires the named array
+/// to be non-empty, and asserts that at least one entry satisfies `check`.
+/// Returns the parsed JSON so callers can run additional top-level asserts.
+fn run_json_array_check(
+    dir: &TempDir,
+    args: &[&str],
+    array_key: &str,
+    check: impl Fn(&serde_json::Value) -> bool,
+    check_msg: &str,
+) -> serde_json::Value {
+    let output = yomu_cmd()
+        .args(args)
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "yomu {args:?} failed: stdout={stdout}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+    let entries = parsed[array_key]
+        .as_array()
+        .unwrap_or_else(|| panic!("{array_key} must be an array: {stdout}"));
+    assert!(
+        !entries.is_empty(),
+        "{array_key} must be non-empty: {stdout}"
+    );
+    assert!(entries.iter().any(check), "{check_msg}: {stdout}");
+    parsed
+}
+
 // T-212: index_populates_injection_flags_for_all_chunks
 // Spec FR-214: After `yomu index`, every chunks row has non-NULL
 // injection_flags (matcher走行 over every chunk).
@@ -1570,46 +1606,17 @@ fn index_exclude_vendor_drops_vendor_source_kind() {
 #[test]
 fn search_json_emits_injection_check_and_per_chunk_flags() {
     let dir = setup_injection_e2e_project();
-    let output = yomu_cmd()
-        .args(["--json", "search", "add", "--no-embed"])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "--json search failed: stdout={stdout}, stderr={}",
-        String::from_utf8_lossy(&output.stderr)
+    let parsed = run_json_array_check(
+        &dir,
+        &["--json", "search", "add", "--no-embed"],
+        "results",
+        |r| r.get("injection_flags").is_some(),
+        "FR-319b: at least one result chunk must include injection_flags field \
+         (PR#2 populates every chunk)",
     );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-
-    // FR-319a: top-level injection_check = "ran" (mandatory, no skip_serializing_if).
     assert_eq!(
         parsed["injection_check"], "ran",
-        "FR-319a: response must include top-level injection_check='ran': {stdout}"
-    );
-
-    // FR-319b prerequisite: results[] must be non-empty so the per-chunk
-    // assertion exercises a real chunk.
-    let results = parsed["results"]
-        .as_array()
-        .unwrap_or_else(|| panic!("results must be an array: {stdout}"));
-    assert!(
-        !results.is_empty(),
-        "fixture must produce at least one matching chunk for query 'add': {stdout}"
-    );
-
-    // FR-319b: at least one result chunk SHALL include injection_flags
-    // (PR#2 populates every chunk with Some(...), so the field must surface
-    // through the JSON envelope).
-    let has_flags = results.iter().any(|r| r.get("injection_flags").is_some());
-    assert!(
-        has_flags,
-        "FR-319b: at least one result chunk must include injection_flags field \
-         (PR#2 populates every chunk): {stdout}"
+        "FR-319a: response must include top-level injection_check='ran': {parsed}"
     );
 }
 
@@ -1625,52 +1632,24 @@ fn search_json_emits_injection_check_and_per_chunk_flags() {
 #[test]
 fn brief_json_emits_injection_check_and_per_chunk_flags() {
     let dir = setup_injection_e2e_project();
-    let output = yomu_cmd()
-        .args([
+    let parsed = run_json_array_check(
+        &dir,
+        &[
             "--json",
             "brief",
             "task",
             "--seed-file",
             "src/lib.rs",
             "--no-embed",
-        ])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "--json brief failed: stdout={stdout}, stderr={}",
-        String::from_utf8_lossy(&output.stderr)
+        ],
+        "chunks",
+        |c| c.get("injection_flags").is_some(),
+        "FR-320b: at least one brief chunk must include injection_flags field \
+         (PR#2 populates every chunk)",
     );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-
-    // FR-320a: top-level injection_check = "ran" (mandatory).
     assert_eq!(
         parsed["injection_check"], "ran",
-        "FR-320a: response must include top-level injection_check='ran': {stdout}"
-    );
-
-    // FR-320b prerequisite: chunks[] must be non-empty (seed file always
-    // contributes).
-    let chunks = parsed["chunks"]
-        .as_array()
-        .unwrap_or_else(|| panic!("chunks must be an array: {stdout}"));
-    assert!(
-        !chunks.is_empty(),
-        "seed file must contribute at least one chunk: {stdout}"
-    );
-
-    // FR-320b: at least one chunk SHALL include injection_flags (PR#2
-    // populates every chunk; field surfaces when source is Some(...)).
-    let has_flags = chunks.iter().any(|c| c.get("injection_flags").is_some());
-    assert!(
-        has_flags,
-        "FR-320b: at least one brief chunk must include injection_flags field \
-         (PR#2 populates every chunk): {stdout}"
+        "FR-320a: response must include top-level injection_check='ran': {parsed}"
     );
 }
 
@@ -1685,39 +1664,17 @@ fn brief_json_emits_injection_check_and_per_chunk_flags() {
 #[test]
 fn search_json_emits_per_chunk_source_kind() {
     let dir = setup_injection_e2e_project();
-    let output = yomu_cmd()
-        .args(["--json", "search", "add", "--no-embed"])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "--json search failed: stdout={stdout}, stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-
-    let results = parsed["results"]
-        .as_array()
-        .unwrap_or_else(|| panic!("results must be an array: {stdout}"));
-    assert!(
-        !results.is_empty(),
-        "fixture must produce at least one matching chunk for query 'add': {stdout}"
-    );
-
-    let has_source_kind = results.iter().any(|r| {
-        r.get("source_kind")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s == "src")
-    });
-    assert!(
-        has_source_kind,
+    run_json_array_check(
+        &dir,
+        &["--json", "search", "add", "--no-embed"],
+        "results",
+        |r| {
+            r.get("source_kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s == "src")
+        },
         "FR-009a: at least one result chunk must carry source_kind='src' \
-         (default classification for non-vendor/non-test files): {stdout}"
+         (default classification for non-vendor/non-test files)",
     );
 }
 
@@ -1731,45 +1688,23 @@ fn search_json_emits_per_chunk_source_kind() {
 #[test]
 fn brief_json_emits_per_chunk_source_kind() {
     let dir = setup_injection_e2e_project();
-    let output = yomu_cmd()
-        .args([
+    run_json_array_check(
+        &dir,
+        &[
             "--json",
             "brief",
             "task",
             "--seed-file",
             "src/lib.rs",
             "--no-embed",
-        ])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "--json brief failed: stdout={stdout}, stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-
-    let chunks = parsed["chunks"]
-        .as_array()
-        .unwrap_or_else(|| panic!("chunks must be an array: {stdout}"));
-    assert!(
-        !chunks.is_empty(),
-        "seed file must contribute at least one chunk: {stdout}"
-    );
-
-    let has_source_kind = chunks.iter().any(|c| {
-        c.get("source_kind")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s == "src")
-    });
-    assert!(
-        has_source_kind,
-        "FR-009a: at least one brief chunk must carry source_kind='src': {stdout}"
+        ],
+        "chunks",
+        |c| {
+            c.get("source_kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s == "src")
+        },
+        "FR-009a: at least one brief chunk must carry source_kind='src'",
     );
 }
 
