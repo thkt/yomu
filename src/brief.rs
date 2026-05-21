@@ -114,6 +114,10 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
         .into_iter()
         .map(|c| {
             let depth = depth_by_path.get(&c.file_path).copied().unwrap_or_else(|| {
+                tracing::warn!(
+                    file_path = %c.file_path,
+                    "chunk file_path missing from depth_by_path; defaulting depth=0"
+                );
                 debug_assert!(
                     false,
                     "chunk file_path not in depth_by_path: {}",

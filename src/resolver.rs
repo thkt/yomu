@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::fs_optional;
+
 const PROBE_EXTENSIONS: &[&str] = &["tsx", "ts", "jsx", "js"];
 const SUPPORTED_EXTENSIONS: &[&str] = &["tsx", "ts", "jsx", "js", "css", "html"];
 const INDEX_FILES: &[&str] = &["index.tsx", "index.ts", "index.jsx", "index.js"];
@@ -60,7 +62,7 @@ impl Resolver {
     }
 
     pub fn new(root: &Path) -> Self {
-        let canonical_root = root.canonicalize().ok();
+        let canonical_root = fs_optional::canonicalize_optional(root);
         Self {
             root: root.to_path_buf(),
             canonical_root,

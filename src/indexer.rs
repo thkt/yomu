@@ -12,10 +12,10 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
 
 use rurico::embed::EmbedError;
 
+use crate::fs_optional;
 use crate::resolver::{Resolve, Resolver};
 use crate::rust_resolver::RustResolver;
 use crate::storage::{self, Db, RefKind, Reference, StorageError};
@@ -194,11 +194,7 @@ fn prepare_chunks(
         return None;
     }
 
-    let mtime_epoch = fs::metadata(file_path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    let mtime_epoch = fs_optional::read_mtime_epoch(file_path);
 
     let imports_text = file_chunks.imports.join("\n");
     let source_kind = Some(source_kind::classify(&checked.rel_path));

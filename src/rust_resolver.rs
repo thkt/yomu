@@ -1,6 +1,6 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fs_optional;
 use crate::resolver::{Resolve, strip_canonical_prefix};
 
 pub struct RustResolver {
@@ -127,7 +127,7 @@ impl RustResolver {
     }
 
     pub fn new(root: &Path) -> Self {
-        let canonical_root = root.canonicalize().ok();
+        let canonical_root = fs_optional::canonicalize_optional(root);
         let crate_name = read_crate_name(root);
         Self {
             root: root.to_path_buf(),
@@ -157,7 +157,7 @@ impl RustResolver {
 }
 
 fn read_crate_name(root: &Path) -> Option<String> {
-    let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let content = fs_optional::read_to_string_optional(&root.join("Cargo.toml"))?;
     let mut in_package = false;
     for line in content.lines() {
         let trimmed = line.trim();
