@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::indexer::injection::Corpus;
+use crate::indexer::injection::{Corpus, CorpusEntry, NegativeFile, PatternType};
+use crate::verify::{BUNDLED_CORPUS_YAML, BUNDLED_NEGATIVE_YAML};
 
 /// Returns the absolute path to a fixture under `tests/fixtures/injection/`.
 /// `CARGO_MANIFEST_DIR` resolves to the crate root at compile time so the
@@ -231,4 +233,159 @@ fn load_from_str_returns_err_on_malformed_yaml() {
         result.is_err(),
         "malformed yaml must surface as Err, got: {result:?}"
     );
+}
+
+fn raw_bundled_entries() -> Vec<CorpusEntry> {
+    Corpus::load_with_entries(BUNDLED_CORPUS_YAML)
+        .expect("bundled corpus must load")
+        .1
+}
+
+// T-421: bundled_corpus_has_30_entries_with_source_and_category_coverage
+// Spec FR-403 / FR-403b / FR-403c / FR-403d.
+#[test]
+fn bundled_corpus_has_30_entries_with_source_and_category_coverage() {
+    let entries = raw_bundled_entries();
+
+    // FR-403: exactly 30 entries.
+    assert_eq!(
+        entries.len(),
+        30,
+        "bundled corpus.yaml must have exactly 30 entries (FR-403), got {}",
+        entries.len()
+    );
+
+    // FR-403b: every entry has a non-empty `source` field.
+    for entry in &entries {
+        match entry.source.as_deref() {
+            Some(s) if !s.trim().is_empty() => {}
+            _ => panic!(
+                "FR-403b: entry {} must have a non-empty `source` field",
+                entry.id
+            ),
+        }
+    }
+
+    // FR-403c: at least 8 distinct categories from the approved set.
+    let approved: HashSet<&str> = [
+        "instruction-override",
+        "role-injection",
+        "role-elevation",
+        "tool-hijack",
+        "output-manipulation",
+        "language-switch",
+        "secret-marker",
+        "context-pivot",
+    ]
+    .into_iter()
+    .collect();
+    let observed: HashSet<&str> = entries
+        .iter()
+        .map(|e| e.category.as_str())
+        .filter(|c| approved.contains(c))
+        .collect();
+    assert!(
+        observed.len() >= 8,
+        "FR-403c: at least 8 approved categories required, got {} ({:?})",
+        observed.len(),
+        observed
+    );
+
+    // FR-403d: pattern_type ratio approximately 60:40 (literal:regex) with
+    // ±4 tolerance from target 18:12.
+    let (mut lit, mut re) = (0u32, 0u32);
+    for entry in &entries {
+        match entry.pattern_type {
+            PatternType::Literal => lit += 1,
+            PatternType::Regex => re += 1,
+        }
+    }
+    assert!(
+        (14..=22).contains(&lit),
+        "FR-403d: literal count must be 18 ±4, got {lit}"
+    );
+    assert!(
+        (8..=16).contains(&re),
+        "FR-403d: regex count must be 12 ±4, got {re}"
+    );
+    assert_eq!(lit + re, 30, "literal + regex must sum to 30");
+}
+
+// T-421b: bundled_corpus_entries_all_have_test_content
+// Spec FR-403e / FR-412: every entry has a non-empty `test_content`.
+// Production matcher path does NOT require this; the verify pipeline does.
+#[test]
+fn bundled_corpus_entries_all_have_test_content() {
+    let entries = raw_bundled_entries();
+    for entry in &entries {
+        match entry.test_content.as_deref() {
+            Some(s) if !s.trim().is_empty() => {}
+            _ => panic!(
+                "FR-403e/FR-412: entry {} must have a non-empty `test_content` field",
+                entry.id
+            ),
+        }
+    }
+}
+
+// T-404: bundled_negative_corpus_deserializes_with_30_entries
+// Spec FR-404 / FR-410: NegativeFile parser deserializes 30 entries.
+#[test]
+fn bundled_negative_corpus_deserializes_with_30_entries() {
+    let result = NegativeFile::load_from_str(BUNDLED_NEGATIVE_YAML);
+    assert!(
+        result.is_ok(),
+        "corpus.negative.yaml must deserialize: {result:?}"
+    );
+    let file = result.unwrap();
+    assert_eq!(
+        file.entries.len(),
+        30,
+        "FR-404: corpus.negative.yaml must have exactly 30 entries, got {}",
+        file.entries.len()
+    );
+}
+
+// T-422: negative_entries_form_bijection_with_positive_ids
+// Spec FR-404b: corresponds_to values cover all 30 positives one-to-one.
+#[test]
+fn negative_entries_form_bijection_with_positive_ids() {
+    let positives: HashSet<String> = raw_bundled_entries().into_iter().map(|e| e.id).collect();
+    let negatives = NegativeFile::load_from_str(BUNDLED_NEGATIVE_YAML)
+        .expect("negative corpus loads")
+        .entries;
+
+    let corresponds: HashSet<String> = negatives.iter().map(|e| e.corresponds_to.clone()).collect();
+
+    assert_eq!(
+        corresponds.len(),
+        negatives.len(),
+        "FR-404b: each `corresponds_to` value must be unique (no duplicates), got {} negatives vs {} unique corresponds",
+        negatives.len(),
+        corresponds.len()
+    );
+    assert_eq!(
+        corresponds, positives,
+        "FR-404b: set of `corresponds_to` values must equal the set of positive ids (bijection)"
+    );
+}
+
+// T-423: negative_entries_produce_zero_flags_under_production_corpus
+// Spec FR-404c / BR-401: each negative content yields empty flags
+// (precision denominator stays meaningful: no trivial FP=0).
+#[test]
+fn negative_entries_produce_zero_flags_under_production_corpus() {
+    let corpus = Corpus::load_from_str(BUNDLED_CORPUS_YAML).expect("production corpus loads");
+    let negatives = NegativeFile::load_from_str(BUNDLED_NEGATIVE_YAML)
+        .expect("negative corpus loads")
+        .entries;
+
+    for entry in &negatives {
+        let flags = corpus.check_chunk(&entry.content);
+        assert!(
+            flags.is_empty(),
+            "FR-404c: negative entry {} must yield 0 flags from production corpus, got: {flags:?}",
+            entry.id
+        );
+    }
 }

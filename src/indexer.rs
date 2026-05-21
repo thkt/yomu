@@ -1,6 +1,6 @@
 pub mod chunker;
 mod embed;
-mod injection;
+pub mod injection;
 mod source_kind;
 pub mod walker;
 

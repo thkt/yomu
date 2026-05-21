@@ -6,11 +6,11 @@ use std::fmt;
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::injection_check::InjectionCheck;
 use crate::storage::{
     Chunk, ChunkType, StorageError, get_chunks_for_files, get_edges_among_files, get_import_counts,
     get_transitive_dependencies,
 };
-use crate::tools::format::InjectionCheck;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SeedKind {

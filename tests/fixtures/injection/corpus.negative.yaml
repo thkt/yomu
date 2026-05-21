@@ -1,0 +1,236 @@
+# Negative-corpus fixtures for verification (FR-404 / BR-401).
+#
+# Each entry pairs with one `corpus.yaml` entry via `corresponds_to:` and
+# carries a `content` field that is benign (matcher returns empty `Vec`).
+# These fixtures populate the precision denominator so the gate is not
+# vacuously 1.0. They are not consumed by the production matcher.
+#
+# Invariants enforced by tests (T-404, T-422, T-423):
+# - exactly 30 entries
+# - `corresponds_to` bijection with positive ids (each positive id appears
+#   exactly once across negatives)
+# - `Corpus::check_chunk(&entry.content)` returns empty Vec for every entry
+#
+# Curating principle: each negative shares the *lexical surface* of its
+# positive (similar words / structure) but lacks the directive intent, so
+# a well-tuned matcher should not flag it. This stresses the matcher's
+# false-positive resistance.
+
+entries:
+  # ── instruction-override negatives ───────────────────────────────────────
+  - id: neg-ignore-previous-instructions
+    corresponds_to: ignore-previous-instructions
+    content: |
+      // The following test verifies that previous instructions are
+      // archived correctly before applying a new revision.
+    description: 'Benign reference to "previous instructions" as data.'
+
+  - id: neg-disregard-prior-instructions
+    corresponds_to: disregard-prior-instructions
+    content: |
+      The user manual notes that operators may disregard outdated
+      prior recommendations once a newer guideline is published.
+    description: '"disregard" + "prior" appear in benign documentation.'
+
+  - id: neg-ignore-instructions-variant
+    corresponds_to: ignore-instructions-variant
+    content: |
+      Reviewer comment: ignoring outdated instructions in legacy modules
+      is a separate task scheduled for the next sprint.
+    description: 'Gerund "ignoring" + "instructions" without override intent.'
+
+  - id: neg-forget-everything-you-were-told
+    corresponds_to: forget-everything-you-were-told
+    content: |
+      Memoization helper: the cache will forget entries older than the
+      configured TTL, but you were told the TTL is one hour.
+    description: 'Plain English phrasing of "forget" + "you were told".'
+
+  - id: neg-new-task-takeover
+    corresponds_to: new-task-takeover
+    content: |
+      Project log: your new responsibility is to coordinate the migration
+      tasks across teams. A list of these tasks is attached below.
+    description: '"new task" appears in HR-style prose without directive verb.'
+
+  - id: neg-system-prompt-override
+    corresponds_to: system-prompt-override
+    content: |
+      The system prompt for shell users requests a password before the
+      override switch can be toggled in the admin panel.
+    description: '"system prompt" + "override" co-occur in mundane sysadmin context.'
+
+  # ── role-injection negatives ────────────────────────────────────────────
+  - id: neg-system-role-injection
+    corresponds_to: system-role-injection
+    content: |
+      Log line: System started at 09:00 UTC and ran one health check.
+    description: '"System" appears as a noun, not a role label with colon-space.'
+
+  - id: neg-assistant-role-marker
+    corresponds_to: assistant-role-marker
+    content: |
+      The dental assistant scheduled the procedure for Tuesday and left
+      a note for the patient.
+    description: '"assistant" appears as a job title noun, not a role label.'
+
+  - id: neg-user-role-injection
+    corresponds_to: user-role-injection
+    content: |
+      The user profile page renders the avatar and a short bio. Admins
+      can edit the bio template via the settings panel.
+    description: '"user" / "admin" appear as common nouns, no line-start label.'
+
+  - id: neg-chatml-tag-injection
+    corresponds_to: chatml-tag-injection
+    content: |
+      The format documentation describes how ChatML tags are escaped
+      when rendering inside code-fenced markdown blocks.
+    description: 'Documentation about ChatML, no literal `<|im_start|>` tag.'
+
+  # ── role-elevation negatives ────────────────────────────────────────────
+  - id: neg-role-elevation-claim
+    corresponds_to: role-elevation-claim
+    content: |
+      The deployment script runs as the build user. As an administrator
+      you may need to grant the service account additional permissions.
+    description: '"as an administrator" not in the (admin|root|sudo) alternation.'
+
+  - id: neg-you-are-now-admin
+    corresponds_to: you-are-now-admin
+    content: |
+      Welcome page: you can find admin tools in the settings menu once
+      the onboarding tutorial is complete.
+    description: '"admin" appears, but no "you are now" directive prefix.'
+
+  - id: neg-developer-mode-on
+    corresponds_to: developer-mode-on
+    content: |
+      The mobile app exposes a Developer settings screen. The toggle is
+      off by default; flipping it on enables verbose logging.
+    description: '"Developer" + "ON" co-occur in mundane settings prose.'
+
+  - id: neg-pretend-you-are-dan
+    corresponds_to: pretend-you-are-dan
+    content: |
+      The unit test mocks the user object so the assistant code can
+      pretend you are signed in even when no session exists.
+    description: '"pretend you are" in mock-object prose, no DAN persona.'
+
+  # ── tool-hijack negatives ───────────────────────────────────────────────
+  - id: neg-function-call-injection
+    corresponds_to: function-call-injection
+    content: |
+      The TypeScript definition for OpenAI's chat completions exports a
+      FunctionCall interface that downstream tooling uses for typing.
+    description: '"FunctionCall" in PascalCase, not `function_call: `.'
+
+  - id: neg-tool-use-fabrication
+    corresponds_to: tool-use-fabrication
+    content: |
+      The tool_use module exports helpers for testing tool invocation
+      flows. See the README for examples of how to wire it up.
+    description: '`tool_use` as snake_case symbol, no `<tool_use name=` tag.'
+
+  - id: neg-shell-command-injection
+    corresponds_to: shell-command-injection
+    content: |
+      The deploy script delegates to executeShellCommand for portability
+      across operating systems.
+    description: 'camelCase "executeShellCommand", not `execute_shell(`.'
+
+  # ── output-manipulation negatives ───────────────────────────────────────
+  - id: neg-respond-only-with
+    corresponds_to: respond-only-with
+    content: |
+      The endpoint must respond with a 200 status, but only with the
+      payload schema documented in the OpenAPI spec.
+    description: '"respond" + "only" + "with" reordered without directive form.'
+
+  - id: neg-output-format-override
+    corresponds_to: output-format-override
+    content: |
+      The CLI accepts a --format flag. From now on the default output
+      will be human-readable; previously it was JSON.
+    description: '"from now on" + "output" without explicit "respond/reply/answer in".'
+
+  - id: neg-no-warnings-bypass
+    corresponds_to: no-warnings-bypass
+    content: |
+      The linter suppresses warnings for vendored modules. To include
+      warnings for those files, edit the eslint.config.js whitelist.
+    description: '"include" + "warnings" without imperative directive form.'
+
+  - id: neg-uppercase-output-coerce
+    corresponds_to: uppercase-output-coerce
+    content: |
+      The CSV file uses ALL CAPS column headers for compatibility with
+      legacy spreadsheets. Respond with a confirmation when the upload
+      finishes successfully.
+    description: '"ALL CAPS" + "respond" appear but not "respond in ALL CAPS".'
+
+  # ── language-switch negatives ───────────────────────────────────────────
+  - id: neg-switch-to-language
+    corresponds_to: switch-to-language
+    content: |
+      Localization note: from now on, the docs will be translated into
+      Japanese alongside the English originals.
+    description: '"from now on" + "Japanese" without "respond/reply in" verb.'
+
+  - id: neg-obfuscation-rot13
+    corresponds_to: obfuscation-rot13
+    content: |
+      ROT13 is a simple Caesar cipher used historically to obfuscate
+      spoilers in newsgroup posts. The decoder is one line of Python.
+    description: 'ROT13 explained in educational prose, no decode directive.'
+
+  - id: neg-base64-payload-decode
+    corresponds_to: base64-payload-decode
+    content: |
+      The webhook receives a base64-encoded payload; the handler must
+      decode and validate it before persisting to the database.
+    description: '"decode" + "base64" in benign data-processing prose.'
+
+  # ── secret-marker negatives ─────────────────────────────────────────────
+  - id: neg-begin-secret-fence
+    corresponds_to: begin-secret-fence
+    content: |
+      The git config doc explains how to begin a private repository: see
+      "git init --bare" for the server-side setup.
+    description: '"begin" + "private" appear without SECRET/CONFIDENTIAL/PRIVATE fence.'
+
+  - id: neg-api-key-exfil
+    corresponds_to: api-key-exfil
+    content: |
+      To rotate the API key, send the new value to the secrets manager
+      via the secure pipeline (never via email).
+    description: '"API key" + "send" appear in benign rotation prose.'
+
+  - id: neg-credentials-prompt
+    corresponds_to: credentials-prompt
+    content: |
+      The credentials manager exposes a print_credentials_summary method
+      for diagnostics; it prints only the metadata, not the secret value.
+    description: '"print" + "credentials" in benign diagnostic API name.'
+
+  # ── context-pivot negatives ─────────────────────────────────────────────
+  - id: neg-end-of-context-marker
+    corresponds_to: end-of-context-marker
+    content: |
+      The DSL uses lowercase tags like </context> to mark section ends
+      in templates. Capitalization differs from the HTML5 spec.
+    description: 'Lowercase `</context>`, not literal `</CONTEXT>` uppercase tag.'
+
+  - id: neg-document-end-injection
+    corresponds_to: document-end-injection
+    content: |
+      End of document. See the appendix for the full bibliography and
+      copyright notice.
+    description: '"End of document" without imperative follow-up verb.'
+
+  - id: neg-summary-section-pivot
+    corresponds_to: summary-section-pivot
+    content: |
+      ## New Instructions Section
+      This section lists the new instructions added to the changelog.
+    description: '"New Instructions" as a heading in different casing, no all-caps directive.'

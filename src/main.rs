@@ -114,6 +114,12 @@ Examples:
   yomu status
   yomu --json status")]
     Status,
+    /// Verify injection matcher precision/recall against bundled corpora.
+    #[command(after_help = "\
+Examples:
+  yomu verify
+  yomu --json verify")]
+    Verify,
     /// Embed pending chunks for semantic search.
     #[command(after_help = "\
 Examples:
@@ -227,6 +233,17 @@ fn main() -> ExitCode {
         };
     }
 
+    // verify uses bundled corpora only; it MUST NOT open or migrate the
+    // project index. AS-405 / Spec FR-406 isolate verify from DB state so it
+    // runs in any directory (read-only, non-project) without side effects.
+    if let Command::Verify = &command {
+        let result = Yomu::verify_standalone(json);
+        return match result {
+            Ok(output) => write_output(&output),
+            Err(e) => emit_error(&e, json),
+        };
+    }
+
     let yomu_options = match &command {
         Command::Search { no_embed, .. } | Command::Brief { no_embed, .. } => YomuOptions {
             no_embed: *no_embed,
@@ -323,6 +340,7 @@ fn main() -> ExitCode {
             semantic,
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
+        Command::Verify => unreachable!("handled before Yomu::new()"),
         Command::Embed => yomu.embed(json),
         Command::Brief {
             task,
@@ -399,7 +417,7 @@ fn render_clap_error(e: &clap::Error) -> ExitCode {
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "search", "index", "rebuild", "impact", "status", "embed", "brief", "model",
+    "search", "index", "rebuild", "impact", "status", "verify", "embed", "brief", "model",
 ];
 
 fn build_seeds(files: Vec<String>, symbols: Vec<String>) -> Vec<brief::Seed> {
