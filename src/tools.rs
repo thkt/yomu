@@ -1,5 +1,5 @@
 mod embedder;
-pub(crate) mod format;
+mod format;
 mod reranker;
 
 use std::collections::{HashMap, HashSet};
@@ -701,6 +701,53 @@ impl Yomu {
             format_impact_all(target, &dependents, &semantic_related)
         };
 
+        Ok(text)
+    }
+
+    /// FR-406 / AS-405: runs verification on the bundled corpus + negative
+    /// corpus. No DB access — associated function (not `&self`) so `main.rs`
+    /// can dispatch before `Yomu::new`, keeping `yomu verify` runnable in any
+    /// directory without opening or migrating the index.
+    pub fn verify_standalone(json: bool) -> Result<String, YomuError> {
+        use std::fmt::Write;
+
+        use crate::indexer::injection::{Corpus, NegativeFile};
+        use crate::verify::{
+            BUNDLED_CORPUS_YAML, BUNDLED_NEGATIVE_YAML, measure, negatives_from_entries,
+            positives_from_entries,
+        };
+
+        let (corpus, entries) = Corpus::load_with_entries(BUNDLED_CORPUS_YAML)
+            .map_err(|e| YomuError::Internal(format!("corpus load: {e}")))?;
+        let negatives_file = NegativeFile::load_from_str(BUNDLED_NEGATIVE_YAML)
+            .map_err(|e| YomuError::Internal(format!("negative corpus load: {e}")))?;
+
+        let positives = positives_from_entries(&entries).map_err(YomuError::Internal)?;
+        let negatives = negatives_from_entries(&negatives_file.entries);
+
+        let report = measure(&corpus, &positives, &negatives);
+
+        if json {
+            return serde_json::to_string(&report)
+                .map_err(|e| YomuError::Internal(format!("verify json: {e}")));
+        }
+
+        let mut text = format!(
+            "Verification: precision={:.4} recall={:.4} (tp={} fp={} fn={})\n",
+            report.precision, report.recall, report.tp, report.fp, report.fn_count
+        );
+        if report.degraded {
+            text.push_str("WARNING: degraded=true — one denominator was zero.\n");
+        }
+        text.push_str("\nid\tkind\tmatched\texpected\tactual\n");
+        for d in &report.details {
+            writeln!(
+                text,
+                "{}\t{:?}\t{}\t{:?}\t{:?}",
+                d.id, d.kind, d.matched, d.expected_flags, d.actual_flags
+            )
+            .expect("writing to String never fails");
+        }
         Ok(text)
     }
 

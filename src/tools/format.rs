@@ -251,32 +251,7 @@ pub(super) fn format_results_grouped(
     output
 }
 
-/// ADR-0069 BR-303 sentinel: 3-variant closed set for response-level
-/// matcher state. `Ran` is the only variant emitted in PR#3; `Skipped` and
-/// `Unavailable` are reserved for PR#4+ (matcher disable, corpus init
-/// failure). `#[allow(dead_code)]` documents the reserved-for-future intent.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum InjectionCheck {
-    Ran,
-    Skipped,
-    Unavailable,
-}
-
-impl InjectionCheck {
-    /// Closed-set guard for ADR-0069 BR-303: adding a variant without
-    /// updating this match breaks compile. Mirrors `ChunkType::as_str` /
-    /// `RefKind::as_str` idiom.
-    #[allow(dead_code)]
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Ran => "ran",
-            Self::Skipped => "skipped",
-            Self::Unavailable => "unavailable",
-        }
-    }
-}
+use crate::injection_check::InjectionCheck;
 
 #[derive(Serialize)]
 struct JsonChunk<'a> {

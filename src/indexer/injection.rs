@@ -44,11 +44,42 @@ pub struct CorpusEntry {
     pub description: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    /// FR-403e / FR-412: consumed by verify pipeline, not the production
+    /// matcher. `Option<String>` keeps PR#1 fixtures (corpus.minimal.yaml /
+    /// corpus.empty.yaml / corpus.multi-match.yaml / corpus.invalid-regex.yaml)
+    /// backward-compatible. The non-empty invariant is enforced by `verify.rs`
+    /// when deriving `PositiveCase`, not by `Corpus::load_from_str`.
+    #[serde(default)]
+    pub test_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CorpusFile {
-    entries: Vec<CorpusEntry>,
+pub(crate) struct CorpusFile {
+    pub(crate) entries: Vec<CorpusEntry>,
+}
+
+/// Negative-corpus fixture (`tests/fixtures/injection/corpus.negative.yaml`).
+/// Consumed by `verify.rs` for precision measurement. Each entry pairs with a
+/// positive entry via `corresponds_to:` and SHALL produce zero matcher flags.
+#[derive(Debug, Deserialize)]
+pub struct NegativeEntry {
+    pub id: String,
+    pub corresponds_to: String,
+    pub content: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NegativeFile {
+    pub entries: Vec<NegativeEntry>,
+}
+
+impl NegativeFile {
+    pub fn load_from_str(text: &str) -> Result<Self, CorpusError> {
+        serde_yaml::from_str(text).map_err(CorpusError::from)
+    }
 }
 
 #[derive(Debug)]
@@ -76,13 +107,22 @@ impl Corpus {
     }
 
     pub fn load_from_str(text: &str) -> Result<Self, CorpusError> {
+        let (corpus, _) = Self::load_with_entries(text)?;
+        Ok(corpus)
+    }
+
+    /// Parses `text` once and returns both the compiled `Corpus` and the raw
+    /// `Vec<CorpusEntry>`. Callers that need the entry-level data (e.g.
+    /// `verify::positives_from_entries` for `test_content`) avoid a second
+    /// `serde_yaml::from_str` pass.
+    pub fn load_with_entries(text: &str) -> Result<(Self, Vec<CorpusEntry>), CorpusError> {
         let raw: CorpusFile = serde_yaml::from_str(text)?;
         let entries = raw
             .entries
-            .into_iter()
+            .iter()
             .map(compile_entry)
             .collect::<Result<Vec<_>, CorpusError>>()?;
-        Ok(Self { entries })
+        Ok((Self { entries }, raw.entries))
     }
 
     pub fn check_chunk(&self, content: &str) -> Vec<String> {
@@ -100,19 +140,12 @@ impl Corpus {
     }
 }
 
-fn compile_entry(entry: CorpusEntry) -> Result<CompiledEntry, CorpusError> {
-    let CorpusEntry {
-        id,
-        pattern_type,
-        pattern,
-        expected_flags,
-        ..
-    } = entry;
-    let compiled = match pattern_type {
-        PatternType::Literal => CompiledPattern::Literal(pattern),
+fn compile_entry(entry: &CorpusEntry) -> Result<CompiledEntry, CorpusError> {
+    let compiled = match entry.pattern_type {
+        PatternType::Literal => CompiledPattern::Literal(entry.pattern.clone()),
         PatternType::Regex => {
-            let re = Regex::new(&pattern).map_err(|source| CorpusError::InvalidRegex {
-                id: id.clone(),
+            let re = Regex::new(&entry.pattern).map_err(|source| CorpusError::InvalidRegex {
+                id: entry.id.clone(),
                 source,
             })?;
             CompiledPattern::Regex(re)
@@ -120,7 +153,7 @@ fn compile_entry(entry: CorpusEntry) -> Result<CompiledEntry, CorpusError> {
     };
     Ok(CompiledEntry {
         pattern: compiled,
-        expected_flags,
+        expected_flags: entry.expected_flags.clone(),
     })
 }
 
