@@ -135,9 +135,8 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
         .collect()
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn under_cap(chunks: &[BriefChunk], max_chunks: u32, max_bytes: u32) -> bool {
-    let count = chunks.len() as u32;
+    let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
     let bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
     let bytes_capped = u32::try_from(bytes).unwrap_or(u32::MAX);
     count <= max_chunks && bytes_capped <= max_bytes
@@ -153,7 +152,6 @@ fn deletion_priority(
     (depth, incoming)
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn select_drops(
     chunks: &[BriefChunk],
     depth_by_path: &HashMap<String, u32>,
@@ -172,10 +170,11 @@ fn select_drops(
     order.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
 
     let mut drop_idx: HashSet<usize> = HashSet::new();
-    let mut count = chunks.len() as u32;
+    let mut count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
     let mut bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
     for (idx, _, _) in order {
-        if count <= max_chunks && bytes as u32 <= max_bytes {
+        let bytes_capped = u32::try_from(bytes).unwrap_or(u32::MAX);
+        if count <= max_chunks && bytes_capped <= max_bytes {
             break;
         }
         drop_idx.insert(idx);
@@ -364,7 +363,6 @@ pub fn render_plain(output: &BriefOutput) -> String {
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, StorageError> {
     let seeds = collect_seed_paths(task);
     if seeds.is_empty() {
@@ -403,8 +401,9 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let edges = get_edges_among_files(conn, &capped_paths)?;
     let ordered = topo_sort(capped, &edges);
 
-    let total_chunks = ordered.len() as u32;
-    let total_bytes: u32 = ordered.iter().map(|c| c.content.len() as u32).sum();
+    let total_chunks = u32::try_from(ordered.len()).unwrap_or(u32::MAX);
+    let total_bytes_usize: usize = ordered.iter().map(|c| c.content.len()).sum();
+    let total_bytes = u32::try_from(total_bytes_usize).unwrap_or(u32::MAX);
 
     Ok(BriefOutput {
         chunks: ordered,
