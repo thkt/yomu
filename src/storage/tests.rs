@@ -4151,6 +4151,70 @@ fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_10() {
     assert_eq!(version, "10");
 }
 
+// T-009: opening_v8_store_drops_stale_file_references
+// F-005 follow-up to ADR-0069 PR#4: pre-existing v9/v10 migration blocks drop
+// chunks but leave `file_references` populated, so post-migration
+// `impact`/`status` queries can surface references to files whose chunks no
+// longer exist (and which may have been deleted on disk before the reindex
+// runs). The migration must also wipe `file_references` so the next index
+// repopulates it deterministically per surviving file.
+#[test]
+fn opening_v8_store_drops_stale_file_references() {
+    const V8_DDL_WITH_REFS: &str = "
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            chunk_type TEXT NOT NULL,
+            name TEXT,
+            content TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            file_hash TEXT NOT NULL,
+            parent_chunk_id INTEGER REFERENCES chunks(id)
+        );
+        CREATE TABLE index_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE file_references (
+            id INTEGER PRIMARY KEY,
+            source_file TEXT NOT NULL,
+            target_file TEXT NOT NULL,
+            symbol_name TEXT,
+            ref_kind TEXT NOT NULL
+        );
+    ";
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("v8_refs.db");
+
+    {
+        let raw = Connection::open(&db_path).unwrap();
+        raw.execute_batch(V8_DDL_WITH_REFS).unwrap();
+        raw.execute(
+            "INSERT INTO file_references (source_file, target_file, symbol_name, ref_kind) \
+             VALUES ('src/deleted.ts', 'src/other.ts', 'Other', 'named')",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO index_meta (key, value) VALUES ('schema_version', '8')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let conn = open_db(&db_path).unwrap();
+
+    let refs_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM file_references", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        refs_count, 0,
+        "F-005: v8 → v10 migration must wipe file_references so stale rows do not survive the reindex boundary"
+    );
+}
+
 // ── PR#3 Phase 2: schema v10 bump (FR-307a, FR-307b, FR-307c) ──
 
 // T-307: opening_v9_store_drops_chunks_and_bumps_schema_version_to_10

@@ -255,6 +255,12 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
              DROP TABLE IF EXISTS fts_chunks_vocab; \
              DROP TABLE IF EXISTS fts_chunks;",
         )?;
+        // file_references rows reference chunks-side file_paths; wiping
+        // chunks invalidates them. Leaving the table populated would leak
+        // stale references across the reindex boundary into `impact` and
+        // `status` queries (F-005). The next `yomu index` rebuilds entries
+        // per surviving file via replace_file_references.
+        conn.execute_batch("DELETE FROM file_references")?;
         conn.execute_batch(DDL)?;
         conn.execute_batch(&ddl_vec_chunks())?;
         conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
@@ -277,6 +283,9 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
              DROP TABLE IF EXISTS fts_chunks_vocab; \
              DROP TABLE IF EXISTS fts_chunks;",
         )?;
+        // Mirror v9 file_references wipe: dropping chunks invalidates the
+        // references; the next reindex repopulates per surviving file (F-005).
+        conn.execute_batch("DELETE FROM file_references")?;
         conn.execute_batch(DDL)?;
         conn.execute_batch(&ddl_vec_chunks())?;
         conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
