@@ -1674,6 +1674,105 @@ fn brief_json_emits_injection_check_and_per_chunk_flags() {
     );
 }
 
+// T-576: search_json_emits_per_chunk_source_kind
+// Spec FR-009a (per-chunk `source_kind` carried from chunks table to JSON
+// envelope). Perspective: State + Equivalence (one representative result
+// classified as "src" since the fixture is non-vendor / non-test).
+//
+// Given a project indexed with default config, `yomu --json search "add"`
+// SHALL emit a JSON object whose `results[]` entries each carry
+// `source_kind="src"` (the walker classifies fixture files under `src/`).
+#[test]
+fn search_json_emits_per_chunk_source_kind() {
+    let dir = setup_injection_e2e_project();
+    let output = yomu_cmd()
+        .args(["--json", "search", "add", "--no-embed"])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json search failed: stdout={stdout}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+
+    let results = parsed["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("results must be an array: {stdout}"));
+    assert!(
+        !results.is_empty(),
+        "fixture must produce at least one matching chunk for query 'add': {stdout}"
+    );
+
+    let has_source_kind = results.iter().any(|r| {
+        r.get("source_kind")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s == "src")
+    });
+    assert!(
+        has_source_kind,
+        "FR-009a: at least one result chunk must carry source_kind='src' \
+         (default classification for non-vendor/non-test files): {stdout}"
+    );
+}
+
+// T-577: brief_json_emits_per_chunk_source_kind
+// Spec FR-009a (per-chunk `source_kind` carried from chunks table to JSON
+// envelope). Perspective: State + Equivalence (seed-file chunk path).
+//
+// Given a project indexed with default config, `yomu --json brief "task"
+// --seed-file src/lib.rs` SHALL emit `chunks[]` entries each carrying
+// `source_kind="src"` (the walker classifies the seed file under `src/`).
+#[test]
+fn brief_json_emits_per_chunk_source_kind() {
+    let dir = setup_injection_e2e_project();
+    let output = yomu_cmd()
+        .args([
+            "--json",
+            "brief",
+            "task",
+            "--seed-file",
+            "src/lib.rs",
+            "--no-embed",
+        ])
+        .current_dir(dir.path())
+        .env_remove("YOMU_EMBED")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "--json brief failed: stdout={stdout}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
+
+    let chunks = parsed["chunks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("chunks must be an array: {stdout}"));
+    assert!(
+        !chunks.is_empty(),
+        "seed file must contribute at least one chunk: {stdout}"
+    );
+
+    let has_source_kind = chunks.iter().any(|c| {
+        c.get("source_kind")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s == "src")
+    });
+    assert!(
+        has_source_kind,
+        "FR-009a: at least one brief chunk must carry source_kind='src': {stdout}"
+    );
+}
+
 // ── verify subcommand (T-402, T-403) ────────────────────────────────
 
 // T-402: yomu --json verify emits structured precision/recall report

@@ -264,6 +264,8 @@ struct JsonChunk<'a> {
     content: &'a str,
     parent_chunk_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    source_kind: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     injection_flags: Option<Vec<&'a str>>,
 }
 
@@ -291,6 +293,7 @@ pub(super) fn format_results_json(
             score: r.score,
             content: &r.chunk.content,
             parent_chunk_id: r.chunk.parent_chunk_id,
+            source_kind: r.chunk.source_kind.as_deref(),
             injection_flags: r
                 .chunk
                 .injection_flags
@@ -567,7 +570,23 @@ mod tests {
             score: 0.5,
             content: "fn foo() {}",
             parent_chunk_id: None,
+            source_kind: None,
             injection_flags,
+        }
+    }
+
+    fn sample_chunk_with_source_kind<'a>(source_kind: Option<&'a str>) -> JsonChunk<'a> {
+        JsonChunk {
+            file: "src/foo.rs",
+            name: "foo",
+            r#type: "rust_fn",
+            start_line: 1,
+            end_line: 3,
+            score: 0.5,
+            content: "fn foo() {}",
+            parent_chunk_id: None,
+            source_kind,
+            injection_flags: None,
         }
     }
 
@@ -657,6 +676,47 @@ mod tests {
         assert_eq!(
             parsed["results"][0]["injection_flags"][0], "x",
             "FR-310b: per-chunk injection_flags must be borrowed from SearchResult.chunk, got: {parsed}"
+        );
+    }
+
+    // T-372: json_chunk_skips_source_kind_when_none
+    #[test]
+    fn json_chunk_skips_source_kind_when_none() {
+        let chunk = sample_chunk_with_source_kind(None);
+        let serialized = serde_json::to_string(&chunk).unwrap();
+        assert!(
+            !serialized.contains("source_kind"),
+            "JsonChunk with source_kind=None must omit the field via skip_serializing_if, got: {serialized}"
+        );
+    }
+
+    // T-373: format_results_json_emits_per_chunk_source_kind
+    #[test]
+    fn format_results_json_emits_per_chunk_source_kind() {
+        let results = vec![storage::SearchResult {
+            chunk: storage::Chunk {
+                file_path: "src/foo.rs".to_owned(),
+                chunk_type: storage::ChunkType::RustFn,
+                name: Some("foo".to_owned()),
+                content: "fn foo() {}".to_owned(),
+                start_line: 1,
+                end_line: 3,
+                parent_chunk_id: None,
+                source_kind: Some("src".to_owned()),
+                injection_flags: None,
+            },
+            chunk_id: Some(1),
+            distance: 0.1,
+            match_source: storage::MatchSource::Fts,
+            score: 0.9,
+        }];
+
+        let json = format_results_json(&results, false, vec![]);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            parsed["results"][0]["source_kind"], "src",
+            "FR-009a: per-chunk source_kind must be borrowed from SearchResult.chunk, got: {parsed}"
         );
     }
 

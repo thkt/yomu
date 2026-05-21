@@ -82,6 +82,7 @@ fn make_brief_chunk(file_path: &str, content: &str) -> BriefChunk {
         chunk_type: ChunkType::RustFn,
         content: content.to_owned(),
         included_reason: ChunkInclusionReason::Forward(1),
+        source_kind: None,
         injection_flags: None,
     }
 }
@@ -137,6 +138,7 @@ fn render_json_emits_spec_shape() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Forward(2),
+            source_kind: None,
             injection_flags: None,
         }],
         degraded: true,
@@ -165,6 +167,7 @@ fn render_json_includes_seed_and_modkinds() {
         chunk_type: ChunkType::Other,
         content: "".to_owned(),
         included_reason: reason,
+        source_kind: None,
         injection_flags: None,
     };
     let output = BriefOutput {
@@ -193,6 +196,7 @@ fn render_plain_outputs_separator_and_header() {
         chunk_type: ChunkType::RustFn,
         content: content.to_owned(),
         included_reason: ChunkInclusionReason::Seed,
+        source_kind: None,
         injection_flags: None,
     };
     let output = BriefOutput {
@@ -235,6 +239,7 @@ fn render_plain_prepends_degraded_note() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Seed,
+            source_kind: None,
             injection_flags: None,
         }],
         degraded: true,
@@ -379,6 +384,7 @@ fn render_json_emits_per_chunk_injection_flags() {
             chunk_type: ChunkType::RustFn,
             content: "fn foo() {}".to_owned(),
             included_reason: ChunkInclusionReason::Seed,
+            source_kind: None,
             injection_flags: Some(vec!["y".to_owned()]),
         }],
         degraded: false,
@@ -400,6 +406,60 @@ fn render_json_emits_per_chunk_injection_flags() {
             .len(),
         1,
         "per-chunk injection_flags must contain exactly the supplied entries, got: {parsed}"
+    );
+}
+
+// T-390: render_json_emits_per_chunk_source_kind
+#[test]
+fn render_json_emits_per_chunk_source_kind() {
+    let output = BriefOutput {
+        chunks: vec![BriefChunk {
+            file_path: "src/foo.rs".to_owned(),
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::RustFn,
+            content: "fn foo() {}".to_owned(),
+            included_reason: ChunkInclusionReason::Seed,
+            source_kind: Some("src".to_owned()),
+            injection_flags: None,
+        }],
+        degraded: false,
+        total_chunks: 1,
+        total_bytes: 11,
+    };
+
+    let rendered = render_json(&output);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        parsed["chunks"][0]["source_kind"], "src",
+        "FR-009a: BriefChunk.source_kind must propagate to JsonChunk, got: {parsed}"
+    );
+}
+
+// T-395: render_json_skips_source_kind_when_none
+#[test]
+fn render_json_skips_source_kind_when_none() {
+    let output = BriefOutput {
+        chunks: vec![BriefChunk {
+            file_path: "src/foo.rs".to_owned(),
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::RustFn,
+            content: "fn foo() {}".to_owned(),
+            included_reason: ChunkInclusionReason::Seed,
+            source_kind: None,
+            injection_flags: None,
+        }],
+        degraded: false,
+        total_chunks: 1,
+        total_bytes: 11,
+    };
+
+    let rendered = render_json(&output);
+    assert!(
+        !rendered.contains("source_kind"),
+        "JsonChunk with source_kind=None must omit the field via skip_serializing_if, got: {rendered}"
     );
 }
 
