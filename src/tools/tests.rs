@@ -2723,6 +2723,28 @@ fn yomu_brief_rejects_empty_task() {
     );
 }
 
+// T-703: yomu_brief_rejects_symbol_seed [Issue #138 COV-004]
+// FR-010b: --seed-symbol is not yet implemented, so a TaskBrief carrying any
+// Symbol-kind seed must be rejected with SeedSymbolUnimplemented before any
+// closure expansion runs.
+#[test]
+fn yomu_brief_rejects_symbol_seed() {
+    let (yomu, _dir) = test_yomu();
+    let mut task = brief_task("src/a.rs");
+    task.seeds = vec![brief::Seed {
+        kind: brief::SeedKind::Symbol,
+        value: "Foo".to_owned(),
+    }];
+    let err = yomu.brief(&task, false).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            YomuError::InvalidInput(InvalidInputKind::SeedSymbolUnimplemented)
+        ),
+        "Symbol seed must be rejected with SeedSymbolUnimplemented, got: {err:?}"
+    );
+}
+
 // --- CliError / ErrorCode mapping (ADR-0066 Group 2) ---
 
 fn io_err() -> io::Error {
