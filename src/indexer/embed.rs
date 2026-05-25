@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
 
@@ -86,8 +87,17 @@ fn run_embed_batch(
     file_path: &str,
 ) -> Result<Vec<ChunkedEmbedding>, EmbedFailure> {
     let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-    match embedder.embed_documents_batch(&texts_ref) {
+    let started = Instant::now();
+    let result = embedder.embed_documents_batch(&texts_ref);
+    let elapsed_ms = started.elapsed().as_millis();
+    match result {
         Ok(embs) => {
+            tracing::debug!(
+                file = %file_path,
+                batch_size = texts.len(),
+                elapsed_ms,
+                "embed batch"
+            );
             *consecutive_errors = 0;
             validate_chunked_embeddings(embs).map_err(|()| EmbedFailure::Contract)
         }
@@ -212,6 +222,7 @@ pub fn run_incremental_embed_with_progress(
     type_hints: Option<&[storage::ChunkType]>,
     mut on_progress: impl FnMut(u32),
 ) -> Result<EmbedResult, IndexError> {
+    let started = Instant::now();
     let ordered_files = {
         let conn_guard = conn.lock().unwrap();
         order_files_for_embedding(&conn_guard, type_hints)?
@@ -256,9 +267,13 @@ pub fn run_incremental_embed_with_progress(
         }
     }
 
+    let elapsed_ms = started.elapsed().as_millis();
+    let chunks_per_sec = chunks_per_sec(chunks_embedded, elapsed_ms);
     tracing::info!(
         chunks_embedded,
         files_completed,
+        elapsed_ms,
+        chunks_per_sec,
         "Incremental embedding complete"
     );
 
@@ -266,6 +281,15 @@ pub fn run_incremental_embed_with_progress(
         chunks_embedded,
         files_completed,
     })
+}
+
+/// `chunks_embedded / elapsed_seconds`, truncated to an integer.
+/// Returns `0` when `elapsed_ms == 0` (sub-millisecond runs from empty / mock paths).
+fn chunks_per_sec(chunks_embedded: u32, elapsed_ms: u128) -> u128 {
+    u128::from(chunks_embedded)
+        .saturating_mul(1000)
+        .checked_div(elapsed_ms)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
