@@ -413,7 +413,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let ordered = topo_sort(capped, &edges);
 
     // topo_sort only reorders chunks, so the cap's surviving byte count holds.
-    let total_chunks = u32::try_from(ordered.len()).unwrap_or(u32::MAX);
+    let total_chunks = to_u32_saturating(ordered.len());
     let total_bytes = to_u32_saturating(capped_bytes);
 
     Ok(BriefOutput {
