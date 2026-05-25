@@ -113,7 +113,8 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     .into_iter()
     .collect();
 
-    let kept = apply_cap(chunks, &depth_by_path, &incoming_counts, 2, u32::MAX);
+    // Count cap (2) drives the drop; byte budget is unbounded (4 bytes total).
+    let (kept, _remaining) = apply_cap(chunks, &depth_by_path, &incoming_counts, 2, u32::MAX, 4);
 
     assert_eq!(kept.len(), 2);
     let kept_paths: Vec<&str> = kept.iter().map(|c| c.file_path.as_str()).collect();
@@ -124,6 +125,50 @@ fn apply_cap_drops_high_depth_low_incoming_first() {
     assert!(
         kept_paths.contains(&"src/b.rs"),
         "depth=1 incoming=5 must survive over depth=1 incoming=2, got: {kept_paths:?}"
+    );
+}
+
+// T-608: apply_cap_drops_to_fit_byte_budget [COV-001]
+//
+// Byte budget (not count) drives the drop: 4 chunks of 4 bytes each = 16,
+// budget 8 forces dropping the two lowest-priority chunks (highest depth,
+// lowest incoming). The returned remaining byte count must match survivors.
+#[test]
+fn apply_cap_drops_to_fit_byte_budget() {
+    let chunks = vec![
+        make_brief_chunk("src/a.rs", "aaaa"),
+        make_brief_chunk("src/b.rs", "bbbb"),
+        make_brief_chunk("src/c.rs", "cccc"),
+        make_brief_chunk("src/d.rs", "dddd"),
+    ];
+    let depth_by_path: HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 0),
+        ("src/b.rs".to_owned(), 1),
+        ("src/c.rs".to_owned(), 1),
+        ("src/d.rs".to_owned(), 2),
+    ]
+    .into_iter()
+    .collect();
+    let incoming_counts: HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 10),
+        ("src/b.rs".to_owned(), 5),
+        ("src/c.rs".to_owned(), 2),
+        ("src/d.rs".to_owned(), 1),
+    ]
+    .into_iter()
+    .collect();
+
+    let (kept, remaining) = apply_cap(chunks, &depth_by_path, &incoming_counts, u32::MAX, 8, 16);
+
+    let kept_paths: Vec<&str> = kept.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        kept_paths,
+        vec!["src/a.rs", "src/b.rs"],
+        "byte cap must keep the two highest-priority chunks, got: {kept_paths:?}"
+    );
+    assert_eq!(
+        remaining, 8,
+        "remaining bytes must equal the surviving chunks' total"
     );
 }
 
