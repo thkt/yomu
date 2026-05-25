@@ -1287,6 +1287,44 @@ fn get_transitive_dependencies_multi_seed_as_dependency_stays_depth_zero() {
     );
 }
 
+// T-587: get_transitive_dependencies_multi_dedups_duplicate_seeds
+//
+// A path passed twice as a seed must collapse to a single depth-0 row, not
+// two. Pins the SQLite UNION dedup the multi-seed carrier relies on (the
+// carrier emits one VALUES row per seed, including duplicates).
+#[test]
+fn get_transitive_dependencies_multi_dedups_duplicate_seeds() {
+    let (conn, _dir) = test_db();
+    replace_file_references(
+        &conn,
+        "src/a.rs",
+        &[Reference {
+            source_file: "src/a.rs".into(),
+            target_file: "src/b.rs".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    let deps = get_transitive_dependencies_multi(&conn, &["src/a.rs", "src/a.rs"], 5).unwrap();
+
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/a.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/b.rs".into(),
+                depth: 1,
+            },
+        ],
+        "a duplicate seed must collapse to a single depth-0 row",
+    );
+}
+
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")

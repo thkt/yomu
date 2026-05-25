@@ -136,15 +136,16 @@ pub fn get_transitive_dependencies_multi(
     // anchor and the `NOT IN` guard. `r.target_file NOT IN (carrier)` blocks
     // back-edges to any seed; each seed is injected once at depth 0, so this
     // only suppresses wasteful re-visits. Per-seed depths collapse via
-    // MIN(depth).
+    // MIN(depth). The carrier is a `VALUES` list (not chained `UNION ALL`) so
+    // a large seed set does not trip SQLITE_LIMIT_COMPOUND_SELECT (500).
     let carrier = (1..=seeds.len())
-        .map(|i| format!("SELECT ?{i}"))
+        .map(|i| format!("(?{i})"))
         .collect::<Vec<_>>()
-        .join(" UNION ALL ");
+        .join(", ");
     let depth_ph = seeds.len() + 1;
     let sql = format!(
         "WITH RECURSIVE
-           carrier(value) AS ({carrier}),
+           carrier(value) AS (VALUES {carrier}),
            deps(file_path, depth) AS (
              SELECT value, 0 FROM carrier
            UNION
