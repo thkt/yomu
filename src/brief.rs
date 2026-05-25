@@ -130,11 +130,15 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
         .collect()
 }
 
-fn under_cap(chunks: &[BriefChunk], max_chunks: u32, max_bytes: u32) -> bool {
-    let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
-    let bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
-    let bytes_capped = u32::try_from(bytes).unwrap_or(u32::MAX);
-    count <= max_chunks && bytes_capped <= max_bytes
+fn to_u32_saturating(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Pure budget check on pre-computed totals. Callers compute `chunk_count`
+/// and `total_bytes` once and pass them in, so the O(n) byte sum is not
+/// repeated per call.
+fn under_cap(chunk_count: usize, total_bytes: usize, max_chunks: u32, max_bytes: u32) -> bool {
+    to_u32_saturating(chunk_count) <= max_chunks && to_u32_saturating(total_bytes) <= max_bytes
 }
 
 fn deletion_priority(
@@ -153,7 +157,8 @@ fn select_drops(
     incoming_counts: &HashMap<String, u32>,
     max_chunks: u32,
     max_bytes: u32,
-) -> HashSet<usize> {
+    total_bytes: usize,
+) -> (HashSet<usize>, usize) {
     let mut order: Vec<(usize, u32, u32)> = chunks
         .iter()
         .enumerate()
@@ -165,47 +170,50 @@ fn select_drops(
     order.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
 
     let mut drop_idx: HashSet<usize> = HashSet::new();
-    let mut count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
-    let mut bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
+    let mut count = chunks.len();
+    let mut bytes = total_bytes;
     for (idx, _, _) in order {
-        let bytes_capped = u32::try_from(bytes).unwrap_or(u32::MAX);
-        if count <= max_chunks && bytes_capped <= max_bytes {
+        if under_cap(count, bytes, max_chunks, max_bytes) {
             break;
         }
         drop_idx.insert(idx);
         count -= 1;
         bytes -= chunks[idx].content.len();
     }
-    drop_idx
+    (drop_idx, bytes)
 }
 
 /// Applies BR-001 cap deletion order: drop chunks first by
 /// `(seed_distance DESC, incoming_edge_count ASC)`. Pure: takes pre-computed
-/// `depth_by_path` and `incoming_counts` so callers can test deterministically
-/// without DB access.
+/// `depth_by_path`, `incoming_counts`, and `total_bytes` so callers can test
+/// deterministically without DB access and the byte sum is computed once.
+/// Returns the surviving chunks paired with their total byte count.
 pub fn apply_cap(
     chunks: Vec<BriefChunk>,
     depth_by_path: &HashMap<String, u32>,
     incoming_counts: &HashMap<String, u32>,
     max_chunks: u32,
     max_bytes: u32,
-) -> Vec<BriefChunk> {
-    if under_cap(&chunks, max_chunks, max_bytes) {
-        return chunks;
+    total_bytes: usize,
+) -> (Vec<BriefChunk>, usize) {
+    if under_cap(chunks.len(), total_bytes, max_chunks, max_bytes) {
+        return (chunks, total_bytes);
     }
-    let drop_idx = select_drops(
+    let (drop_idx, remaining_bytes) = select_drops(
         &chunks,
         depth_by_path,
         incoming_counts,
         max_chunks,
         max_bytes,
+        total_bytes,
     );
-    chunks
+    let kept = chunks
         .into_iter()
         .enumerate()
         .filter(|(i, _)| !drop_idx.contains(i))
         .map(|(_, c)| c)
-        .collect()
+        .collect();
+    (kept, remaining_bytes)
 }
 
 type DepGraph = (HashMap<String, u32>, HashMap<String, Vec<String>>);
@@ -374,19 +382,27 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let paths: Vec<&str> = depth_by_path.keys().map(String::as_str).collect();
     let chunks = get_chunks_for_files(conn, &paths)?;
     let brief_chunks = build_brief_chunks(chunks, &depth_by_path);
+    // Single byte sum reused by the cap check and the final totals.
+    let total_bytes: usize = brief_chunks.iter().map(|c| c.content.len()).sum();
 
     // BR-001 priority data is only needed when chunks exceed the budget.
-    let incoming_counts = if under_cap(&brief_chunks, task.max_chunks, task.max_bytes) {
+    let incoming_counts = if under_cap(
+        brief_chunks.len(),
+        total_bytes,
+        task.max_chunks,
+        task.max_bytes,
+    ) {
         HashMap::new()
     } else {
         get_import_counts(conn, &paths)?
     };
-    let capped = apply_cap(
+    let (capped, capped_bytes) = apply_cap(
         brief_chunks,
         &depth_by_path,
         &incoming_counts,
         task.max_chunks,
         task.max_bytes,
+        total_bytes,
     );
 
     // Edges only matter for files that survived cap; querying the pre-cap
@@ -396,9 +412,9 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let edges = get_edges_among_files(conn, &capped_paths)?;
     let ordered = topo_sort(capped, &edges);
 
+    // topo_sort only reorders chunks, so the cap's surviving byte count holds.
     let total_chunks = u32::try_from(ordered.len()).unwrap_or(u32::MAX);
-    let total_bytes_usize: usize = ordered.iter().map(|c| c.content.len()).sum();
-    let total_bytes = u32::try_from(total_bytes_usize).unwrap_or(u32::MAX);
+    let total_bytes = to_u32_saturating(capped_bytes);
 
     Ok(BriefOutput {
         chunks: ordered,
