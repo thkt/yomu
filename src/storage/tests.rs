@@ -1204,6 +1204,89 @@ fn get_transitive_dependencies_similar_paths_no_collision() {
     );
 }
 
+// T-585: get_transitive_dependencies_multi_aggregates_min_depth
+//
+// Two seeds reach a shared file via paths of different length. The result
+// must carry the minimum per-seed depth: src/z.rs is depth 2 from src/a.rs
+// (a -> y -> z) but depth 1 from src/b.rs (b -> z), so MIN wins at 1.
+#[test]
+fn get_transitive_dependencies_multi_aggregates_min_depth() {
+    let (conn, _dir) = test_db();
+    let edge = |src: &str, tgt: &str| Reference {
+        source_file: src.into(),
+        target_file: tgt.into(),
+        symbol_name: None,
+        ref_kind: RefKind::Named,
+    };
+    replace_file_references(&conn, "src/a.rs", &[edge("src/a.rs", "src/y.rs")]).unwrap();
+    replace_file_references(&conn, "src/y.rs", &[edge("src/y.rs", "src/z.rs")]).unwrap();
+    replace_file_references(&conn, "src/b.rs", &[edge("src/b.rs", "src/z.rs")]).unwrap();
+
+    let deps = get_transitive_dependencies_multi(&conn, &["src/a.rs", "src/b.rs"], 5).unwrap();
+
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/a.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/b.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/y.rs".into(),
+                depth: 1,
+            },
+            Dependent {
+                file_path: "src/z.rs".into(),
+                depth: 1,
+            },
+        ],
+        "shared dependency must take the minimum per-seed depth",
+    );
+}
+
+// T-586: get_transitive_dependencies_multi_seed_as_dependency_stays_depth_zero
+//
+// When one seed (src/b.rs) is reachable from another (src/a.rs -> src/x.rs ->
+// src/b.rs), the back-edge to the seed is suppressed and src/b.rs stays at
+// depth 0 from its own anchor row, not depth 2.
+#[test]
+fn get_transitive_dependencies_multi_seed_as_dependency_stays_depth_zero() {
+    let (conn, _dir) = test_db();
+    let edge = |src: &str, tgt: &str| Reference {
+        source_file: src.into(),
+        target_file: tgt.into(),
+        symbol_name: None,
+        ref_kind: RefKind::Named,
+    };
+    replace_file_references(&conn, "src/a.rs", &[edge("src/a.rs", "src/x.rs")]).unwrap();
+    replace_file_references(&conn, "src/x.rs", &[edge("src/x.rs", "src/b.rs")]).unwrap();
+
+    let deps = get_transitive_dependencies_multi(&conn, &["src/a.rs", "src/b.rs"], 5).unwrap();
+
+    assert_eq!(
+        deps,
+        vec![
+            Dependent {
+                file_path: "src/a.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/b.rs".into(),
+                depth: 0,
+            },
+            Dependent {
+                file_path: "src/x.rs".into(),
+                depth: 1,
+            },
+        ],
+        "a seed that is also a dependency must stay at depth 0",
+    );
+}
+
 fn get_chunk_ids(conn: &Connection, file_path: &str) -> Vec<i64> {
     let mut stmt = conn
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 ORDER BY id")

@@ -107,31 +107,59 @@ pub fn get_edges_among_files(
 
 /// Forward closure: files that `seed` transitively depends on, ordered by
 /// distance ascending. `seed` itself is included at depth 0 so brief output
-/// can group seed chunks alongside their forward dependencies. Reuses
-/// `Dependent` for shape; direction is implicit from the function name.
+/// can group seed chunks alongside their forward dependencies. Thin wrapper
+/// over [`get_transitive_dependencies_multi`].
 pub fn get_transitive_dependencies(
     conn: &Connection,
     seed: &str,
     max_depth: u32,
 ) -> Result<Vec<Dependent>, StorageError> {
+    get_transitive_dependencies_multi(conn, &[seed], max_depth)
+}
+
+/// Forward closure from multiple seeds in a single recursive query. Each seed
+/// is injected at depth 0; a file reachable from several seeds takes the
+/// minimum per-seed distance via `MIN(depth)`. Ordered by distance ascending,
+/// then file_path. Reuses `Dependent` for shape; direction is implicit from
+/// the function name. Returns an empty vec when `seeds` is empty.
+pub fn get_transitive_dependencies_multi(
+    conn: &Connection,
+    seeds: &[&str],
+    max_depth: u32,
+) -> Result<Vec<Dependent>, StorageError> {
+    if seeds.is_empty() {
+        return Ok(Vec::new());
+    }
     let max_depth = max_depth.min(10);
-    // See `get_transitive_dependents` for the cycle-handling rationale.
-    // `r.target_file != ?1` blocks back-edges to the seed; the seed is
-    // injected once at depth=0 in the anchor, so this only suppresses
-    // wasteful re-visits inside the recursion.
-    let mut stmt = conn.prepare_cached(
-        "WITH RECURSIVE deps(file_path, depth) AS (
-            SELECT ?1, 0
-          UNION
-            SELECT r.target_file, d.depth + 1
-            FROM file_references r
-            INNER JOIN deps d ON r.source_file = d.file_path
-            WHERE d.depth < ?2 AND r.target_file != ?1
-        )
-        SELECT file_path, MIN(depth) as depth
-        FROM deps GROUP BY file_path ORDER BY depth, file_path",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![seed, max_depth], |row| {
+    // See `get_transitive_dependents` for the UNION cycle-handling rationale.
+    // Seeds ride in a CTE so the same bound values feed both the depth-0
+    // anchor and the `NOT IN` guard. `r.target_file NOT IN (carrier)` blocks
+    // back-edges to any seed; each seed is injected once at depth 0, so this
+    // only suppresses wasteful re-visits. Per-seed depths collapse via
+    // MIN(depth).
+    let carrier = (1..=seeds.len())
+        .map(|i| format!("SELECT ?{i}"))
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    let depth_ph = seeds.len() + 1;
+    let sql = format!(
+        "WITH RECURSIVE
+           carrier(value) AS ({carrier}),
+           deps(file_path, depth) AS (
+             SELECT value, 0 FROM carrier
+           UNION
+             SELECT r.target_file, d.depth + 1
+             FROM file_references r
+             INNER JOIN deps d ON r.source_file = d.file_path
+             WHERE d.depth < ?{depth_ph} AND r.target_file NOT IN (SELECT value FROM carrier)
+           )
+         SELECT file_path, MIN(depth) AS depth
+         FROM deps GROUP BY file_path ORDER BY depth, file_path"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params = as_sql_params(seeds);
+    params.push(&max_depth);
+    let rows = stmt.query_map(params.as_slice(), |row| {
         Ok(Dependent {
             file_path: row.get(0)?,
             depth: row.get(1)?,

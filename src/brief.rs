@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::injection_check::InjectionCheck;
 use crate::storage::{
     Chunk, ChunkType, SourceKind, StorageError, get_chunks_for_files, get_edges_among_files,
-    get_import_counts, get_transitive_dependencies,
+    get_import_counts, get_transitive_dependencies_multi,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,20 +85,11 @@ fn collect_closure(
     seeds: &[String],
     depth: u32,
 ) -> Result<HashMap<String, u32>, StorageError> {
-    let mut depth_by_path: HashMap<String, u32> = HashMap::new();
-    for seed in seeds {
-        for dep in get_transitive_dependencies(conn, seed, depth)? {
-            depth_by_path
-                .entry(dep.file_path)
-                .and_modify(|d| {
-                    if dep.depth < *d {
-                        *d = dep.depth;
-                    }
-                })
-                .or_insert(dep.depth);
-        }
-    }
-    Ok(depth_by_path)
+    // Single recursive query over all seeds; `MIN(depth)` inside the query
+    // already collapses per-seed distances, so no Rust-side merge is needed.
+    let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    let deps = get_transitive_dependencies_multi(conn, &seed_refs, depth)?;
+    Ok(deps.into_iter().map(|d| (d.file_path, d.depth)).collect())
 }
 
 fn determine_reason(depth: u32) -> ChunkInclusionReason {
