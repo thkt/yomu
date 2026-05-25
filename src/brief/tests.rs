@@ -526,3 +526,59 @@ fn render_json_emits_injection_check_even_with_empty_chunks() {
         "BR-302: injection_check must be present at top level even when chunks is empty (no skip_serializing_if), got: {parsed}"
     );
 }
+
+// T-701: topo_sort_places_cycle_members_at_tail [Issue #138 COV-002]
+// BR-002: a cycle (a -> b -> a) leaves every node with a non-zero out-degree,
+// so the Kahn pass orders nothing and append_cycle_tail must place the cycle
+// members at the tail in lexicographic order.
+#[test]
+fn topo_sort_places_cycle_members_at_tail() {
+    let chunks = vec![
+        make_brief_chunk("src/b.rs", "b"),
+        make_brief_chunk("src/a.rs", "a"),
+    ];
+    let edges = vec![
+        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
+        ("src/b.rs".to_owned(), "src/a.rs".to_owned()),
+    ];
+
+    let sorted = topo_sort(chunks, &edges);
+
+    let order: Vec<&str> = sorted.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["src/a.rs", "src/b.rs"],
+        "BR-002: cycle members have no topological order; append_cycle_tail orders them lexicographically"
+    );
+}
+
+// T-702: expand_plan_queries_import_counts_when_over_cap [Issue #138]
+// BR-001: when the seed closure yields more chunks than max_chunks, expand_plan
+// takes the over-budget branch (get_import_counts) and drops to the cap. depth=1
+// with an import-free seed keeps the closure to src/a.rs alone, so its three
+// chunks exceed a max_chunks of 1.
+#[test]
+fn expand_plan_queries_import_counts_when_over_cap() {
+    let (conn, _dir) = test_db();
+    insert_test_chunk(&conn, "src/a.rs", "a1", 1);
+    insert_test_chunk(&conn, "src/a.rs", "a2", 10);
+    insert_test_chunk(&conn, "src/a.rs", "a3", 20);
+
+    let task = TaskBrief {
+        task: "find body".to_owned(),
+        seeds: vec![seed_file("src/a.rs")],
+        depth: 1,
+        max_chunks: 1,
+        max_bytes: 80_000,
+    };
+
+    let output = expand_plan(&conn, &task).unwrap();
+
+    assert_eq!(
+        output.chunks.len(),
+        1,
+        "BR-001: max_chunks=1 must drop the 3 seed chunks down to a single survivor"
+    );
+    assert_eq!(output.total_chunks, 1);
+    assert!(!output.degraded, "a satisfiable seed must not degrade");
+}

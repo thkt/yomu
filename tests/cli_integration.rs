@@ -1081,6 +1081,36 @@ fn brief_integration_rejects_empty_task() {
     );
 }
 
+// T-706: brief_integration_rejects_seed_symbol [Issue #138 COV-008]
+// FR-010b: --seed-symbol is not yet implemented. The CLI must exit 64
+// (sysexits USAGE) and point the user at --seed-file.
+#[test]
+fn brief_integration_rejects_seed_symbol() {
+    let dir = setup_brief_chain_project();
+    let output = yomu_cmd()
+        .args(["brief", "find work", "--seed-symbol", "work"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "--seed-symbol must fail, got success with: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "--seed-symbol must exit 64 (sysexits USAGE), got: {:?} (stderr: {})",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("seed-file"),
+        "rejection must point the user at --seed-file, got stderr: {stderr}"
+    );
+}
+
 // T-612: brief_integration_json_output_includes_chunks [Spec FR-012]
 #[test]
 fn brief_integration_json_output_includes_chunks() {

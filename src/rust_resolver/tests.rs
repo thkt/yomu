@@ -369,3 +369,35 @@ fn resolve_without_cargo_toml_falls_through() {
         "crate:: must keep working when crate_name is None"
     );
 }
+
+// T-704: resolve_mod_decl_returns_none_when_target_absent [Issue #138 COV-005]
+// FR-002: `mod missing;` with neither src/missing.rs nor src/missing/mod.rs
+// present resolves to None (no panic, no false match).
+#[test]
+fn resolve_mod_decl_returns_none_when_target_absent() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+
+    let resolver = RustResolver::new(tmp.path());
+    assert_eq!(resolver.resolve_mod_decl("missing", "src/lib.rs"), None);
+}
+
+// T-705: resolve_mod_decl_via_resolve_trait_delegates [Issue #138 COV-005]
+// The Resolve trait impl forwards resolve_mod_decl to the inherent method
+// (rust_resolver.rs:189-191); calling through &dyn Resolve must match the
+// inherent resolution.
+#[test]
+fn resolve_mod_decl_via_resolve_trait_delegates() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("foo.rs"), "").unwrap();
+
+    let resolver = RustResolver::new(tmp.path());
+    let via_trait: &dyn Resolve = &resolver;
+    assert_eq!(
+        via_trait.resolve_mod_decl("foo", "src/lib.rs"),
+        Some("src/foo.rs".to_owned()),
+        "Resolve::resolve_mod_decl must delegate to the inherent resolver"
+    );
+}
