@@ -49,13 +49,13 @@ jobs:
         run: cargo fmt -- --check
 
   coverage:
-    # Diff coverage gate. PR が追加/変更した行のテストカバレッジを直接判定し、
-    # threshold を下回ると fail させる。新規の未カバーコード (pub fn / 分岐) が
-    # テストなしで merge されるのを防ぐ。全体 percent の floor は持たない
-    # (既存の到達不可コードを誤検出しないため)。base との 2 回測定も不要。
-    # 根拠: Issue #223, THRESHOLDS.md "Coverage" 節。
-    # mlx-sys (MLX FFI) は BLAS + Apple silicon を要求し Linux でビルド不可。
-    # test job と同じ macos で測定する (ubuntu では mlx-sys ビルドが失敗する)。
+    # Diff coverage gate: fail when coverage of the lines this PR adds or
+    # changes drops below the threshold, so new uncovered code (pub fn /
+    # branches) cannot merge untested. No overall-percent floor (which would
+    # flag existing unreachable code); no base-vs-PR double measurement.
+    # Rationale: Issue #223, THRESHOLDS.md "Coverage" section.
+    # Runs on macos like the test job: mlx-sys (MLX FFI) needs BLAS + Apple
+    # silicon and cannot build on Linux.
     runs-on: macos-latest
     timeout-minutes: 30
     if: github.event_name == 'pull_request'
@@ -88,8 +88,8 @@ jobs:
       - name: Diff coverage gate (changed lines >= 95%)
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          # diff-cover は Python ツール。PEP 668 (Ubuntu の externally-managed)
-          # と runner image の pipx 有無に依存しないよう venv で隔離する。
+          # diff-cover is a Python tool; isolate it in a venv to avoid PEP 668
+          # (externally-managed environments) regardless of the runner's Python.
           python3 -m venv /tmp/diff-cover-venv
           /tmp/diff-cover-venv/bin/pip install --quiet diff-cover
           /tmp/diff-cover-venv/bin/diff-cover lcov.info \
