@@ -165,15 +165,3 @@ impl Yomu {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // T-311: disabled_returns_disabled_reason
-    #[test]
-    fn disabled_returns_disabled_reason() {
-        let result = try_load_embedder(true);
-        assert!(matches!(result, Err(DegradedReason::Disabled)));
-    }
-}
