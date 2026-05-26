@@ -48,6 +48,52 @@ jobs:
       - name: Format check
         run: cargo fmt -- --check
 
+  coverage:
+    # Diff coverage gate. PR が追加/変更した行のテストカバレッジを直接判定し、
+    # threshold を下回ると fail させる。新規の未カバーコード (pub fn / 分岐) が
+    # テストなしで merge されるのを防ぐ。全体 percent の floor は持たない
+    # (既存の到達不可コードを誤検出しないため)。base との 2 回測定も不要。
+    # 根拠: Issue #223, THRESHOLDS.md "Coverage" 節。
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@184183c2401be73c3bf42c2e61268aa5855379c1 # v2.78.1
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate lcov coverage
+        run: cargo llvm-cov --lcov --output-path lcov.info
+
+      - name: Diff coverage gate (changed lines >= 95%)
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          # diff-cover は Python ツール。PEP 668 (Ubuntu の externally-managed)
+          # と runner image の pipx 有無に依存しないよう venv で隔離する。
+          python3 -m venv /tmp/diff-cover-venv
+          /tmp/diff-cover-venv/bin/pip install --quiet diff-cover
+          /tmp/diff-cover-venv/bin/diff-cover lcov.info \
+            --compare-branch=origin/main \
+            --fail-under=95
+
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 10
