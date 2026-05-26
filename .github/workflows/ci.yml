@@ -54,7 +54,9 @@ jobs:
     # テストなしで merge されるのを防ぐ。全体 percent の floor は持たない
     # (既存の到達不可コードを誤検出しないため)。base との 2 回測定も不要。
     # 根拠: Issue #223, THRESHOLDS.md "Coverage" 節。
-    runs-on: ubuntu-latest
+    # mlx-sys (MLX FFI) は BLAS + Apple silicon を要求し Linux でビルド不可。
+    # test job と同じ macos で測定する (ubuntu では mlx-sys ビルドが失敗する)。
+    runs-on: macos-latest
     timeout-minutes: 30
     if: github.event_name == 'pull_request'
     permissions:
