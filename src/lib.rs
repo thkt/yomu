@@ -1,5 +1,6 @@
 pub mod brief;
 pub mod config;
+pub mod diff_cover_probe;
 pub mod error;
 pub mod fs_optional;
 pub mod indexer;
