@@ -140,7 +140,6 @@ Options:
 | `--limit`    | 10      | Max results (max: 100)                                                   |
 | `--offset`   | 0       | Pagination offset (max: 500)                                             |
 | `--from`     | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
-| `--no-embed` | false   | Skip embedding lookups; use FTS5 only. Same effect as `YOMU_EMBED=0`     |
 
 `--from` uses the stored embeddings of the target — no re-embedding needed:
 
@@ -265,7 +264,6 @@ Per ADR-0066 Group 2 (sysexits.h) — agents and scripts can branch on the numbe
 | SCSS/Sass not supported   | Only plain CSS                                                                              |
 | Cold start                | First `search` call takes a few seconds for chunking + initial embedding                    |
 | Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
-| Embedding opt-out         | Pass `--no-embed` to `yomu search`, or set `YOMU_EMBED=0`; `search` falls back to text-only mode |
 
 ## Development
 
@@ -282,7 +280,7 @@ This installs a pre-commit hook that runs `cargo fmt --check` and `cargo clippy 
 ### Common commands
 
 ```sh
-cargo nextest run                                         # all tests (install: cargo install cargo-nextest --locked)
+cargo nextest run --features test-support                 # all tests (test-support stubs the embedding model so `index` runs without it; install: cargo install cargo-nextest --locked)
 cargo clippy --all-targets --all-features -- -D warnings  # lint (matches CI)
 cargo fmt -- --check                                      # format check
 ```

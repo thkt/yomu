@@ -40,7 +40,11 @@ jobs:
           tool: cargo-nextest
 
       - name: Test
-        run: cargo nextest run --profile ci
+        # `--features test-support` swaps the real embedding model for a
+        # deterministic stub (src/tools/embedder.rs). `yomu index` now embeds
+        # (index = embed, ADR 0002), and CI runners have no model, so the stub
+        # is what lets index-spawning integration tests run hermetically.
+        run: cargo nextest run --profile ci --features test-support
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -83,7 +87,10 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Generate lcov coverage
-        run: cargo llvm-cov --lcov --output-path lcov.info
+        # Match the Test job: the stub embedder (`--features test-support`) lets
+        # index-spawning integration tests run without a model. The real-model
+        # loader is cfg'd out here and excluded from coverage accordingly.
+        run: cargo llvm-cov --lcov --output-path lcov.info --features test-support
 
       - name: Diff coverage gate (changed lines >= 95%)
         run: |

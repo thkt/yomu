@@ -31,9 +31,9 @@ use crate::storage;
 use embedder::{DegradedReason, degraded_reason_user_note};
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_dry_run_json,
-    format_embed_result, format_impact_all, format_impact_json, format_impact_results,
-    format_index_json, format_no_results_message, format_rebuild_json, format_results_grouped,
-    format_results_json, format_status_json,
+    format_impact_all, format_impact_json, format_impact_results, format_index_json,
+    format_no_results_message, format_rebuild_json, format_results_grouped, format_results_json,
+    format_status_json,
 };
 
 const SEMANTIC_THRESHOLD: f32 = 0.7;
@@ -53,11 +53,11 @@ pub const MAX_EMPTY_TARGET_CANDIDATES: usize = 10;
 /// Search routes are read-only, so this surfaces what the user must run manually.
 fn index_hint(stats: &storage::IndexStatus) -> Option<String> {
     if stats.total_chunks == 0 {
-        Some("index is empty; run `yomu index` then `yomu embed`".to_owned())
+        Some("index is empty; run `yomu index`".to_owned())
     } else if stats.embedded_chunks == 0 {
-        Some("no embeddings; run `yomu embed` to enable semantic search".to_owned())
+        Some("embeddings missing; run `yomu index`".to_owned())
     } else if stats.embedded_chunks < stats.embeddable_chunks {
-        Some("embeddings incomplete; run `yomu embed` to finish".to_owned())
+        Some("embeddings incomplete; run `yomu index`".to_owned())
     } else {
         None
     }
@@ -106,6 +106,26 @@ pub(super) fn degraded_for_chunk_errors(files_errored: u32) -> (bool, Vec<String
     }
 }
 
+/// degraded signal for index / rebuild: chunk errors (FR-002 / FR-003) plus an
+/// embedding shortfall. `embed_pending` returns `Ok` even when recoverable
+/// per-file embed failures skip some chunks, leaving `embedded_chunks <
+/// embeddable_chunks`. Surface that as degraded so a JSON consumer keying on
+/// the flag does not treat a half-embedded index as complete.
+pub(super) fn degraded_for_index(
+    files_errored: u32,
+    stats: &storage::IndexStatus,
+) -> (bool, Vec<String>) {
+    let (mut degraded, mut notes) = degraded_for_chunk_errors(files_errored);
+    if stats.embedded_chunks < stats.embeddable_chunks {
+        degraded = true;
+        notes.push(format!(
+            "embedded {} of {} chunks; run `yomu index` again to finish",
+            stats.embedded_chunks, stats.embeddable_chunks
+        ));
+    }
+    (degraded, notes)
+}
+
 /// degraded signal for dry-run preview per FR-004.
 pub(super) fn degraded_for_dry_run_errors(files_errored: u32) -> (bool, Vec<String>) {
     if files_errored > 0 {
@@ -118,31 +138,12 @@ pub(super) fn degraded_for_dry_run_errors(files_errored: u32) -> (bool, Vec<Stri
     }
 }
 
-/// degraded signal for embed when fewer chunks landed than requested per FR-005.
-pub(super) fn degraded_for_embed_skips(pending: u32, chunks_embedded: u32) -> (bool, Vec<String>) {
-    let skipped = pending.saturating_sub(chunks_embedded);
-    if skipped > 0 {
-        (
-            true,
-            vec![format!(
-                "embedded {} of {} chunks ({} skipped)",
-                chunks_embedded, pending, skipped
-            )],
-        )
-    } else {
-        (false, Vec::new())
-    }
-}
-
 /// Runtime options for [`Yomu::new`] / [`Yomu::with_root`].
 ///
 /// Each field is OR-merged with the corresponding env var, so either source
 /// can opt in.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct YomuOptions {
-    /// Disable embedding-based search; falls back to FTS5 only.
-    /// OR-merged with `YOMU_EMBED=0`.
-    pub no_embed: bool,
     /// Opt in to query log JSONL output (`--log-query`). Default off per #182.
     pub log_query: bool,
 }
@@ -173,7 +174,6 @@ pub struct IndexRunOptions {
 /// [`YomuConfig::from_env_with`] to inject a deterministic lookup closure.
 #[derive(Debug, Clone, Copy)]
 pub struct YomuConfig {
-    pub embed_disabled: bool,
     pub rerank_enabled: bool,
 }
 
@@ -186,7 +186,6 @@ impl YomuConfig {
     /// Read configuration through an injected lookup closure.
     pub fn from_env_with<F: Fn(&str) -> Option<String>>(get: F) -> Self {
         Self {
-            embed_disabled: get("YOMU_EMBED").as_deref() == Some("0"),
             rerank_enabled: get("YOMU_RERANK").as_deref() == Some("1"),
         }
     }
@@ -291,9 +290,9 @@ impl YomuError {
                 Some("check `.yomu/index.db` permissions and disk space".to_owned())
             }
             Self::Io(_) | Self::Query(_) => None,
-            Self::EmbedderUnavailable(_) => Some(
-                "run `yomu model download`, or set `YOMU_EMBED=0` for FTS-only mode".to_owned(),
-            ),
+            Self::EmbedderUnavailable(_) => {
+                Some("run `yomu model download` to install the embedding model".to_owned())
+            }
             Self::Internal(_) => Some(
                 "file a bug report with the reproduction command and `RUST_BACKTRACE=1`".to_owned(),
             ),
@@ -329,7 +328,6 @@ pub struct Yomu {
     conn: Arc<Mutex<storage::Db>>,
     embedder: OnceLock<Result<Arc<dyn Embed>, DegradedReason>>,
     root: PathBuf,
-    embed_disabled: bool,
     rerank_enabled: bool,
     reranker: OnceLock<ModelLoad<Box<dyn Rerank>>>,
     log_query: bool,
@@ -351,12 +349,10 @@ impl Yomu {
         let db_path = root.join(".yomu").join("index.db");
         let conn = storage::open_db(&db_path)?;
 
-        let embed_disabled = options.no_embed || config.embed_disabled;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
-            embed_disabled,
             rerank_enabled: config.rerank_enabled,
             reranker: OnceLock::new(),
             log_query: options.log_query,
@@ -375,7 +371,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
-            embed_disabled: false,
             rerank_enabled: false,
             reranker: OnceLock::new(),
             log_query: false,
@@ -529,10 +524,11 @@ impl Yomu {
     pub fn index(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
         let chunk_result =
             indexer::run_chunk_only_index(&self.conn, &self.root, opts.exclude_vendor)?;
+        self.embed_pending()?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
-            let (degraded, notes) = degraded_for_chunk_errors(chunk_result.files_errored);
+            let (degraded, notes) = degraded_for_index(chunk_result.files_errored, &stats);
             return Ok(format_index_json(&chunk_result, &stats, degraded, notes));
         }
 
@@ -577,10 +573,11 @@ impl Yomu {
     pub fn rebuild(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
         let chunk_result =
             indexer::run_chunk_only_index_force(&self.conn, &self.root, opts.exclude_vendor)?;
+        self.embed_pending()?;
         let stats = self.with_db(storage::get_stats)?;
 
         if json {
-            let (degraded, notes) = degraded_for_chunk_errors(chunk_result.files_errored);
+            let (degraded, notes) = degraded_for_index(chunk_result.files_errored, &stats);
             return Ok(format_rebuild_json(&chunk_result, &stats, degraded, notes));
         }
 
@@ -763,7 +760,9 @@ impl Yomu {
         ))
     }
 
-    pub fn embed(&self, json: bool) -> Result<String, YomuError> {
+    /// Embeds all pending chunks with progress spinners. Errors out when the
+    /// model is unavailable so callers never silently leave a chunk-only index.
+    fn embed_pending(&self) -> Result<(), YomuError> {
         let pending = self.with_db(|conn| {
             let stats = storage::get_stats(conn)?;
             Ok(stats
@@ -771,20 +770,18 @@ impl Yomu {
                 .saturating_sub(stats.embedded_chunks))
         })?;
 
-        let result = embed_with_spinners(
+        embed_with_spinners(
             pending,
             |_| {
                 self.try_embedder_arc().map_err(|reason| {
+                    // `Disabled` can no longer occur (yomu never disables
+                    // embedding); it folds into the generic arm rather than an
+                    // unreachable! that diff-coverage would flag as untested.
                     let msg = match reason {
-                        DegradedReason::Disabled => {
-                            "embedding is disabled (--no-embed or YOMU_EMBED=0)"
-                        }
                         DegradedReason::NotInstalled => {
                             "embedding model not installed; run `yomu model download` to enable semantic search"
                         }
-                        DegradedReason::BackendUnavailable | DegradedReason::ProbeFailed => {
-                            "embedding model unavailable"
-                        }
+                        _ => "embedding model unavailable",
                     };
                     YomuError::EmbedderUnavailable(msg.to_owned())
                 })
@@ -801,19 +798,7 @@ impl Yomu {
                 .map_err(YomuError::from)
             },
         )?;
-
-        match result {
-            Some(r) => {
-                let (degraded, notes) = degraded_for_embed_skips(pending, r.chunks_embedded);
-                Ok(format_embed_result(&r, json, degraded, notes))
-            }
-            None => Ok(format_embed_result(
-                &indexer::EmbedResult::default(),
-                json,
-                false,
-                Vec::new(),
-            )),
-        }
+        Ok(())
     }
 
     fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
