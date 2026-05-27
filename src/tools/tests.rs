@@ -239,6 +239,41 @@ fn search_does_not_auto_embed_chunked_only() {
     );
 }
 
+// T-184: search_hints_incomplete_embeddings_when_partially_embedded
+#[test]
+fn search_hints_incomplete_embeddings_when_partially_embedded() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/A.tsx", "export function A() { return <div/>; }"),
+            ("src/B.tsx", "export function B() { return <div/>; }"),
+            ("src/C.tsx", "export function C() { return <div/>; }"),
+        ],
+        Arc::new(MockEmbedder::default()),
+    );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    // Embed only one chunk so embedded_chunks < embeddable_chunks (partial state).
+    indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 1, None).unwrap();
+
+    let stats = {
+        let c = y.conn.lock().unwrap();
+        storage::get_stats(&c).unwrap()
+    };
+    assert!(
+        stats.embedded_chunks > 0 && stats.embedded_chunks < stats.embeddable_chunks,
+        "expected partial embedding, got {}/{}",
+        stats.embedded_chunks,
+        stats.embeddable_chunks
+    );
+
+    let text = y
+        .search(Some("component"), 10, 0, &[], false, None)
+        .unwrap();
+    assert!(
+        text.contains("embeddings incomplete"),
+        "expected incomplete-embeddings hint, got: {text}"
+    );
+}
+
 // T-183: search_shows_coverage_on_no_results
 #[test]
 fn search_shows_coverage_on_no_results() {
