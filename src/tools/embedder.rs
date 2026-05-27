@@ -1,7 +1,20 @@
 use std::sync::Arc;
 
+use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
+
+// Real-model loading is compiled only into the production binary. Under
+// `--features test-support` the embedder is a deterministic stub (see the
+// `cfg(feature = "test-support")` variant of `try_load_embedder`), so these
+// model-cache imports would be unused and trip `-D warnings`.
+#[cfg(not(feature = "test-support"))]
 use amici::model::embedder::try_load_embedder_with;
-use rurico::embed::{ChunkedEmbedding, Embed, EmbedError, ModelId, cached_artifacts};
+#[cfg(not(feature = "test-support"))]
+use rurico::embed::{ModelId, cached_artifacts};
+
+#[cfg(feature = "test-support")]
+use rurico::embed::MockEmbedder;
+#[cfg(feature = "test-support")]
+use std::env;
 
 pub(super) use amici::model::embedder::{DegradedReason, degraded_reason_user_note};
 
@@ -45,11 +58,8 @@ impl Embed for NoOpEmbedder {
     }
 }
 
-fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
-    if disabled {
-        tracing::info!("Embedding disabled via --no-embed or YOMU_EMBED=0");
-        return Err(DegradedReason::Disabled);
-    }
+#[cfg(not(feature = "test-support"))]
+fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
     let result = try_load_embedder_with(
         || cached_artifacts(ModelId::default()),
         |e| tracing::warn!(error = %e, "failed to delete corrupt model files"),
@@ -60,7 +70,7 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
             DegradedReason::NotInstalled => "model not installed",
             DegradedReason::BackendUnavailable => "MLX backend unavailable",
             DegradedReason::ProbeFailed => "probe failed",
-            DegradedReason::Disabled => unreachable!("disabled handled above"),
+            DegradedReason::Disabled => unreachable!("yomu no longer disables embedding"),
         };
         record_embedder_warning(*reason, detail);
     } else {
@@ -69,19 +79,33 @@ fn try_load_embedder(disabled: bool) -> Result<Arc<dyn Embed>, DegradedReason> {
     result
 }
 
+/// Test-support build: return a deterministic in-memory embedder so `yomu
+/// index` populates embeddings without a real model (CI runners have none).
+/// `YOMU_TEST_EMBEDDER=unavailable` instead simulates a missing model so the
+/// degraded FTS fallback can be exercised at the process boundary. Compiled
+/// only under `--features test-support`; the production binary loads the real
+/// model via the `cfg(not(...))` variant above and never reads this env var.
+#[cfg(feature = "test-support")]
+fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
+    if env::var("YOMU_TEST_EMBEDDER").as_deref() == Ok("unavailable") {
+        let reason = DegradedReason::NotInstalled;
+        record_embedder_warning(reason, "test-support: simulated model absence");
+        return Err(reason);
+    }
+    Ok(Arc::new(MockEmbedder::default()))
+}
+
 impl Yomu {
     pub(super) fn try_embedder(&self) -> Result<&dyn Embed, DegradedReason> {
-        let disabled = self.embed_disabled;
         self.embedder
-            .get_or_init(|| try_load_embedder(disabled))
+            .get_or_init(try_load_embedder)
             .as_deref()
             .map_err(|r| *r)
     }
 
     pub(super) fn try_embedder_arc(&self) -> Result<Arc<dyn Embed>, DegradedReason> {
-        let disabled = self.embed_disabled;
         self.embedder
-            .get_or_init(|| try_load_embedder(disabled))
+            .get_or_init(try_load_embedder)
             .as_ref()
             .map(Arc::clone)
             .map_err(|r| *r)
@@ -113,20 +137,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
-            embed_disabled: false,
-            rerank_enabled: false,
-            reranker: OnceLock::new(),
-            log_query: false,
-        }
-    }
-
-    /// Exercises the real `try_load_embedder` path with `embed_disabled=true`.
-    pub(super) fn for_test_embed_disabled(conn: Db, root: PathBuf) -> Self {
-        Self {
-            conn: Arc::new(Mutex::new(conn)),
-            embedder: OnceLock::new(),
-            root,
-            embed_disabled: true,
             rerank_enabled: false,
             reranker: OnceLock::new(),
             log_query: false,

@@ -259,7 +259,7 @@ fn index_then_status_then_search() {
     assert!(stdout.contains("Files: 1"), "expected Files: 1: {stdout}");
     assert!(stdout.contains("Chunks:"), "expected Chunks line: {stdout}");
 
-    // search (text-only fallback via probe — no YOMU_EMBED override)
+    // search (read-only over the index built above)
     let output = yomu_cmd()
         .args(["search", "button"])
         .current_dir(dir.path())
@@ -351,21 +351,25 @@ fn search_format_json() {
     }
 }
 
-// T-506: search_format_json_includes_index_and_degraded_notes
+// T-506: search_json_degraded_note_when_model_unavailable
+//
+// The project is indexed (embeddings present via the stub), but the model is
+// unavailable at search time (YOMU_TEST_EMBEDDER=unavailable, test-support
+// seam). Read-only search must fall back to FTS, return results, and surface a
+// degraded note pointing at `yomu model download`.
+//
+// `YOMU_TEST_EMBEDDER` is a test-support-only seam, so this test compiles only
+// under `--features test-support` (the production binary ignores the env var).
+#[cfg(feature = "test-support")]
 #[test]
-fn search_format_json_includes_index_and_degraded_notes() {
+fn search_json_degraded_note_when_model_unavailable() {
     let dir = setup_project();
-    let hf_home = dir.path().join("empty-hf-home");
-    fs::create_dir_all(&hf_home).unwrap();
 
-    // setup_project chunk-indexes but does not embed, and the model is disabled
-    // via an empty HF_HOME. Search is read-only, so it surfaces both an index
-    // hint (no embeddings) and a degraded note (model unavailable).
     let output = yomu_cmd()
         .args(["search", "button", "--json"])
         .current_dir(dir.path())
         .env_remove("GEMINI_API_KEY")
-        .env("HF_HOME", &hf_home)
+        .env("YOMU_TEST_EMBEDDER", "unavailable")
         .output()
         .unwrap();
 
@@ -378,13 +382,16 @@ fn search_format_json_includes_index_and_degraded_notes() {
 
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-    let notes = parsed["notes"].as_array().expect("should have notes array");
-    assert!(
-        notes
-            .iter()
-            .any(|n| n.as_str().is_some_and(|s| s.contains("yomu embed"))),
-        "should include index hint: {stdout}"
+    assert_eq!(
+        parsed["degraded"],
+        serde_json::Value::Bool(true),
+        "model unavailable must mark the envelope degraded: {stdout}"
     );
+    assert!(
+        parsed["results"].as_array().is_some_and(|r| !r.is_empty()),
+        "FTS fallback must still return results: {stdout}"
+    );
+    let notes = parsed["notes"].as_array().expect("should have notes array");
     assert!(
         notes.iter().any(|n| n
             .as_str()
@@ -927,85 +934,6 @@ fn probe_embed_flag_rejected() {
     );
 }
 
-// T-568: search_no_embed_flag_runs_text_only
-#[test]
-fn search_no_embed_flag_runs_text_only() {
-    let dir = setup_project();
-    let output = yomu_cmd()
-        .args(["search", "--no-embed", "button"])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "search --no-embed failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        stdout.contains("Button"),
-        "expected Button in results: {stdout}"
-    );
-}
-
-// T-570: search_no_embed_with_from_is_rejected
-//
-// `--from` requires stored sub-embeddings to perform similarity search; combining
-// it with `--no-embed` would silently fall through to the vector path, breaking
-// the FTS5-only contract. clap rejects the combination at parse time.
-#[test]
-fn search_no_embed_with_from_is_rejected() {
-    let output = yomu_cmd()
-        .args(["search", "--no-embed", "--from", "src/Button.tsx"])
-        .output()
-        .unwrap();
-    assert!(
-        !output.status.success(),
-        "--no-embed + --from should be rejected"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--from") || stderr.contains("conflict"),
-        "should report --from conflict: {stderr}"
-    );
-}
-
-// T-569: search_no_embed_flag_marks_json_degraded
-//
-// `--no-embed` is an explicit caller opt-out, so amici intentionally returns
-// `None` from `degraded_reason_user_note(Disabled)` to avoid a redundant note.
-// The structured `degraded: true` flag is the contract callers rely on.
-#[test]
-fn search_no_embed_flag_marks_json_degraded() {
-    let dir = setup_project();
-    let output = yomu_cmd()
-        .args(["search", "--no-embed", "button", "--json"])
-        .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
-        .env_remove("GEMINI_API_KEY")
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "json --no-embed failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("should parse as JSON: {e}\n{stdout}"));
-    assert_eq!(
-        parsed["degraded"],
-        serde_json::Value::Bool(true),
-        "expected degraded=true: {stdout}"
-    );
-    assert!(
-        parsed["results"].as_array().is_some_and(|r| !r.is_empty()),
-        "should still return FTS5 results: {stdout}"
-    );
-}
-
 // T-610: brief_integration_includes_forward_closure [Spec FR-015 minimal GT]
 #[test]
 fn brief_integration_includes_forward_closure() {
@@ -1018,7 +946,6 @@ fn brief_integration_includes_forward_closure() {
             "src/a.rs",
             "--depth",
             "2",
-            "--no-embed",
         ])
         .current_dir(dir.path())
         .output()
@@ -1097,14 +1024,7 @@ fn brief_integration_rejects_seed_symbol() {
 fn brief_integration_json_output_includes_chunks() {
     let dir = setup_brief_chain_project();
     let output = yomu_cmd()
-        .args([
-            "--json",
-            "brief",
-            "anything",
-            "--seed-file",
-            "src/a.rs",
-            "--no-embed",
-        ])
+        .args(["--json", "brief", "anything", "--seed-file", "src/a.rs"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1219,9 +1139,7 @@ fn search_no_query_json_envelope_includes_next_step_and_retryable() {
 // T-700: after_help_examples_present_for_all_commands [Issue #192 Phase 2.3]
 #[test]
 fn after_help_examples_present_for_all_commands() {
-    for cmd in [
-        "search", "index", "rebuild", "impact", "status", "embed", "brief",
-    ] {
+    for cmd in ["search", "index", "rebuild", "impact", "status", "brief"] {
         let output = yomu_cmd().args([cmd, "--help"]).output().unwrap();
         assert!(
             output.status.success(),
@@ -1243,16 +1161,15 @@ fn after_help_examples_present_for_all_commands() {
     }
 }
 
-// T-008: degraded_and_notes_present_in_all_six_json_routes [Issue #192 Phase 2.2b]
-// FR-001: every JSON success envelope on index, rebuild, dry_run, embed, status,
-// and impact carries both `degraded` (boolean) and `notes` (array).
+// T-008: degraded_and_notes_present_in_all_five_json_routes [Issue #192 Phase 2.2b]
+// FR-001: every JSON success envelope on index, rebuild, dry_run, status, and
+// impact carries both `degraded` (boolean) and `notes` (array).
 //
 // Setup: indexed project with a single .tsx file plus an importer so impact has
-// a target. `yomu embed` runs against an indexed-but-empty-pending state (no
-// embedder configured; pending=0 → embed_with_spinners short-circuits) so the
-// JSON envelope is produced without requiring a model.
+// a target. `index` embeds via the test-support stub embedder, so every route
+// produces its JSON envelope without a real model.
 #[test]
-fn degraded_and_notes_present_in_all_six_json_routes() {
+fn degraded_and_notes_present_in_all_five_json_routes() {
     let dir = tempdir().unwrap();
     let src = dir.path().join("src");
     fs::create_dir_all(&src).unwrap();
@@ -1274,14 +1191,10 @@ fn degraded_and_notes_present_in_all_six_json_routes() {
         .output()
         .unwrap();
 
-    // Routes that produce JSON without external state.
-    // `embed` runs without GEMINI_API_KEY / YOMU_EMBED so it neither tries the
-    // network nor a downloaded model — pending=0 because the index does not
-    // exist yet at first call, so embed short-circuits to a default result.
-    // Order matters: embed runs before index so its pending count is 0.
+    // Routes that produce JSON without external state. `index` / `rebuild`
+    // embed via the test-support stub, so no real model or network is needed.
     let routes: &[(&str, &[&str])] = &[
         ("index --dry-run", &["--json", "index", "--dry-run"]),
-        ("embed (pending=0)", &["--json", "embed"]),
         ("index", &["--json", "index"]),
         ("status", &["--json", "status"]),
         ("rebuild", &["--json", "rebuild"]),
@@ -1292,7 +1205,6 @@ fn degraded_and_notes_present_in_all_six_json_routes() {
         let output = yomu_cmd()
             .args(*args)
             .current_dir(dir.path())
-            .env_remove("YOMU_EMBED")
             .env_remove("GEMINI_API_KEY")
             .output()
             .unwrap();
@@ -1414,7 +1326,6 @@ fn run_json_array_check(
     let output = yomu_cmd()
         .args(args)
         .current_dir(dir.path())
-        .env_remove("YOMU_EMBED")
         .env_remove("GEMINI_API_KEY")
         .output()
         .unwrap();
@@ -1619,7 +1530,7 @@ fn search_json_emits_injection_check_and_per_chunk_flags() {
     let dir = setup_injection_e2e_project();
     let parsed = run_json_array_check(
         &dir,
-        &["--json", "search", "add", "--no-embed"],
+        &["--json", "search", "add"],
         "results",
         |r| r.get("injection_flags").is_some(),
         "FR-319b: at least one result chunk must include injection_flags field \
@@ -1645,14 +1556,7 @@ fn brief_json_emits_injection_check_and_per_chunk_flags() {
     let dir = setup_injection_e2e_project();
     let parsed = run_json_array_check(
         &dir,
-        &[
-            "--json",
-            "brief",
-            "task",
-            "--seed-file",
-            "src/lib.rs",
-            "--no-embed",
-        ],
+        &["--json", "brief", "task", "--seed-file", "src/lib.rs"],
         "chunks",
         |c| c.get("injection_flags").is_some(),
         "FR-320b: at least one brief chunk must include injection_flags field \
@@ -1677,7 +1581,7 @@ fn search_json_emits_per_chunk_source_kind() {
     let dir = setup_injection_e2e_project();
     run_json_array_check(
         &dir,
-        &["--json", "search", "add", "--no-embed"],
+        &["--json", "search", "add"],
         "results",
         |r| r["source_kind"].as_str() == Some("src"),
         "FR-009a: at least one result chunk must carry source_kind='src' \
@@ -1697,14 +1601,7 @@ fn brief_json_emits_per_chunk_source_kind() {
     let dir = setup_injection_e2e_project();
     run_json_array_check(
         &dir,
-        &[
-            "--json",
-            "brief",
-            "task",
-            "--seed-file",
-            "src/lib.rs",
-            "--no-embed",
-        ],
+        &["--json", "brief", "task", "--seed-file", "src/lib.rs"],
         "chunks",
         |c| c["source_kind"].as_str() == Some("src"),
         "FR-009a: at least one brief chunk must carry source_kind='src'",

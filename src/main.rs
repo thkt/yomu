@@ -41,7 +41,7 @@ Examples:
   yomu search \"auth\" --path src/auth --limit 5
   yomu --json search \"useAuth\"
 
-Search is read-only; build the index first with `yomu index` then `yomu embed`.")]
+Search is read-only; build the index first with `yomu index`.")]
     Search {
         /// Natural language query (reads from stdin if omitted or "-")
         query: Option<String>,
@@ -60,12 +60,8 @@ Search is read-only; build the index first with `yomu index` then `yomu embed`."
         /// Deprecated: use global --json instead
         #[arg(long, hide = true)]
         format: Option<String>,
-        /// Skip embedding lookups; use FTS5 only. Same effect as YOMU_EMBED=0.
-        /// Conflicts with `--from` (similarity search requires stored embeddings).
-        #[arg(long, conflicts_with = "from")]
-        no_embed: bool,
     },
-    /// Update chunk index incrementally. No API calls.
+    /// Update the index incrementally (chunks + embeddings). No API calls.
     #[command(after_help = "\
 Examples:
   yomu index
@@ -78,7 +74,7 @@ Examples:
         #[arg(long)]
         exclude_vendor: bool,
     },
-    /// Rebuild chunk index from scratch. No API calls.
+    /// Rebuild the index from scratch (chunks + embeddings). No API calls.
     #[command(after_help = "\
 Examples:
   yomu rebuild
@@ -122,12 +118,6 @@ Examples:
   yomu verify
   yomu --json verify")]
     Verify,
-    /// Embed pending chunks for semantic search.
-    #[command(after_help = "\
-Examples:
-  yomu embed
-  yomu --json embed")]
-    Embed,
     /// Bundle forward-closure code for an agent (recall-complete brief).
     #[command(after_help = "\
 Examples:
@@ -152,9 +142,6 @@ Examples:
         /// Maximum bytes in output (1000..=10000000)
         #[arg(long, default_value_t = 80_000, value_parser = clap::value_parser!(u32).range(1000..=10_000_000))]
         max_bytes: u32,
-        /// Skip embedding lookups; use FTS5 only.
-        #[arg(long)]
-        no_embed: bool,
     },
     /// Manage the embedding model.
     #[command(
@@ -246,15 +233,8 @@ fn main() -> ExitCode {
         };
     }
 
-    let yomu_options = match &command {
-        Command::Search { no_embed, .. } | Command::Brief { no_embed, .. } => YomuOptions {
-            no_embed: *no_embed,
-            log_query: cli.log_query,
-        },
-        _ => YomuOptions {
-            log_query: cli.log_query,
-            ..YomuOptions::default()
-        },
+    let yomu_options = YomuOptions {
+        log_query: cli.log_query,
     };
 
     let yomu = match Yomu::new(yomu_options) {
@@ -270,7 +250,6 @@ fn main() -> ExitCode {
             path,
             from,
             format,
-            no_embed: _,
         } => {
             if format.is_some() {
                 deprecation_warn("--format", "--json");
@@ -351,7 +330,6 @@ fn main() -> ExitCode {
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
         Command::Verify => unreachable!("handled before Yomu::new()"),
-        Command::Embed => yomu.embed(json),
         Command::Brief {
             task,
             seed_file,
@@ -359,7 +337,6 @@ fn main() -> ExitCode {
             depth,
             max_chunks,
             max_bytes,
-            no_embed: _,
         } => {
             let task_brief = brief::TaskBrief {
                 task,
@@ -427,7 +404,7 @@ fn render_clap_error(e: &clap::Error) -> ExitCode {
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "search", "index", "rebuild", "impact", "status", "verify", "embed", "brief", "model",
+    "search", "index", "rebuild", "impact", "status", "verify", "brief", "model",
 ];
 
 fn build_seeds(files: Vec<String>, symbols: Vec<String>) -> Vec<brief::Seed> {

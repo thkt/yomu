@@ -41,7 +41,7 @@ fn coverage_if_partial(stats: &storage::IndexStatus) -> Option<String> {
 
 pub(super) fn format_coverage_note(stats: &storage::IndexStatus) -> Option<String> {
     coverage_if_partial(stats).map(|cov| {
-        format!("\n\nEmbedding coverage: {cov}. Use search to incrementally embed more.")
+        format!("\n\nEmbedding coverage: {cov}. Run `yomu index` again to finish embedding.")
     })
 }
 
@@ -406,36 +406,6 @@ struct JsonStatus {
     last_indexed: Option<String>,
     degraded: bool,
     notes: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct JsonEmbedResult {
-    embedded: u32,
-    degraded: bool,
-    notes: Vec<String>,
-}
-
-pub(super) fn format_embed_result(
-    result: &indexer::EmbedResult,
-    json: bool,
-    degraded: bool,
-    notes: Vec<String>,
-) -> String {
-    if json {
-        let resp = JsonEmbedResult {
-            embedded: result.chunks_embedded,
-            degraded,
-            notes,
-        };
-        return serde_json::to_string(&resp).unwrap();
-    }
-    if result.chunks_embedded == 0 {
-        return "nothing to embed".to_owned();
-    }
-    format!(
-        "Embedded {} chunks across {} files",
-        result.chunks_embedded, result.files_completed
-    )
 }
 
 pub(super) fn format_status_json(

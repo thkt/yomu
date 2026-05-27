@@ -232,10 +232,10 @@ fn search_does_not_auto_embed_chunked_only() {
     );
     assert_eq!(stats.embedded_chunks, 0, "search must not auto-embed");
 
-    // The result guides the user to embed manually.
+    // The result guides the user to (re)build the index, which embeds.
     assert!(
-        text.contains("yomu embed"),
-        "expected `yomu embed` hint, got: {text}"
+        text.contains("yomu index"),
+        "expected `yomu index` hint, got: {text}"
     );
 }
 
@@ -725,44 +725,21 @@ fn format_results_grouped_shows_score_for_all() {
 // T-193: index_works_without_api_key
 #[test]
 fn index_works_without_api_key() {
-    let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "function A() {}")]);
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/A.tsx", "function A() {}")],
+        Arc::new(MockEmbedder::default()),
+    );
     let text = y.index(IndexRunOptions::default(), false).unwrap();
     assert!(text.contains("complete"), "expected success: {text}");
-}
-
-// T-194: index_chunks_without_embedding
-#[test]
-fn index_chunks_without_embedding() {
-    let (y, _dir) = test_yomu_with_files(&[
-        (
-            "src/Header.tsx",
-            "export function Header() { return <header/>; }",
-        ),
-        (
-            "src/Footer.tsx",
-            "export function Footer() { return <footer/>; }",
-        ),
-    ]);
-
-    let text = y.index(IndexRunOptions::default(), false).unwrap();
-    assert!(text.contains("complete"), "expected completion: {text}");
-    assert!(
-        text.contains("Embedding coverage:"),
-        "should show coverage gap: {text}"
-    );
-
-    let stats = {
-        let c = y.conn.lock().unwrap();
-        storage::get_stats(&c).unwrap()
-    };
-    assert!(stats.total_chunks > 0, "should have chunks");
-    assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
 }
 
 // T-195: rebuild_re_parses_all_files
 #[test]
 fn rebuild_re_parses_all_files() {
-    let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() { return <div/>; }")]);
+    let (y, dir) = test_yomu_with_files_and_embedder(
+        &[("src/A.tsx", "export function A() { return <div/>; }")],
+        Arc::new(MockEmbedder::default()),
+    );
     y.index(IndexRunOptions::default(), false).unwrap();
 
     let chunks_before = {
@@ -1477,7 +1454,10 @@ fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
     lines.push("}".to_owned());
     let fixture = lines.join("\n");
 
-    let (y, _dir) = test_yomu_with_files(&[("src/UserForm.tsx", &fixture)]);
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/UserForm.tsx", &fixture)],
+        Arc::new(MockEmbedder::default()),
+    );
 
     y.index(IndexRunOptions::default(), false).unwrap();
 
@@ -1502,7 +1482,10 @@ fn below_threshold_no_subchunks_in_index() {
   const handleClick = () => { setCount(count + 1); };
   return <div><button onClick={handleClick}>{count}</button></div>;
 }"#;
-    let (y, _dir) = test_yomu_with_files(&[("src/SmallCard.tsx", fixture)]);
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/SmallCard.tsx", fixture)],
+        Arc::new(MockEmbedder::default()),
+    );
     y.index(IndexRunOptions::default(), false).unwrap();
 
     let stats = y.status(false).unwrap();
@@ -1763,19 +1746,6 @@ fn degraded_reason_returns_amici_type() {
     assert_eq!(y.degraded_reason(), Some(&DegradedReason::NotInstalled));
 }
 
-// T-233: embed_disabled_yields_degraded_disabled
-#[test]
-fn embed_disabled_yields_degraded_disabled() {
-    let (conn, dir) = setup_test_files(&[(
-        "src/Button.tsx",
-        "export function Button() { return <div/>; }",
-    )]);
-    let y = Yomu::for_test_embed_disabled(conn, dir.path().to_path_buf());
-    let _ = y.get_embedder();
-
-    assert_eq!(y.degraded_reason(), Some(&DegradedReason::Disabled));
-}
-
 // T-234: json_notes_present_when_degraded
 #[test]
 fn json_notes_present_when_degraded() {
@@ -1802,96 +1772,64 @@ fn json_notes_present_when_degraded() {
     );
 }
 
-// T-109: un-embedded chunks are embedded, result reports count
+// T-185: index_embeds_chunks
 #[test]
-fn embed_pending_chunks_returns_count() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
-    let (conn, dir) = setup_test_files(&[(
-        "src/Button.tsx",
-        "export function Button() { return <div>button</div>; }",
-    )]);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
-
-    let text = y.embed(false).unwrap();
-    assert!(
-        text.starts_with("Embedded"),
-        "expected result starting with 'Embedded': {text}"
+fn index_embeds_chunks() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[(
+            "src/Button.tsx",
+            "export function Button() { return <div/>; }",
+        )],
+        Arc::new(MockEmbedder::default()),
     );
+    y.index(IndexRunOptions::default(), false).unwrap();
+
+    let stats = {
+        let c = y.conn.lock().unwrap();
+        storage::get_stats(&c).unwrap()
+    };
+    assert!(stats.total_chunks > 0, "index should create chunks");
     assert!(
-        text.contains("chunks"),
-        "expected 'chunks' in result: {text}"
+        stats.embedded_chunks > 0,
+        "index should embed chunks (index = embed)"
     );
 }
 
-// T-110: no pending chunks → "nothing to embed"
+// T-112: index errors when the embedding model is unavailable
 #[test]
-fn embed_nothing_to_embed() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
-    let (conn, dir) = setup_test_files(&[]);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    // No index run — no chunks to embed.
-
-    let text = y.embed(false).unwrap();
-    assert_eq!(
-        text, "nothing to embed",
-        "expected 'nothing to embed': {text}"
-    );
-}
-
-// T-111: json=true produces {"embedded": N}
-#[test]
-fn embed_json_format() {
-    let embedder = Arc::new(MockEmbedder::default()) as Arc<dyn Embed>;
-    let (conn, dir) = setup_test_files(&[(
-        "src/Button.tsx",
-        "export function Button() { return <div>button</div>; }",
-    )]);
-    let y = Yomu::for_test(conn, dir.path().to_path_buf(), Some(embedder));
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
-
-    let json = y.embed(true).unwrap();
-    let parsed = parse_json(&json);
-    assert!(
-        parsed.get("embedded").is_some(),
-        "expected 'embedded' key in JSON: {json}"
-    );
-}
-
-// T-112: embedder not installed → YomuError::EmbedderUnavailable
-#[test]
-fn embed_embedder_unavailable_returns_error() {
+fn index_errors_when_model_unavailable() {
     let (conn, dir) = setup_test_files(&[("src/lib.rs", "pub fn hello() {}")]);
     let y = Yomu::for_test_raw(
         conn,
         dir.path().to_path_buf(),
         Err(DegradedReason::NotInstalled),
     );
-    y.index(IndexRunOptions::default(), false).unwrap();
 
-    let result = y.embed(false);
+    // index = embed: an unavailable model fails the whole command rather than
+    // leaving a chunk-only index behind.
+    let result = y.index(IndexRunOptions::default(), false);
     assert!(
         matches!(result, Err(YomuError::EmbedderUnavailable(_))),
-        "expected EmbedderUnavailable error: {result:?}"
+        "index must error when the model is unavailable: {result:?}"
     );
 }
 
-// T-120: embed() with Disabled reason → YomuError::EmbedderUnavailable
+// T-112b: index surfaces the generic unavailable message for degraded reasons
+// other than NotInstalled (BackendUnavailable / ProbeFailed fold into one arm).
 #[test]
-fn embed_disabled_returns_embedder_unavailable() {
+fn index_errors_with_generic_message_when_backend_unavailable() {
     let (conn, dir) = setup_test_files(&[("src/lib.rs", "pub fn hello() {}")]);
     let y = Yomu::for_test_raw(
         conn,
         dir.path().to_path_buf(),
-        Err(DegradedReason::Disabled),
+        Err(DegradedReason::BackendUnavailable),
     );
-    y.index(IndexRunOptions::default(), false).unwrap();
 
-    let result = y.embed(false);
-    assert!(
-        matches!(result, Err(YomuError::EmbedderUnavailable(_))),
-        "expected EmbedderUnavailable for Disabled reason: {result:?}"
-    );
+    let result = y.index(IndexRunOptions::default(), false);
+    let Err(YomuError::EmbedderUnavailable(msg)) = result else {
+        panic!("index must error when the backend is unavailable: {result:?}");
+    };
+    assert_eq!(msg, "embedding model unavailable");
 }
 
 // T-235: json_notes_empty_via_search_with_ok_embedder
@@ -1979,26 +1917,28 @@ fn json_notes_backend_unavailable() {
 // T-238: index_json_returns_valid_json
 #[test]
 fn index_json_returns_valid_json() {
-    let (y, _dir) = test_yomu_with_files(&[
-        ("src/A.tsx", "export function A() {}"),
-        ("src/B.tsx", "export function B() {}"),
-    ]);
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/A.tsx", "export function A() {}"),
+            ("src/B.tsx", "export function B() {}"),
+        ],
+        Arc::new(MockEmbedder::default()),
+    );
     let json = y.index(IndexRunOptions::default(), true).unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["files_processed"], 2);
     assert!(parsed["chunks_created"].as_u64().unwrap() > 0);
     assert_eq!(parsed["files_skipped"], 0);
     assert_eq!(parsed["files_errored"], 0);
-    assert!(
-        parsed.get("coverage").is_some(),
-        "should include coverage when not fully embedded: {json}"
-    );
 }
 
 // T-239: rebuild_json_returns_valid_json
 #[test]
 fn rebuild_json_returns_valid_json() {
-    let (y, _dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/A.tsx", "export function A() {}")],
+        Arc::new(MockEmbedder::default()),
+    );
     y.index(IndexRunOptions::default(), false).unwrap();
 
     let json = y.rebuild(IndexRunOptions::default(), true).unwrap();
@@ -2734,28 +2674,7 @@ fn error_code_embedder_unavailable_is_temp_failure() {
 #[test]
 fn yomu_config_from_env_with_empty_lookup_uses_defaults() {
     let cfg = YomuConfig::from_env_with(|_| None);
-    assert!(!cfg.embed_disabled);
     assert!(!cfg.rerank_enabled);
-}
-
-// T-CFG002: YOMU_EMBED=0 sets embed_disabled
-#[test]
-fn yomu_config_yomu_embed_zero_disables_embedding() {
-    let cfg = YomuConfig::from_env_with(|k| match k {
-        "YOMU_EMBED" => Some("0".into()),
-        _ => None,
-    });
-    assert!(cfg.embed_disabled);
-}
-
-// T-CFG003: YOMU_EMBED non-"0" leaves embed_disabled false
-#[test]
-fn yomu_config_yomu_embed_non_zero_keeps_embedding() {
-    let cfg = YomuConfig::from_env_with(|k| match k {
-        "YOMU_EMBED" => Some("1".into()),
-        _ => None,
-    });
-    assert!(!cfg.embed_disabled);
 }
 
 // T-CFG004: YOMU_RERANK=1 enables reranker
@@ -2783,7 +2702,6 @@ fn yomu_config_yomu_rerank_non_one_keeps_reranker_off() {
 fn yomu_config_default_matches_empty_lookup() {
     let default = YomuConfig::default();
     let empty = YomuConfig::from_env_with(|_| None);
-    assert_eq!(default.embed_disabled, empty.embed_disabled);
     assert_eq!(default.rerank_enabled, empty.rerank_enabled);
 }
 
@@ -2855,14 +2773,14 @@ fn next_step_for_query_too_long_includes_max_characters() {
     );
 }
 
-// T-004: next_step for EmbedderUnavailable suggests model download + env opt-out.
+// T-004: next_step for EmbedderUnavailable recommends installing the model.
 // FR-002, AS-002.
 #[test]
-fn next_step_for_embedder_unavailable_recommends_download_or_disable() {
+fn next_step_for_embedder_unavailable_recommends_model_download() {
     let e = YomuError::EmbedderUnavailable("test".into());
     assert_eq!(
         e.next_step(),
-        Some("run `yomu model download`, or set `YOMU_EMBED=0` for FTS-only mode".to_owned())
+        Some("run `yomu model download` to install the embedding model".to_owned())
     );
 }
 
@@ -3037,13 +2955,6 @@ fn make_dry_run_result(files_errored: u32) -> indexer::DryRunResult {
     }
 }
 
-fn make_embed_result(chunks_embedded: u32, files_completed: u32) -> indexer::EmbedResult {
-    indexer::EmbedResult {
-        chunks_embedded,
-        files_completed,
-    }
-}
-
 // T-001: format_index_json with files_errored=2 marks degraded and explains why.
 // FR-002.
 #[test]
@@ -3067,6 +2978,57 @@ fn format_index_json_with_errored_files_is_degraded() {
             .iter()
             .any(|n| n.as_str() == Some("failed to chunk 2 file(s)")),
         "notes must contain failure description, got: {json}"
+    );
+}
+
+// T-005: degraded_for_index flags a partial embed (embedded < embeddable) even
+// with no chunk errors, so a JSON consumer keying on `degraded` sees the
+// half-embedded state. Re-establishes the old `yomu embed` skip signal (FR-005)
+// on the unified index path.
+#[test]
+fn degraded_for_index_flags_partial_embed() {
+    let stats = storage::IndexStatus {
+        total_files: 1,
+        total_chunks: 5,
+        embeddable_chunks: 5,
+        embedded_chunks: 3,
+        last_indexed_at: None,
+    };
+    let (degraded, notes) = super::degraded_for_index(0, &stats);
+    assert!(degraded, "partial embed must set degraded=true");
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "embedded 3 of 5 chunks; run `yomu index` again to finish"),
+        "notes must explain the embed shortfall, got: {notes:?}"
+    );
+}
+
+// T-005b: degraded_for_index is not degraded when every embeddable chunk is
+// embedded and no file errored (false branch of both conditions).
+#[test]
+fn degraded_for_index_not_degraded_when_fully_embedded() {
+    let stats = make_index_status();
+    let (degraded, notes) = super::degraded_for_index(0, &stats);
+    assert!(!degraded, "fully embedded + no errors must not be degraded");
+    assert!(notes.is_empty(), "no notes when complete, got: {notes:?}");
+}
+
+// T-005c: the index/rebuild text coverage note points at `yomu index` (search is
+// read-only and no longer embeds) when the embed is partial.
+#[test]
+fn format_coverage_note_directs_to_index_when_partial() {
+    let stats = storage::IndexStatus {
+        total_files: 1,
+        total_chunks: 5,
+        embeddable_chunks: 5,
+        embedded_chunks: 3,
+        last_indexed_at: None,
+    };
+    let note = format_coverage_note(&stats).expect("partial embed should yield a note");
+    assert!(
+        note.contains("Run `yomu index` again to finish embedding"),
+        "note must direct to `yomu index`, got: {note}"
     );
 }
 
@@ -3150,33 +3112,6 @@ fn format_dry_run_json_with_errored_files_is_degraded() {
     );
 }
 
-// T-005: format_embed_result with pending > chunks_embedded marks degraded
-// and reports both counts plus the skip count.
-// FR-005.
-#[test]
-fn format_embed_result_pending_exceeds_embedded_is_degraded() {
-    let pending = 5;
-    let result = make_embed_result(3, 2);
-    let (degraded, notes) = super::degraded_for_embed_skips(pending, result.chunks_embedded);
-
-    let json = format_embed_result(&result, true, degraded, notes);
-    let parsed = parse_json(&json);
-
-    assert_eq!(
-        parsed["degraded"], true,
-        "pending=5 > embedded=3 should set degraded=true: {json}"
-    );
-    let notes_arr = parsed["notes"]
-        .as_array()
-        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
-    assert!(
-        notes_arr
-            .iter()
-            .any(|n| n.as_str() == Some("embedded 3 of 5 chunks (2 skipped)")),
-        "embed notes must contain count breakdown, got: {json}"
-    );
-}
-
 // T-006: format_status_json with (false, vec![]) emits constant non-degraded envelope.
 // FR-006 (status is never degraded by this route's design).
 #[test]
@@ -3255,30 +3190,6 @@ fn format_index_json_notes_does_not_mention_coverage() {
             .iter()
             .any(|n| n.as_str().is_some_and(|s| s.contains("coverage"))),
         "notes must not mention coverage (FR-007), got: {json}"
-    );
-}
-
-// T-010: format_embed_result with pending == chunks_embedded is not degraded.
-// FR-005 (boundary at equality) + BR-001 (coverage partiality is not a degradation).
-#[test]
-fn format_embed_result_full_completion_is_not_degraded() {
-    let pending = 5;
-    let result = make_embed_result(5, 5);
-    let (degraded, notes) = super::degraded_for_embed_skips(pending, result.chunks_embedded);
-
-    let json = format_embed_result(&result, true, degraded, notes);
-    let parsed = parse_json(&json);
-
-    assert_eq!(
-        parsed["degraded"], false,
-        "pending==embedded should set degraded=false: {json}"
-    );
-    let notes_arr = parsed["notes"]
-        .as_array()
-        .unwrap_or_else(|| panic!("notes must be an array: {json}"));
-    assert!(
-        notes_arr.is_empty(),
-        "notes must be empty when fully embedded: {json}"
     );
 }
 
