@@ -14,10 +14,6 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 
-pub(super) const DEFAULT_EMBED_BUDGET: u32 = 50;
-const MIN_EMBED_BUDGET: u32 = 1;
-const MAX_EMBED_BUDGET: u32 = 500;
-
 pub(super) fn record_embedder_warning(reason: DegradedReason, detail: &str) {
     tracing::warn!(reason = ?reason, detail, "Embedder unavailable, using text search only");
     #[cfg(test)]
@@ -46,28 +42,6 @@ impl Embed for NoOpEmbedder {
     }
     fn embed_text(&self, _text: &str, _prefix: &str) -> Result<Vec<f32>, EmbedError> {
         Err(EmbedError::Inference("embedder not available".into()))
-    }
-}
-
-pub(super) fn parse_budget_value(value: Option<&str>) -> u32 {
-    match value {
-        Some(v) => match v.parse::<u32>() {
-            Ok(n) if (MIN_EMBED_BUDGET..=MAX_EMBED_BUDGET).contains(&n) => n,
-            Ok(n) => {
-                tracing::warn!(
-                    value = n,
-                    "YOMU_EMBED_BUDGET out of range ({}..={}), using default",
-                    MIN_EMBED_BUDGET,
-                    MAX_EMBED_BUDGET
-                );
-                DEFAULT_EMBED_BUDGET
-            }
-            Err(_) => {
-                tracing::warn!(value = %v, "Invalid YOMU_EMBED_BUDGET, using default");
-                DEFAULT_EMBED_BUDGET
-            }
-        },
-        None => DEFAULT_EMBED_BUDGET,
     }
 }
 
@@ -121,10 +95,6 @@ impl Yomu {
     pub(super) fn degraded_reason(&self) -> Option<&DegradedReason> {
         self.embedder.get().and_then(|r| r.as_ref().err())
     }
-
-    pub(super) fn embedding_available(&self) -> bool {
-        self.embedder.get().is_some_and(Result::is_ok)
-    }
 }
 
 #[cfg(test)]
@@ -143,7 +113,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
-            embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
             rerank_enabled: false,
             reranker: OnceLock::new(),
@@ -157,7 +126,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
-            embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: true,
             rerank_enabled: false,
             reranker: OnceLock::new(),

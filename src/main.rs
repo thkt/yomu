@@ -39,7 +39,9 @@ Examples:
   yomu search \"streaming chat hooks\"
   yomu search --from src/query.rs:rerank
   yomu search \"auth\" --path src/auth --limit 5
-  yomu --json search \"useAuth\"")]
+  yomu --json search \"useAuth\"
+
+Search is read-only; build the index first with `yomu index` then `yomu embed`.")]
     Search {
         /// Natural language query (reads from stdin if omitted or "-")
         query: Option<String>,

@@ -1,6 +1,5 @@
 use super::embedder::{
-    DegradedReason, RECORDED_WARNINGS, get_recorded_warnings, parse_budget_value,
-    record_embedder_warning,
+    DegradedReason, RECORDED_WARNINGS, get_recorded_warnings, record_embedder_warning,
 };
 use super::*;
 use std::collections::HashMap;
@@ -181,9 +180,9 @@ fn search_without_embedder_degrades_gracefully() {
     );
 }
 
-// T-181: search_auto_indexes_empty_db
+// T-181: search_does_not_auto_index_empty_db
 #[test]
-fn search_auto_indexes_empty_db() {
+fn search_does_not_auto_index_empty_db() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Button.tsx", "function Button() { return <div/>; }")],
         Arc::new(MockEmbedder::default()),
@@ -192,29 +191,25 @@ fn search_auto_indexes_empty_db() {
     let text = y
         .search(Some("button component"), 10, 0, &[], false, None)
         .unwrap();
-    assert!(
-        !text.contains("No results found"),
-        "expected results after auto-index, got: {text}"
-    );
-    assert!(
-        text.contains("Button"),
-        "expected Button in results, got: {text}"
-    );
 
+    // Search must not mutate the index: an empty DB stays empty.
     let stats = {
         let c = y.conn.lock().unwrap();
         storage::get_stats(&c).unwrap()
     };
-    assert!(stats.total_chunks > 0, "expected chunks after auto-index");
+    assert_eq!(stats.total_chunks, 0, "search must not auto-index");
+    assert_eq!(stats.embedded_chunks, 0, "search must not auto-embed");
+
+    // The result guides the user to build the index manually.
     assert!(
-        stats.embedded_chunks > 0,
-        "expected embeddings after auto-index"
+        text.contains("yomu index"),
+        "expected `yomu index` hint, got: {text}"
     );
 }
 
-// T-182: search_incremental_embeds_chunked_only
+// T-182: search_does_not_auto_embed_chunked_only
 #[test]
-fn search_incremental_embeds_chunked_only() {
+fn search_does_not_auto_embed_chunked_only() {
     let (y, _dir) = test_yomu_with_files_and_embedder(
         &[("src/Form.tsx", "export function Form() { return <form/>; }")],
         Arc::new(MockEmbedder::default()),
@@ -222,26 +217,26 @@ fn search_incremental_embeds_chunked_only() {
 
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    {
-        let c = y.conn.lock().unwrap();
-        let stats = storage::get_stats(&c).unwrap();
-        assert!(stats.total_chunks > 0, "should have chunks");
-        assert_eq!(stats.embedded_chunks, 0, "should have no embeddings yet");
-    }
-
     let text = y
         .search(Some("form component"), 10, 0, &[], false, None)
         .unwrap();
-    assert!(text.contains("Form"), "expected Form in results: {text}");
 
-    {
+    // Search must not embed: a chunk-only index stays at zero embeddings.
+    let stats = {
         let c = y.conn.lock().unwrap();
-        let stats = storage::get_stats(&c).unwrap();
-        assert!(
-            stats.embedded_chunks > 0,
-            "expected embeddings after incremental embed"
-        );
-    }
+        storage::get_stats(&c).unwrap()
+    };
+    assert!(
+        stats.total_chunks > 0,
+        "chunks remain after chunk-only index"
+    );
+    assert_eq!(stats.embedded_chunks, 0, "search must not auto-embed");
+
+    // The result guides the user to embed manually.
+    assert!(
+        text.contains("yomu embed"),
+        "expected `yomu embed` hint, got: {text}"
+    );
 }
 
 // T-183: search_shows_coverage_on_no_results
@@ -1118,121 +1113,6 @@ fn parse_impact_target_multiple_colons() {
     assert_eq!(symbol, Some("C"));
 }
 
-// T-214: parse_budget_value_valid
-#[test]
-fn parse_budget_value_valid() {
-    assert_eq!(parse_budget_value(Some("100")), 100);
-    assert_eq!(parse_budget_value(Some("1")), 1);
-    assert_eq!(parse_budget_value(Some("500")), 500);
-}
-
-// T-215: parse_budget_value_out_of_range
-#[test]
-fn parse_budget_value_out_of_range() {
-    assert_eq!(parse_budget_value(Some("0")), DEFAULT_EMBED_BUDGET);
-    assert_eq!(parse_budget_value(Some("501")), DEFAULT_EMBED_BUDGET);
-}
-
-// T-216: parse_budget_value_invalid
-#[test]
-fn parse_budget_value_invalid() {
-    assert_eq!(parse_budget_value(Some("abc")), DEFAULT_EMBED_BUDGET);
-    assert_eq!(parse_budget_value(Some("")), DEFAULT_EMBED_BUDGET);
-}
-
-// T-217: parse_budget_value_missing
-#[test]
-fn parse_budget_value_missing() {
-    assert_eq!(parse_budget_value(None), DEFAULT_EMBED_BUDGET);
-}
-
-// T-218: determine_index_state_variants
-#[test]
-fn determine_index_state_variants() {
-    let empty = storage::IndexStatus {
-        total_files: 0,
-        total_chunks: 0,
-        embeddable_chunks: 0,
-        embedded_chunks: 0,
-        last_indexed_at: None,
-    };
-    assert!(matches!(determine_index_state(&empty), IndexState::Empty));
-
-    let chunked = storage::IndexStatus {
-        total_files: 5,
-        total_chunks: 20,
-        embeddable_chunks: 20,
-        embedded_chunks: 0,
-        last_indexed_at: Some("2026-01-01".into()),
-    };
-    assert!(matches!(
-        determine_index_state(&chunked),
-        IndexState::ChunkedOnly
-    ));
-
-    let partial = storage::IndexStatus {
-        total_files: 5,
-        total_chunks: 20,
-        embeddable_chunks: 20,
-        embedded_chunks: 10,
-        last_indexed_at: Some("2026-01-01".into()),
-    };
-    assert!(matches!(
-        determine_index_state(&partial),
-        IndexState::PartiallyEmbedded
-    ));
-
-    let full = storage::IndexStatus {
-        total_files: 5,
-        total_chunks: 20,
-        embeddable_chunks: 20,
-        embedded_chunks: 20,
-        last_indexed_at: Some("2026-01-01".into()),
-    };
-    assert!(matches!(
-        determine_index_state(&full),
-        IndexState::FullyEmbedded
-    ));
-}
-
-// T-219: ensure_indexed_partially_embedded_triggers_embed
-#[test]
-fn ensure_indexed_partially_embedded_triggers_embed() {
-    let (y, _dir) = test_yomu_with_files_and_embedder(
-        &[("src/App.tsx", "export function App() { return <div/>; }")],
-        Arc::new(MockEmbedder::default()),
-    );
-
-    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
-
-    let stats_before = {
-        let c = y.conn.lock().unwrap();
-        storage::get_stats(&c).unwrap()
-    };
-    assert!(stats_before.total_chunks > 0, "should have chunks");
-    assert_eq!(
-        stats_before.embedded_chunks, 0,
-        "should have no embeddings yet"
-    );
-
-    let result = y
-        .search(Some("App component"), 10, 0, &[], false, None)
-        .unwrap();
-    assert!(
-        result.contains("App"),
-        "should find App after embedding: {result}"
-    );
-
-    let stats_after = {
-        let c = y.conn.lock().unwrap();
-        storage::get_stats(&c).unwrap()
-    };
-    assert!(
-        stats_after.embedded_chunks > 0,
-        "should have embeddings after search"
-    );
-}
-
 // T-222: with_root_creates_db_and_returns_yomu
 #[test]
 fn with_root_creates_db_and_returns_yomu() {
@@ -1880,10 +1760,10 @@ fn json_notes_present_when_degraded() {
         "notes should contain degradation reason: {json}"
     );
     assert!(
-        notes[0]
+        notes.iter().any(|n| n
             .as_str()
-            .is_some_and(|n| n.contains("yomu model download")),
-        "note should include `yomu model download` hint: {json}"
+            .is_some_and(|s| s.contains("yomu model download"))),
+        "notes should include `yomu model download` hint: {json}"
     );
 }
 
@@ -1989,6 +1869,8 @@ fn json_notes_empty_via_search_with_ok_embedder() {
         dir.path().to_path_buf(),
         Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
     );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 100, None).unwrap();
 
     let json = y.search(Some("nav"), 10, 0, &[], true, None).unwrap();
     let parsed = parse_json(&json);
@@ -2021,9 +1903,11 @@ fn json_notes_outcome_degraded_fallback() {
         !notes.is_empty(),
         "notes should contain fallback reason: {json}"
     );
-    assert_eq!(
-        notes[0], "embedding model not loaded; results from text search only",
-        "note should match outcome.degraded fallback: {json}"
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "embedding model not loaded; results from text search only"),
+        "notes should match outcome.degraded fallback: {json}"
     );
 }
 
@@ -2047,9 +1931,11 @@ fn json_notes_backend_unavailable() {
     let notes = parsed["notes"]
         .as_array()
         .expect("notes should be an array");
-    assert_eq!(
-        notes[0], "embedding model unavailable; results from text search only",
-        "note should match BackendUnavailable variant: {json}"
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "embedding model unavailable; results from text search only"),
+        "notes should match BackendUnavailable variant: {json}"
     );
 }
 
@@ -2418,6 +2304,8 @@ fn search_from_file_integration() {
         ],
         Arc::new(MockEmbedder::default()),
     );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 100, None).unwrap();
 
     let text = y.search(None, 5, 0, &[], false, Some("src/a.rs")).unwrap();
     // Source file should not appear in results
@@ -2813,7 +2701,6 @@ fn yomu_config_from_env_with_empty_lookup_uses_defaults() {
     let cfg = YomuConfig::from_env_with(|_| None);
     assert!(!cfg.embed_disabled);
     assert!(!cfg.rerank_enabled);
-    assert_eq!(cfg.embed_budget, DEFAULT_EMBED_BUDGET);
 }
 
 // T-CFG002: YOMU_EMBED=0 sets embed_disabled
@@ -2856,16 +2743,6 @@ fn yomu_config_yomu_rerank_non_one_keeps_reranker_off() {
     assert!(!cfg.rerank_enabled);
 }
 
-// T-CFG006: YOMU_EMBED_BUDGET valid value flows through
-#[test]
-fn yomu_config_yomu_embed_budget_valid_value_applied() {
-    let cfg = YomuConfig::from_env_with(|k| match k {
-        "YOMU_EMBED_BUDGET" => Some("10".into()),
-        _ => None,
-    });
-    assert_eq!(cfg.embed_budget, 10);
-}
-
 // T-CFG007: Default impl equals from_env_with empty lookup
 #[test]
 fn yomu_config_default_matches_empty_lookup() {
@@ -2873,7 +2750,6 @@ fn yomu_config_default_matches_empty_lookup() {
     let empty = YomuConfig::from_env_with(|_| None);
     assert_eq!(default.embed_disabled, empty.embed_disabled);
     assert_eq!(default.rerank_enabled, empty.rerank_enabled);
-    assert_eq!(default.embed_budget, empty.embed_budget);
 }
 
 // --- Issue #192 Phase 2.2a: InvalidInputKind + YomuError methods ---
