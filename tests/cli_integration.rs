@@ -1041,6 +1041,82 @@ fn brief_integration_json_output_includes_chunks() {
     );
 }
 
+// Minimal TS project exercising a tsconfig `baseUrl` + `paths` alias: the seed
+// imports `@/util/format`, which maps to `src/util/format.ts` only when the
+// resolver factors `baseUrl` into the alias target.
+fn setup_ts_alias_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("components")).unwrap();
+    fs::create_dir_all(src.join("util")).unwrap();
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"baseUrl\": \"src\", \"paths\": { \"@/*\": [\"*\"] } } }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("components/widget.tsx"),
+        "import { formatLabel } from \"@/util/format\";\n\
+         export function Widget() { return formatLabel(\"x\"); }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("util/format.ts"),
+        "export function formatLabel(s: string): string { return s.toUpperCase(); }\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
+// T-613: brief_resolves_tsconfig_baseurl_path_alias [#127 Phase 2]
+// The seed imports `@/util/format`; tsconfig maps `@/*` to `*` under
+// `baseUrl: "src"`, so the forward closure must include `src/util/format.ts`.
+// Before the baseUrl fix the alias target resolved to the repo root and the
+// file was dropped from the closure.
+#[test]
+fn brief_resolves_tsconfig_baseurl_path_alias() {
+    let dir = setup_ts_alias_project();
+    let output = yomu_cmd()
+        .args([
+            "brief",
+            "widget",
+            "--seed-file",
+            "src/components/widget.tsx",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "brief failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("src/util/format.ts"),
+        "forward closure must resolve baseUrl path alias `@/util/format` → \
+         src/util/format.ts, got: {stdout}"
+    );
+}
+
 // --- ADR-0066 Group 2 exit code + JSON error envelope ---
 
 /// Returns the last line in stderr that begins with `{`, parsed as JSON.
