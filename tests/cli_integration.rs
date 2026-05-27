@@ -263,7 +263,6 @@ fn index_then_status_then_search() {
     let output = yomu_cmd()
         .args(["search", "button"])
         .current_dir(dir.path())
-        .env_remove("GEMINI_API_KEY")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -368,7 +367,6 @@ fn search_json_degraded_note_when_model_unavailable() {
     let output = yomu_cmd()
         .args(["search", "button", "--json"])
         .current_dir(dir.path())
-        .env_remove("GEMINI_API_KEY")
         .env("YOMU_TEST_EMBEDDER", "unavailable")
         .output()
         .unwrap();
@@ -1205,7 +1203,6 @@ fn degraded_and_notes_present_in_all_five_json_routes() {
         let output = yomu_cmd()
             .args(*args)
             .current_dir(dir.path())
-            .env_remove("GEMINI_API_KEY")
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1326,7 +1323,6 @@ fn run_json_array_check(
     let output = yomu_cmd()
         .args(args)
         .current_dir(dir.path())
-        .env_remove("GEMINI_API_KEY")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
