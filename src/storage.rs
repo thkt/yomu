@@ -81,18 +81,6 @@ pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     })
 }
 
-pub fn is_index_fresh(conn: &Connection, max_age_secs: u32) -> Result<bool, StorageError> {
-    match conn.query_row(
-        "SELECT strftime('%s', 'now') - strftime('%s', value) < ?1 FROM index_meta WHERE key = 'last_indexed_at'",
-        [max_age_secs],
-        |row| row.get(0),
-    ) {
-        Ok(fresh) => Ok(fresh),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-        Err(e) => Err(e.into()),
-    }
-}
-
 pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageError> {
     let mut stmt = conn.prepare_cached("SELECT DISTINCT file_path FROM chunks")?;
     let paths = stmt.query_map([], |row| row.get::<_, String>(0))?;

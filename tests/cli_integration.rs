@@ -351,33 +351,16 @@ fn search_format_json() {
     }
 }
 
-#[cfg(unix)]
 // T-506: search_format_json_includes_index_and_degraded_notes
 #[test]
 fn search_format_json_includes_index_and_degraded_notes() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = setup_project();
-    let src = dir.path().join("src");
-    let bad_path = src.join("Unreadable.tsx");
     let hf_home = dir.path().join("empty-hf-home");
     fs::create_dir_all(&hf_home).unwrap();
-    fs::write(
-        &bad_path,
-        "export function Unreadable() { return <div />; }\n",
-    )
-    .unwrap();
-    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o000)).unwrap();
 
-    let db_path = dir.path().join(".yomu").join("index.db");
-    let conn = rusqlite::Connection::open(db_path).unwrap();
-    conn.execute(
-        "UPDATE index_meta SET value = datetime('now', '-2 minutes') WHERE key = 'last_indexed_at'",
-        [],
-    )
-    .unwrap();
-    drop(conn);
-
+    // setup_project chunk-indexes but does not embed, and the model is disabled
+    // via an empty HF_HOME. Search is read-only, so it surfaces both an index
+    // hint (no embeddings) and a degraded note (model unavailable).
     let output = yomu_cmd()
         .args(["search", "button", "--json"])
         .current_dir(dir.path())
@@ -385,8 +368,6 @@ fn search_format_json_includes_index_and_degraded_notes() {
         .env("HF_HOME", &hf_home)
         .output()
         .unwrap();
-
-    fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o644)).unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -401,8 +382,8 @@ fn search_format_json_includes_index_and_degraded_notes() {
     assert!(
         notes
             .iter()
-            .any(|n| n == "1 files had errors during re-indexing"),
-        "should include re-index note: {stdout}"
+            .any(|n| n.as_str().is_some_and(|s| s.contains("yomu embed"))),
+        "should include index hint: {stdout}"
     );
     assert!(
         notes.iter().any(|n| n

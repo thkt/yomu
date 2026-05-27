@@ -28,9 +28,7 @@ use crate::query::{self, QueryError};
 use crate::query_log::{self, QueryLogRecord};
 use crate::storage;
 
-#[cfg(any(test, feature = "test-support"))]
-use embedder::DEFAULT_EMBED_BUDGET;
-use embedder::{DegradedReason, degraded_reason_user_note, parse_budget_value};
+use embedder::{DegradedReason, degraded_reason_user_note};
 use format::{
     EnrichmentContext, format_coverage, format_coverage_note, format_dry_run_json,
     format_embed_result, format_impact_all, format_impact_json, format_impact_results,
@@ -40,7 +38,6 @@ use format::{
 
 const SEMANTIC_THRESHOLD: f32 = 0.7;
 
-const INDEX_FRESHNESS_SECS: u32 = 60;
 const MAX_QUERY_LENGTH: usize = 2000;
 
 pub const MAX_SEARCH_LIMIT: u32 = 100;
@@ -52,23 +49,17 @@ const BRIEF_MAX_INFERRED_SEEDS: u32 = 5;
 /// A short, scannable list is the actionable shape per ADR-0060.
 pub const MAX_EMPTY_TARGET_CANDIDATES: usize = 10;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum IndexState {
-    Empty,
-    ChunkedOnly,
-    PartiallyEmbedded,
-    FullyEmbedded,
-}
-
-fn determine_index_state(stats: &storage::IndexStatus) -> IndexState {
+/// Note guiding the user to build the index, or `None` when fully embedded.
+/// Search routes are read-only, so this surfaces what the user must run manually.
+fn index_hint(stats: &storage::IndexStatus) -> Option<String> {
     if stats.total_chunks == 0 {
-        IndexState::Empty
+        Some("index is empty; run `yomu index` then `yomu embed`".to_owned())
     } else if stats.embedded_chunks == 0 {
-        IndexState::ChunkedOnly
+        Some("no embeddings; run `yomu embed` to enable semantic search".to_owned())
     } else if stats.embedded_chunks < stats.embeddable_chunks {
-        IndexState::PartiallyEmbedded
+        Some("embeddings incomplete; run `yomu embed` to finish".to_owned())
     } else {
-        IndexState::FullyEmbedded
+        None
     }
 }
 
@@ -184,7 +175,6 @@ pub struct IndexRunOptions {
 pub struct YomuConfig {
     pub embed_disabled: bool,
     pub rerank_enabled: bool,
-    pub embed_budget: u32,
 }
 
 impl YomuConfig {
@@ -198,7 +188,6 @@ impl YomuConfig {
         Self {
             embed_disabled: get("YOMU_EMBED").as_deref() == Some("0"),
             rerank_enabled: get("YOMU_RERANK").as_deref() == Some("1"),
-            embed_budget: parse_budget_value(get("YOMU_EMBED_BUDGET").as_deref()),
         }
     }
 }
@@ -340,7 +329,6 @@ pub struct Yomu {
     conn: Arc<Mutex<storage::Db>>,
     embedder: OnceLock<Result<Arc<dyn Embed>, DegradedReason>>,
     root: PathBuf,
-    embed_budget: u32,
     embed_disabled: bool,
     rerank_enabled: bool,
     reranker: OnceLock<ModelLoad<Box<dyn Rerank>>>,
@@ -368,7 +356,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: OnceLock::new(),
             root,
-            embed_budget: config.embed_budget,
             embed_disabled,
             rerank_enabled: config.rerank_enabled,
             reranker: OnceLock::new(),
@@ -388,7 +375,6 @@ impl Yomu {
             conn: Arc::new(Mutex::new(conn)),
             embedder: embedder_lock,
             root,
-            embed_budget: DEFAULT_EMBED_BUDGET,
             embed_disabled: false,
             rerank_enabled: false,
             reranker: OnceLock::new(),
@@ -436,16 +422,7 @@ impl Yomu {
 
         tracing::debug!(query, limit, offset, ?paths, "search request");
 
-        let type_hints = query::extract_type_hints(query);
-        let hints_ref = if type_hints.is_empty() {
-            None
-        } else {
-            Some(type_hints.as_slice())
-        };
-
         let stats = self.with_db(storage::get_stats)?;
-        let state = determine_index_state(&stats);
-        let index_notes = self.ensure_indexed(embedder, state, hints_ref)?;
 
         let start = Instant::now();
         let outcome = query::search(
@@ -464,7 +441,7 @@ impl Yomu {
         }
 
         let mut notes: Vec<String> = Vec::new();
-        if let Some(msg) = index_notes {
+        if let Some(msg) = index_hint(&stats) {
             notes.push(msg);
         }
         if let Some(note) = self.reranker_note() {
@@ -492,10 +469,7 @@ impl Yomu {
         let (file, symbol) = parse_impact_target(from);
         validate_path(file)?;
 
-        let embedder = self.get_embedder();
         let stats = self.with_db(storage::get_stats)?;
-        let state = determine_index_state(&stats);
-        let index_notes = self.ensure_indexed(embedder, state, None)?;
 
         let (chunk_ids, embedding_bytes) = self.with_db(|c| {
             let chunk_ids = storage::get_chunks_for_from_target(c, file, symbol)?;
@@ -505,7 +479,7 @@ impl Yomu {
         })?;
 
         let mut notes: Vec<String> = Vec::new();
-        if let Some(msg) = index_notes {
+        if let Some(msg) = index_hint(&stats) {
             notes.push(msg);
         }
 
@@ -681,8 +655,7 @@ impl Yomu {
         })?;
 
         let semantic_related = if semantic {
-            let state = determine_index_state(&stats);
-            self.semantic_search(file_path, symbol_filter, state)?
+            self.semantic_search(file_path, symbol_filter)?
         } else {
             vec![]
         };
@@ -966,94 +939,6 @@ impl Yomu {
         f(&conn).map_err(YomuError::from)
     }
 
-    fn check_index_fresh(&self) -> bool {
-        match self.with_db(|conn| storage::is_index_fresh(conn, INDEX_FRESHNESS_SECS)) {
-            Ok(fresh) => fresh,
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to check index freshness, assuming stale");
-                false
-            }
-        }
-    }
-
-    fn try_rechunk(&self) -> Option<String> {
-        match indexer::run_chunk_only_index(&self.conn, &self.root, false) {
-            Ok(r) if r.files_errored > 0 => Some(format!(
-                "{} files had errors during re-indexing",
-                r.files_errored
-            )),
-            Ok(_) => None,
-            Err(e) => Some(format!("re-chunking failed: {e}")),
-        }
-    }
-
-    fn handle_empty_index(&self) -> Result<bool, YomuError> {
-        tracing::info!("Index is empty, running chunk-only index");
-        indexer::run_chunk_only_index(&self.conn, &self.root, false)?;
-        Ok(true)
-    }
-
-    fn rechunk_if_stale(&self) -> Option<String> {
-        if self.check_index_fresh() {
-            return None;
-        }
-        self.try_rechunk()
-    }
-
-    fn handle_fully_embedded(&self) -> Result<(bool, Option<String>), YomuError> {
-        if self.check_index_fresh() {
-            return Ok((false, None));
-        }
-        let note = self.try_rechunk();
-        let stats = self.with_db(storage::get_stats)?;
-        Ok((stats.embedded_chunks < stats.embeddable_chunks, note))
-    }
-
-    fn ensure_indexed(
-        &self,
-        embedder: &dyn Embed,
-        state: IndexState,
-        type_hints: Option<&[storage::ChunkType]>,
-    ) -> Result<Option<String>, YomuError> {
-        let (needs_embed, rechunk_note) = match state {
-            IndexState::Empty => (self.handle_empty_index()?, None),
-            IndexState::ChunkedOnly | IndexState::PartiallyEmbedded => {
-                let note = self.rechunk_if_stale();
-                (true, note)
-            }
-            IndexState::FullyEmbedded => self.handle_fully_embedded()?,
-        };
-
-        let embed_note = if needs_embed && self.embedding_available() {
-            match indexer::run_incremental_embed(
-                &self.conn,
-                embedder,
-                self.embed_budget,
-                type_hints,
-            ) {
-                Ok(_) => None,
-                Err(e @ indexer::IndexError::Storage(_)) => return Err(e.into()),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Incremental embed failed, searching existing embeddings");
-                    Some(format!("embedding failed: {e}"))
-                }
-            }
-        } else {
-            None
-        };
-
-        let notes: Vec<&str> = [rechunk_note.as_deref(), embed_note.as_deref()]
-            .into_iter()
-            .flatten()
-            .collect();
-
-        Ok(if notes.is_empty() {
-            None
-        } else {
-            Some(notes.join("; "))
-        })
-    }
-
     fn fetch_enrichment_context(
         &self,
         results: &[storage::SearchResult],
@@ -1092,11 +977,7 @@ impl Yomu {
         &self,
         file_path: &str,
         symbol: Option<&str>,
-        state: IndexState,
     ) -> Result<Vec<storage::SearchResult>, YomuError> {
-        let embedder = self.get_embedder();
-        self.ensure_indexed(embedder, state, None)?;
-
         let fp = file_path.to_owned();
         let sym = symbol.map(str::to_owned);
         let mut results = self.with_db(move |c| {
