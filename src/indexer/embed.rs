@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
 
@@ -85,21 +85,23 @@ fn run_embed_batch(
     texts: &[String],
     consecutive_errors: &mut u32,
     file_path: &str,
-) -> Result<Vec<ChunkedEmbedding>, EmbedFailure> {
+) -> Result<(Vec<ChunkedEmbedding>, Duration), EmbedFailure> {
     let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
     let started = Instant::now();
     let result = embedder.embed_documents_batch(&texts_ref);
-    let elapsed_ms = started.elapsed().as_millis();
+    let elapsed = started.elapsed();
     match result {
         Ok(embs) => {
             tracing::debug!(
                 file = %file_path,
                 batch_size = texts.len(),
-                elapsed_ms,
+                elapsed_ms = elapsed.as_millis(),
                 "embed batch"
             );
             *consecutive_errors = 0;
-            validate_chunked_embeddings(embs).map_err(|()| EmbedFailure::Contract)
+            let validated =
+                validate_chunked_embeddings(embs).map_err(|()| EmbedFailure::Contract)?;
+            Ok((validated, elapsed))
         }
         Err(e) => Err(classify_embed_error(e, consecutive_errors, file_path)),
     }
@@ -126,33 +128,45 @@ pub(super) fn order_files_for_embedding(
     Ok(files)
 }
 
-fn fetch_unembedded_file(
+/// DB-read phase for one file: fetches unembedded chunk rows and the file's
+/// imports. Enrichment (text assembly) is left to the caller so the read and
+/// enrich phases can be timed independently.
+fn fetch_chunks_db(
     conn: &Arc<Mutex<Db>>,
     file_path: &str,
-) -> Result<(Vec<i64>, Vec<String>), IndexError> {
-    let conn_guard = conn
-        .lock()
-        .expect("DB lock poisoned (fetch_unembedded_file)");
+) -> Result<(Vec<storage::UnembeddedChunk>, String), IndexError> {
+    let conn_guard = conn.lock().expect("DB lock poisoned (fetch_chunks_db)");
     let rows = storage::get_unembedded_chunks_for_file(&conn_guard, file_path)?;
     let imports = storage::get_imports_for_file(&conn_guard, file_path)?;
-    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let texts: Vec<String> = rows
-        .into_iter()
+    Ok((rows, imports))
+}
+
+/// Enrich phase for one file: assembles the embedding input text for each chunk
+/// row, returning the chunk ids alongside their enriched texts.
+fn enrich_rows(
+    file_path: &str,
+    rows: &[storage::UnembeddedChunk],
+    imports: &str,
+) -> (Vec<i64>, Vec<String>) {
+    let chunk_ids = rows.iter().map(|r| r.id).collect();
+    let texts = rows
+        .iter()
         .map(|r| {
             enrich_for_embedding(
                 file_path,
                 &r.chunk_type,
                 r.name.as_deref(),
                 r.parent_name.as_deref(),
-                &imports,
+                imports,
                 &r.content,
             )
         })
         .collect();
-    Ok((ids, texts))
+    (chunk_ids, texts)
 }
 
-/// Embeds and stores chunks for a single file. Returns `Some(count)` on success, `None` on skip.
+/// Embeds and stores chunks for a single file. Returns `Some((count, embed, store))`
+/// with the forward-pass and storage-write durations on success, `None` on skip.
 #[allow(clippy::cast_possible_truncation)]
 fn embed_file_chunks(
     embedder: &(impl Embed + ?Sized),
@@ -161,10 +175,10 @@ fn embed_file_chunks(
     chunk_ids: Vec<i64>,
     texts: &[String],
     consecutive_errors: &mut u32,
-) -> Result<Option<u32>, IndexError> {
-    let embeddings: Vec<ChunkedEmbedding> =
+) -> Result<Option<(u32, Duration, Duration)>, IndexError> {
+    let (embeddings, embed_dur) =
         match run_embed_batch(embedder, texts, consecutive_errors, file_path) {
-            Ok(embs) => embs,
+            Ok((embs, dur)) => (embs, dur),
             Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
             Err(EmbedFailure::Contract) => {
                 return Err(IndexError::Internal(
@@ -198,11 +212,13 @@ fn embed_file_chunks(
 
     let pairs: Vec<(i64, ChunkedEmbedding)> = chunk_ids.into_iter().zip(embeddings).collect();
     let n = pairs.len() as u32;
+    let store_started = Instant::now();
     {
         let conn_guard = conn.lock().expect("DB lock poisoned (embed_file_chunks)");
         storage::add_chunked_embeddings(&conn_guard, &pairs)?;
     }
-    Ok(Some(n))
+    let store_dur = store_started.elapsed();
+    Ok(Some((n, embed_dur, store_dur)))
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -231,6 +247,7 @@ pub fn run_incremental_embed_with_progress(
             .expect("DB lock poisoned (run_incremental_embed_with_progress)");
         order_files_for_embedding(&conn_guard, type_hints)?
     };
+    let t_order = started.elapsed();
 
     if ordered_files.is_empty() {
         return Ok(EmbedResult::default());
@@ -239,9 +256,20 @@ pub fn run_incremental_embed_with_progress(
     let mut chunks_embedded = 0u32;
     let mut files_completed = 0u32;
     let mut consecutive_errors = 0u32;
+    let mut t_fetch = Duration::ZERO;
+    let mut t_enrich = Duration::ZERO;
+    let mut t_embed = Duration::ZERO;
+    let mut t_store = Duration::ZERO;
 
     for file_path in &ordered_files {
-        let (chunk_ids, texts) = fetch_unembedded_file(conn, file_path)?;
+        let fetch_started = Instant::now();
+        let (rows, imports) = fetch_chunks_db(conn, file_path)?;
+        t_fetch += fetch_started.elapsed();
+
+        let enrich_started = Instant::now();
+        let (chunk_ids, texts) = enrich_rows(file_path, &rows, &imports);
+        t_enrich += enrich_started.elapsed();
+
         if texts.is_empty() {
             continue;
         }
@@ -250,7 +278,7 @@ pub fn run_incremental_embed_with_progress(
             break;
         }
 
-        let Some(n) = embed_file_chunks(
+        let Some((n, embed_dur, store_dur)) = embed_file_chunks(
             embedder,
             conn,
             file_path,
@@ -261,6 +289,8 @@ pub fn run_incremental_embed_with_progress(
         else {
             continue;
         };
+        t_embed += embed_dur;
+        t_store += store_dur;
 
         chunks_embedded += n;
         files_completed += 1;
@@ -278,6 +308,11 @@ pub fn run_incremental_embed_with_progress(
         files_completed,
         elapsed_ms,
         chunks_per_sec,
+        order_ms = t_order.as_millis(),
+        fetch_ms = t_fetch.as_millis(),
+        enrich_ms = t_enrich.as_millis(),
+        embed_ms = t_embed.as_millis(),
+        store_ms = t_store.as_millis(),
         "Incremental embedding complete"
     );
 
