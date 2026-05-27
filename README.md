@@ -262,7 +262,7 @@ Per ADR-0066 Group 2 (sysexits.h) — agents and scripts can branch on the numbe
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Model not auto-downloaded | The ~1.2 GB embedding model must be pre-cached; `search` does not download it automatically |
 | SCSS/Sass not supported   | Only plain CSS                                                                              |
-| Cold start                | First `search` call takes a few seconds for chunking + initial embedding                    |
+| Cold start                | First `yomu index` loads the model and embeds all chunks (a few seconds)                    |
 | Large files skipped       | Files over 1 MB are excluded from indexing                                                  |
 
 ## Development
