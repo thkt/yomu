@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
@@ -1586,6 +1587,239 @@ fn index_exclude_vendor_drops_vendor_source_kind() {
         vendor_count_baseline > 0,
         "regression: baseline `yomu index` (no flag) must produce vendor chunks for the \
          --exclude-vendor flag to be non-vacuous, got {vendor_count_baseline}"
+    );
+}
+
+// Helper for T-209: a project whose test code lives in a Rust inline test
+// module file `src/feature/tests.rs` (the `#[cfg(test)] mod tests;` split-out
+// convention), alongside a plain `src/feature.rs`. NOT pre-indexed.
+fn setup_inline_test_module_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let feature = src.join("feature");
+    fs::create_dir_all(&feature).unwrap();
+    fs::write(src.join("lib.rs"), "pub mod feature;\n").unwrap();
+    fs::write(
+        src.join("feature.rs"),
+        "pub fn sum(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod tests;\n",
+    )
+    .unwrap();
+    fs::write(
+        feature.join("tests.rs"),
+        "#[test]\nfn computes_sum() {\n    assert_eq!(super::sum(2, 3), 5);\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"inline_test_e2e\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    dir
+}
+
+// T-209: index_tags_rust_inline_test_module_as_test
+// Spec FR-A1-1/FR-A1-4: after `yomu index`, chunks from a Rust inline test
+// module file (`src/feature/tests.rs`) carry source_kind='test', while the
+// sibling source file (`src/feature.rs`) stays 'src'. End-to-end guard that the
+// classifier fix reaches the persisted column.
+#[test]
+fn index_tags_rust_inline_test_module_as_test() {
+    let dir = setup_inline_test_module_project();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let test_chunks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path LIKE '%feature/tests.rs' AND source_kind = 'test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mistagged: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path LIKE '%feature/tests.rs' AND source_kind != 'test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let parent_src: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE file_path LIKE '%/feature.rs' AND source_kind = 'src'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+
+    assert!(
+        test_chunks > 0,
+        "inline test module src/feature/tests.rs must yield test chunks, got {test_chunks}"
+    );
+    assert_eq!(
+        mistagged, 0,
+        "no chunk from src/feature/tests.rs may carry a non-test source_kind, got {mistagged}"
+    );
+    assert!(
+        parent_src > 0,
+        "sibling source src/feature.rs must stay source_kind='src', got {parent_src}"
+    );
+}
+
+// T-216: index_does_not_embed_test_chunks
+// Spec FR-A2: after `yomu index`, test files are chunked/FTS-indexed but NOT
+// embedded. No test chunk appears in embedded_chunk_ids, and the embedded count
+// equals the embeddable (non-test, non-inner_fn) count so status is not degraded.
+#[test]
+fn index_does_not_embed_test_chunks() {
+    let dir = setup_inline_test_module_project();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let embedded_test: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embedded_chunk_ids e \
+             JOIN chunks c ON e.chunk_id = c.id WHERE c.source_kind = 'test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let embeddable_expected: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE source_kind != 'test' AND chunk_type != 'inner_fn'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let embedded_total: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT chunk_id) FROM embedded_chunk_ids",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+
+    assert!(
+        embeddable_expected > 0,
+        "fixture must have embeddable src chunks, got {embeddable_expected}"
+    );
+    assert_eq!(
+        embedded_test, 0,
+        "test chunks must not be embedded, got {embedded_test}"
+    );
+    assert_eq!(
+        embedded_total, embeddable_expected,
+        "embedded count must equal embeddable (non-test, non-inner_fn) count; \
+         embedded={embedded_total} embeddable={embeddable_expected}"
+    );
+}
+
+// Returns the distinct file_path values of a `yomu --json brief` invocation.
+fn brief_files(dir: &Path, extra_args: &[&str]) -> Vec<String> {
+    let mut args = vec![
+        "--json",
+        "brief",
+        "feature sum helper",
+        "--seed-file",
+        "src/feature.rs",
+    ];
+    args.extend_from_slice(extra_args);
+    let out = yomu_cmd().args(&args).current_dir(dir).output().unwrap();
+    assert!(
+        out.status.success(),
+        "brief failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("brief stdout is not JSON: {e}; got: {stdout}"));
+    let mut files: Vec<String> = parsed["chunks"]
+        .as_array()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .filter_map(|c| c["file_path"].as_str().map(str::to_owned))
+        .collect();
+    files.sort();
+    files.dedup();
+    files
+}
+
+// T-217: brief_excludes_test_chunks_from_closure_by_default
+// Spec FR-B: brief drops chunks whose source_kind is 'test' from the forward
+// closure. Seeding on src/feature.rs (which declares `mod tests;`) must yield
+// the src seed without its inline test module.
+#[test]
+fn brief_excludes_test_chunks_from_closure_by_default() {
+    let dir = setup_inline_test_module_project();
+    let idx = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        idx.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&idx.stderr)
+    );
+
+    let files = brief_files(dir.path(), &[]);
+    assert!(
+        files.iter().any(|f| f.ends_with("feature.rs")),
+        "src seed src/feature.rs must be present, got: {files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.ends_with("feature/tests.rs")),
+        "inline test module must be excluded by default, got: {files:?}"
+    );
+}
+
+// T-218: brief_include_tests_flag_keeps_test_chunks
+// Spec FR-B: `--include-tests` opts back into test code for test-fixing tasks.
+#[test]
+fn brief_include_tests_flag_keeps_test_chunks() {
+    let dir = setup_inline_test_module_project();
+    let idx = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        idx.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&idx.stderr)
+    );
+
+    let files = brief_files(dir.path(), &["--include-tests"]);
+    assert!(
+        files.iter().any(|f| f.ends_with("feature/tests.rs")),
+        "--include-tests must keep the inline test module, got: {files:?}"
     );
 }
 

@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::injection_check::InjectionCheck;
 use crate::storage::{
     Chunk, ChunkType, SourceKind, StorageError, get_chunks_for_files, get_edges_among_files,
-    get_import_counts, get_transitive_dependencies_multi,
+    get_import_counts, get_transitive_dependencies_multi, get_transitive_dependents,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,12 +31,16 @@ pub struct TaskBrief {
     pub depth: u32,
     pub max_chunks: u32,
     pub max_bytes: u32,
+    /// Keep test files (`source_kind = 'test'`) in the closure. Default false:
+    /// brief is for working on the code under test, not the tests themselves.
+    pub include_tests: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkInclusionReason {
     Seed,
     Forward(u32),
+    Impact(u32),
     Sibling,
     ModDecl,
 }
@@ -46,6 +50,7 @@ impl fmt::Display for ChunkInclusionReason {
         match self {
             Self::Seed => f.write_str("seed"),
             Self::Forward(n) => write!(f, "forward-{n}"),
+            Self::Impact(n) => write!(f, "impact-{n}"),
             Self::Sibling => f.write_str("sibling"),
             Self::ModDecl => f.write_str("mod-decl"),
         }
@@ -80,27 +85,61 @@ fn collect_seed_paths(task: &TaskBrief) -> Vec<String> {
         .collect()
 }
 
+/// Bidirectional closure (FR-C): the seed's forward imports unioned with its
+/// backward impact (callers). Returns the minimum distance per file and the set
+/// of forward-reachable files so the caller can label backward-only files as
+/// Impact. A file reachable both ways keeps its smaller distance and the forward
+/// label. When a seed has no callers the backward query returns nothing, so the
+/// result degrades to a forward-only closure.
 fn collect_closure(
     conn: &Connection,
     seeds: &[String],
     depth: u32,
-) -> Result<HashMap<String, u32>, StorageError> {
-    // Single recursive query over all seeds; `MIN(depth)` inside the query
-    // already collapses per-seed distances, so no Rust-side merge is needed.
+) -> Result<(HashMap<String, u32>, HashSet<String>), StorageError> {
     let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
-    let deps = get_transitive_dependencies_multi(conn, &seed_refs, depth)?;
-    Ok(deps.into_iter().map(|d| (d.file_path, d.depth)).collect())
+    let mut depth_by_path: HashMap<String, u32> = HashMap::new();
+    let mut forward_paths: HashSet<String> = HashSet::new();
+
+    // Forward: a single recursive query collapses per-seed distances via MIN.
+    for dep in get_transitive_dependencies_multi(conn, &seed_refs, depth)? {
+        forward_paths.insert(dep.file_path.clone());
+        merge_min_depth(&mut depth_by_path, dep.file_path, dep.depth);
+    }
+
+    // Backward: `get_transitive_dependents` is single-target, so fan out over
+    // seeds and merge. Seeds stay at depth 0 (forward injects them); callers
+    // enter at depth >= 1.
+    for seed in &seed_refs {
+        for dep in get_transitive_dependents(conn, seed, depth)? {
+            merge_min_depth(&mut depth_by_path, dep.file_path, dep.depth);
+        }
+    }
+
+    Ok((depth_by_path, forward_paths))
 }
 
-fn determine_reason(depth: u32) -> ChunkInclusionReason {
+fn merge_min_depth(depth_by_path: &mut HashMap<String, u32>, path: String, depth: u32) {
+    depth_by_path
+        .entry(path)
+        .and_modify(|d| *d = (*d).min(depth))
+        .or_insert(depth);
+}
+
+fn determine_reason(depth: u32, is_forward: bool) -> ChunkInclusionReason {
     if depth == 0 {
         ChunkInclusionReason::Seed
-    } else {
+    } else if is_forward {
         ChunkInclusionReason::Forward(depth)
+    } else {
+        ChunkInclusionReason::Impact(depth)
     }
 }
 
-fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) -> Vec<BriefChunk> {
+fn build_brief_chunks(
+    chunks: Vec<Chunk>,
+    depth_by_path: &HashMap<String, u32>,
+    forward_paths: &HashSet<String>,
+) -> Vec<BriefChunk> {
     chunks
         .into_iter()
         .map(|c| {
@@ -116,13 +155,14 @@ fn build_brief_chunks(chunks: Vec<Chunk>, depth_by_path: &HashMap<String, u32>) 
                 );
                 0
             });
+            let is_forward = forward_paths.contains(&c.file_path);
             BriefChunk {
                 file_path: c.file_path,
                 start_line: c.start_line,
                 end_line: c.end_line,
                 chunk_type: c.chunk_type,
                 content: c.content,
-                included_reason: determine_reason(depth),
+                included_reason: determine_reason(depth, is_forward),
                 source_kind: c.source_kind,
                 injection_flags: c.injection_flags,
             }
@@ -141,53 +181,71 @@ fn under_cap(chunk_count: usize, total_bytes: usize, max_chunks: u32, max_bytes:
     to_u32_saturating(chunk_count) <= max_chunks && to_u32_saturating(total_bytes) <= max_bytes
 }
 
-fn deletion_priority(
-    chunk: &BriefChunk,
-    depth_by_path: &HashMap<String, u32>,
-    incoming_counts: &HashMap<String, u32>,
-) -> (u32, u32) {
-    let depth = depth_by_path.get(&chunk.file_path).copied().unwrap_or(0);
-    let incoming = incoming_counts.get(&chunk.file_path).copied().unwrap_or(0);
-    (depth, incoming)
-}
-
+/// Selects which chunk indices to drop, breadth-first. Returns the drop set and
+/// the surviving byte total. Groups chunks by file and hands each file one chunk
+/// per round before any file gets a second, so the budget spreads across the
+/// closure and maximizes file coverage (recall@N). Files are visited
+/// closest-first (depth ASC) then by centrality (incoming DESC); within a file,
+/// chunks keep source order.
+///
+/// Guarantee: under a chunk-count-bound budget, every closure file keeps at
+/// least one chunk. Under a byte-bound budget this cannot always hold — a file
+/// whose chunks all exceed the remaining byte budget is dropped, because the
+/// hard `max_bytes` cap forbids including it.
 fn select_drops(
     chunks: &[BriefChunk],
     depth_by_path: &HashMap<String, u32>,
     incoming_counts: &HashMap<String, u32>,
     max_chunks: u32,
     max_bytes: u32,
-    total_bytes: usize,
 ) -> (HashSet<usize>, usize) {
-    let mut order: Vec<(usize, u32, u32)> = chunks
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let (d, e) = deletion_priority(c, depth_by_path, incoming_counts);
-            (i, d, e)
-        })
-        .collect();
-    order.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
-
-    let mut drop_idx: HashSet<usize> = HashSet::new();
-    let mut count = chunks.len();
-    let mut bytes = total_bytes;
-    for (idx, _, _) in order {
-        if under_cap(count, bytes, max_chunks, max_bytes) {
-            break;
-        }
-        drop_idx.insert(idx);
-        count -= 1;
-        bytes -= chunks[idx].content.len();
+    let mut by_file: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, c) in chunks.iter().enumerate() {
+        by_file.entry(c.file_path.as_str()).or_default().push(i);
     }
+    for idxs in by_file.values_mut() {
+        idxs.sort_by_key(|&i| chunks[i].start_line);
+    }
+    let mut files: Vec<&str> = by_file.keys().copied().collect();
+    files.sort_by(|a, b| {
+        let depth = |p: &str| depth_by_path.get(p).copied().unwrap_or(0);
+        let incoming = |p: &str| incoming_counts.get(p).copied().unwrap_or(0);
+        depth(a)
+            .cmp(&depth(b))
+            .then(incoming(b).cmp(&incoming(a)))
+            .then(a.cmp(b))
+    });
+
+    let max_round = by_file.values().map(Vec::len).max().unwrap_or(0);
+    let mut keep: HashSet<usize> = HashSet::new();
+    let mut bytes: usize = 0;
+    'rounds: for round in 0..max_round {
+        for file in &files {
+            let Some(&idx) = by_file[*file].get(round) else {
+                continue;
+            };
+            if to_u32_saturating(keep.len() + 1) > max_chunks {
+                break 'rounds;
+            }
+            let len = chunks[idx].content.len();
+            if to_u32_saturating(bytes + len) > max_bytes {
+                continue; // over the byte budget; skip (see the byte-bound caveat above)
+            }
+            keep.insert(idx);
+            bytes += len;
+        }
+    }
+
+    let drop_idx: HashSet<usize> = (0..chunks.len()).filter(|i| !keep.contains(i)).collect();
     (drop_idx, bytes)
 }
 
-/// Applies BR-001 cap deletion order: drop chunks first by
-/// `(seed_distance DESC, incoming_edge_count ASC)`. Pure: takes pre-computed
-/// `depth_by_path`, `incoming_counts`, and `total_bytes` so callers can test
-/// deterministically without DB access and the byte sum is computed once.
-/// Returns the surviving chunks paired with their total byte count.
+/// Caps the chunk set to the budget via breadth-first retention (BR-001
+/// revised, see [`select_drops`]). Pure: takes pre-computed `depth_by_path`,
+/// `incoming_counts`, and `total_bytes` so callers can test deterministically
+/// without DB access and the early under-budget check reuses the precomputed
+/// byte sum instead of recomputing it. Returns the surviving chunks paired with
+/// their total byte count.
 pub fn apply_cap(
     chunks: Vec<BriefChunk>,
     depth_by_path: &HashMap<String, u32>,
@@ -205,7 +263,6 @@ pub fn apply_cap(
         incoming_counts,
         max_chunks,
         max_bytes,
-        total_bytes,
     );
     let kept = chunks
         .into_iter()
@@ -377,11 +434,17 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
             total_bytes: 0,
         });
     }
-    let depth_by_path = collect_closure(conn, &seeds, task.depth)?;
+    let (depth_by_path, forward_paths) = collect_closure(conn, &seeds, task.depth)?;
 
     let paths: Vec<&str> = depth_by_path.keys().map(String::as_str).collect();
     let chunks = get_chunks_for_files(conn, &paths)?;
-    let brief_chunks = build_brief_chunks(chunks, &depth_by_path);
+    let mut brief_chunks = build_brief_chunks(chunks, &depth_by_path, &forward_paths);
+    // Drop test files from the closure unless the caller opted in. A test file
+    // reached via a `mod tests;` edge (or a test seed) is noise for a task about
+    // the code under test.
+    if !task.include_tests {
+        brief_chunks.retain(|c| c.source_kind != Some(SourceKind::Test));
+    }
     // Single byte sum reused by the cap check and the final totals.
     let total_bytes: usize = brief_chunks.iter().map(|c| c.content.len()).sum();
 

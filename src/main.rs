@@ -142,6 +142,9 @@ Examples:
         /// Maximum bytes in output (1000..=10000000)
         #[arg(long, default_value_t = 80_000, value_parser = clap::value_parser!(u32).range(1000..=10_000_000))]
         max_bytes: u32,
+        /// Include test files in the closure (default: test files are excluded)
+        #[arg(long)]
+        include_tests: bool,
     },
     /// Manage the embedding model.
     #[command(
@@ -337,6 +340,7 @@ fn main() -> ExitCode {
             depth,
             max_chunks,
             max_bytes,
+            include_tests,
         } => {
             let task_brief = brief::TaskBrief {
                 task,
@@ -344,6 +348,7 @@ fn main() -> ExitCode {
                 depth,
                 max_chunks,
                 max_bytes,
+                include_tests,
             };
             yomu.brief(&task_brief, json)
         }

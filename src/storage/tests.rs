@@ -2261,9 +2261,9 @@ fn fts_chunks_vocab_exists_on_new_db() {
     assert!(exists, "fts_chunks_vocab table should exist after open_db");
 }
 
-// T-167: migration_v3_to_v10_creates_vocab_and_drops_chunks
+// T-167: migration_v3_to_v11_creates_vocab_and_drops_chunks
 #[test]
-fn migration_v3_to_v10_creates_vocab_and_drops_chunks() {
+fn migration_v3_to_v11_creates_vocab_and_drops_chunks() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -2300,7 +2300,7 @@ fn migration_v3_to_v10_creates_vocab_and_drops_chunks() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "10", "schema_version should be 10 after migration");
+    assert_eq!(version, "11", "schema_version should be 11 after migration");
 
     let exists: bool = conn
         .query_row(
@@ -2680,6 +2680,71 @@ fn get_stats_returns_embeddable_and_total_chunks() {
 
     assert_eq!(stats.total_chunks, 3);
     assert_eq!(stats.embeddable_chunks, 2);
+}
+
+// T-214: get_stats_embeddable_excludes_test_chunks
+// Spec FR-A2: embeddable_chunks counts only non-test, non-inner_fn chunks so a
+// full index reaches `embedded == embeddable` (test chunks are not embedded),
+// keeping the degraded signal from firing on intentionally skipped test chunks.
+#[test]
+fn get_stats_embeddable_excludes_test_chunks() {
+    let (conn, _dir) = test_db();
+    let chunks = vec![
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("App"),
+            content: "function App() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+            source_kind: Some(SourceKind::Src),
+            injection_flags: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("AppTest"),
+            content: "function AppTest() {}",
+            start_line: 10,
+            end_line: 12,
+            parent_index: None,
+            source_kind: Some(SourceKind::Test),
+            injection_flags: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/app.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let stats = get_stats(&conn).unwrap();
+    assert_eq!(stats.total_chunks, 2, "both chunks counted in total");
+    assert_eq!(
+        stats.embeddable_chunks, 1,
+        "test chunk excluded from embeddable; only the src chunk counts"
+    );
+}
+
+// T-215: get_unembedded_chunks_for_file_excludes_test_source
+// Spec FR-A2: the embed worklist skips chunks whose source_kind is 'test', so
+// test files consume no embedding work even when present in the file list.
+#[test]
+fn get_unembedded_chunks_for_file_excludes_test_source() {
+    let (conn, _dir) = test_db();
+    let chunks = vec![NewChunk {
+        chunk_type: &ChunkType::Component,
+        name: Some("it_works"),
+        content: "function it_works() {}",
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: Some(SourceKind::Test),
+        injection_flags: None,
+    }];
+    replace_file_chunks_only(&conn, "src/feature/tests.rs", &chunks, "h1", "", &[], None).unwrap();
+
+    let rows = get_unembedded_chunks_for_file(&conn, "src/feature/tests.rs").unwrap();
+    assert!(
+        rows.is_empty(),
+        "test-source chunks must be excluded from the embed worklist, got {} rows",
+        rows.len()
+    );
 }
 
 // T-017: embed_percentage_uses_embeddable_chunks
@@ -3126,9 +3191,9 @@ fn fts_stores_file_path() {
     );
 }
 
-// T-557: migration_v6_to_v10_drops_chunks_for_reindex
+// T-557: migration_v6_to_v11_drops_chunks_for_reindex
 #[test]
-fn migration_v6_to_v10_drops_chunks_for_reindex() {
+fn migration_v6_to_v11_drops_chunks_for_reindex() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let conn = open_db(&db_path).unwrap();
@@ -3167,7 +3232,7 @@ fn migration_v6_to_v10_drops_chunks_for_reindex() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "10", "schema_version should be 10 after migration");
+    assert_eq!(version, "11", "schema_version should be 11 after migration");
 
     let chunks_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
@@ -4213,11 +4278,11 @@ fn schema_v10_chunks_table_includes_new_columns() {
     assert_eq!(injection_flags.unwrap().1, "TEXT");
 }
 
-// T-008: opening_v8_store_drops_chunks_and_bumps_schema_version_to_10
-// Spec FR-002, BR-002: v8 → v10 migration drops chunks and recreates them.
+// T-008: opening_v8_store_drops_chunks_and_bumps_schema_version_to_11
+// Spec FR-002, BR-002: v8 → v11 migration drops chunks and recreates them.
 // V8_CHUNKS_DDL is the v8 schema inlined verbatim (no source_kind / injection_flags).
 #[test]
-fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_10() {
+fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_11() {
     const V8_CHUNKS_DDL: &str = "
         CREATE TABLE chunks (
             id INTEGER PRIMARY KEY,
@@ -4260,7 +4325,7 @@ fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_10() {
     let chunks_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(chunks_count, 0, "v8 → v10 migration must drop all chunks");
+    assert_eq!(chunks_count, 0, "v8 → v11 migration must drop all chunks");
 
     let version: String = conn
         .query_row(
@@ -4269,7 +4334,72 @@ fn opening_v8_store_drops_chunks_and_bumps_schema_version_to_10() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, "10");
+    assert_eq!(version, "11");
+}
+
+// T-219: opening_v10_store_drops_chunks_and_bumps_schema_version_to_11
+// A1/A2 redefine source_kind for Rust inline `tests.rs` modules (now Test, not
+// Src) and stop embedding test chunks. Existing v10 rows keep the old
+// classification plus stale test embeddings, and check_file skips unchanged
+// files by hash, so a rebuild is required. The v10 -> v11 migration drops chunks
+// (and dependents) to force reclassification on the next `yomu index`.
+#[test]
+fn opening_v10_store_drops_chunks_and_bumps_schema_version_to_11() {
+    const V10_CHUNKS_DDL: &str = "
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            chunk_type TEXT NOT NULL,
+            name TEXT,
+            content TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            file_hash TEXT NOT NULL,
+            parent_chunk_id INTEGER REFERENCES chunks(id),
+            source_kind TEXT,
+            injection_flags TEXT
+        );
+        CREATE TABLE index_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    ";
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("v10.db");
+
+    {
+        let raw = Connection::open(&db_path).unwrap();
+        raw.execute_batch(V10_CHUNKS_DDL).unwrap();
+        // A Rust inline test module mis-tagged 'src' under the pre-A1 classifier.
+        raw.execute(
+            "INSERT INTO chunks (file_path, chunk_type, name, content, start_line, end_line, file_hash, parent_chunk_id, source_kind) \
+             VALUES ('src/foo/tests.rs', 'function', 'it_works', 'fn it_works() {}', 1, 1, 'h1', NULL, 'src')",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO index_meta (key, value) VALUES ('schema_version', '10')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let conn = open_db(&db_path).unwrap();
+
+    let chunks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(chunks_count, 0, "v10 -> v11 migration must drop all chunks");
+
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, "11");
 }
 
 // T-009: opening_v8_store_drops_stale_file_references
@@ -4376,7 +4506,7 @@ fn opening_v9_store_drops_stale_file_references() {
 
 // ── PR#3 Phase 2: schema v10 bump (FR-307a, FR-307b, FR-307c) ──
 
-// T-307: opening_v9_store_drops_chunks_and_bumps_schema_version_to_10
+// T-307: opening_v9_store_drops_chunks_and_bumps_schema_version_to_11
 //
 // Perspective: State (v9 → v10 transition) + Hazard (pre-existing v9 chunk
 // rows must be wiped to close the codex P1 contract loop where NULL-column
@@ -4387,7 +4517,7 @@ fn opening_v9_store_drops_stale_file_references() {
 // so the user is told to run `yomu index` again.
 #[traced_test]
 #[test]
-fn opening_v9_store_drops_chunks_and_bumps_schema_version_to_10() {
+fn opening_v9_store_drops_chunks_and_bumps_schema_version_to_11() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("v9.db");
 
@@ -4428,8 +4558,8 @@ fn opening_v9_store_drops_chunks_and_bumps_schema_version_to_10() {
         )
         .unwrap();
     assert_eq!(
-        version, "10",
-        "schema_version must be bumped to 10 after v9 → v10 migration"
+        version, "11",
+        "schema_version must be bumped to 11 after migration to the current version"
     );
 
     let chunks_count: i64 = conn
@@ -4444,16 +4574,21 @@ fn opening_v9_store_drops_chunks_and_bumps_schema_version_to_10() {
         logs_contain("chunks v10"),
         "v9 → v10 migration must emit notify_schema_change(\"yomu\", \"chunks v10\", ...)"
     );
+    // A v9 DB now crosses two steps: the v10 → v11 block must also run.
+    assert!(
+        logs_contain("chunks v11"),
+        "v10 → v11 migration must also run for a v9 DB and emit \"chunks v11\""
+    );
 }
 
-// T-308: fresh_db_initializes_at_schema_version_10
+// T-308: fresh_db_initializes_at_schema_version_11
 //
 // Perspective: Equivalence (fresh-DB init path) + Boundary (no prior
 // schema_version row → migrate from 0 lands at SCHEMA_VERSION).
-// Spec FR-307a: SCHEMA_VERSION const SHALL be 10. A fresh DB SHALL be
-// initialized at v10 with the 9 chunks columns present.
+// Spec FR-307a: SCHEMA_VERSION const SHALL be 11. A fresh DB SHALL be
+// initialized at v11 with the 9 chunks columns present.
 #[test]
-fn fresh_db_initializes_at_schema_version_10() {
+fn fresh_db_initializes_at_schema_version_11() {
     let (conn, _dir) = test_db();
 
     let version: String = conn
@@ -4464,8 +4599,8 @@ fn fresh_db_initializes_at_schema_version_10() {
         )
         .unwrap();
     assert_eq!(
-        version, "10",
-        "fresh DB must initialize at schema_version = 10"
+        version, "11",
+        "fresh DB must initialize at schema_version = 11"
     );
 
     let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
@@ -4475,7 +4610,7 @@ fn fresh_db_initializes_at_schema_version_10() {
         .collect::<Result<_, _>>()
         .unwrap();
 
-    // FR-307a: chunks at v10 must carry the 9 SELECT columns from FR-303
+    // FR-307a: chunks at v11 must carry the 9 SELECT columns from FR-303
     // (id is the implicit PRIMARY KEY; file_hash exists in DDL but is not
     // part of the FR-303 projection — assert it stays present for full DDL
     // coverage). Total expected = 11 declared columns.

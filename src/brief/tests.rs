@@ -50,6 +50,7 @@ fn task_with_seeds(seeds: Vec<Seed>, depth: u32) -> TaskBrief {
         depth,
         max_chunks: 80,
         max_bytes: 80_000,
+        include_tests: false,
     }
 }
 
@@ -170,6 +171,88 @@ fn apply_cap_drops_to_fit_byte_budget() {
         remaining, 8,
         "remaining bytes must equal the surviving chunks' total"
     );
+}
+
+// Two files-per-chunk fixture shared by the breadth-first cap tests: 3 files
+// (a depth 0, b/c depth 1) with 2 chunks each, distinct incoming counts so the
+// (depth ASC, incoming DESC) visit order is deterministic.
+fn breadth_first_fixture() -> (Vec<BriefChunk>, HashMap<String, u32>, HashMap<String, u32>) {
+    let chunks = vec![
+        make_brief_chunk("src/a.rs", "a1"),
+        make_brief_chunk("src/a.rs", "a2"),
+        make_brief_chunk("src/b.rs", "b1"),
+        make_brief_chunk("src/b.rs", "b2"),
+        make_brief_chunk("src/c.rs", "c1"),
+        make_brief_chunk("src/c.rs", "c2"),
+    ];
+    let depth_by_path: HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 0),
+        ("src/b.rs".to_owned(), 1),
+        ("src/c.rs".to_owned(), 1),
+    ]
+    .into_iter()
+    .collect();
+    let incoming_counts: HashMap<String, u32> = [
+        ("src/a.rs".to_owned(), 10),
+        ("src/b.rs".to_owned(), 5),
+        ("src/c.rs".to_owned(), 2),
+    ]
+    .into_iter()
+    .collect();
+    (chunks, depth_by_path, incoming_counts)
+}
+
+// T-605: apply_cap_breadth_first_keeps_one_chunk_per_file
+// Spec FR-D (BR-001 revised): over budget, retention is breadth-first. Every
+// closure file keeps at least one chunk before any file keeps a second, so the
+// budget maximizes file coverage (recall@N) instead of zeroing out whole files
+// at the closure's edge (the failure that capped seed-less recall at 67%).
+#[test]
+fn apply_cap_breadth_first_keeps_one_chunk_per_file() {
+    let (chunks, depth_by_path, incoming_counts) = breadth_first_fixture();
+
+    // Budget of 3 chunks over 3 files: breadth-first must place one chunk in
+    // each file, not spend all 3 on the two shallowest files (the old order
+    // would drop both src/c.rs chunks and lose the file entirely).
+    let (kept, _remaining) = apply_cap(chunks, &depth_by_path, &incoming_counts, 3, u32::MAX, 12);
+
+    let kept_files: HashSet<&str> = kept.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        kept_files.len(),
+        3,
+        "every closure file must keep at least one chunk, got files: {kept_files:?}"
+    );
+    assert_eq!(kept.len(), 3, "budget of 3 chunks must be fully used");
+}
+
+// T-609: apply_cap_breadth_first_keeps_all_files_when_budget_exceeds_file_count
+// Spec FR-D (BR-001 revised): under a chunk-count-bound budget every closure
+// file keeps >= 1 chunk *before* any file keeps a second. With a budget larger
+// than the file count, the extra slot goes to the highest-priority file's
+// second chunk, never by starving a lower-priority file of its first. T-605
+// covers the budget == file-count boundary; this covers budget > file-count,
+// locking the contract the seed-less recall result rests on (#128).
+#[test]
+fn apply_cap_breadth_first_keeps_all_files_when_budget_exceeds_file_count() {
+    let (chunks, depth_by_path, incoming_counts) = breadth_first_fixture();
+
+    // Budget of 4 chunks over 3 files (2 chunks each), byte budget unbounded so
+    // chunk count is the only constraint. Round 0 places a1,b1,c1; the 4th slot
+    // is a2 (highest priority). A depth-first fill (a1,a2,b1,b2) would drop
+    // src/c.rs entirely.
+    let (kept, _remaining) = apply_cap(chunks, &depth_by_path, &incoming_counts, 4, u32::MAX, 12);
+
+    let kept_files: HashSet<&str> = kept.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        kept_files.len(),
+        3,
+        "every closure file must keep a chunk before any file doubles, got: {kept_files:?}"
+    );
+    assert!(
+        kept_files.contains("src/c.rs"),
+        "lowest-priority file must not be starved of its first chunk"
+    );
+    assert_eq!(kept.len(), 4, "budget of 4 chunks must be fully used");
 }
 
 // T-605: render_json_emits_spec_shape
@@ -379,6 +462,52 @@ fn expand_plan_returns_seed_and_forward_chunks() {
     );
 }
 
+// T-604: expand_plan_includes_backward_dependents
+// Spec FR-C: the closure is bidirectional (import union impact). Seeding on a
+// file that another imports must pull in the caller, labeled Impact, so an
+// agent sees who is affected by a change to the seed.
+#[test]
+fn expand_plan_includes_backward_dependents() {
+    let (conn, _dir) = test_db();
+    insert_test_chunk(&conn, "src/a.rs", "a", 1);
+    insert_test_chunk(&conn, "src/b.rs", "b", 1);
+    // a imports b, so b's backward closure (impact) reaches a.
+    replace_file_references(
+        &conn,
+        "src/a.rs",
+        &[Reference {
+            source_file: "src/a.rs".into(),
+            target_file: "src/b.rs".into(),
+            symbol_name: None,
+            ref_kind: RefKind::Named,
+        }],
+    )
+    .unwrap();
+
+    // Seed on b: forward closure is just b, backward closure adds a.
+    let task = task_with_seeds(vec![seed_file("src/b.rs")], 1);
+    let output = expand_plan(&conn, &task).unwrap();
+
+    let by_path: HashMap<&str, &BriefChunk> = output
+        .chunks
+        .iter()
+        .map(|c| (c.file_path.as_str(), c))
+        .collect();
+    assert!(
+        by_path.contains_key("src/a.rs"),
+        "backward dependent src/a.rs must be in the closure, got: {:?}",
+        by_path.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        by_path["src/b.rs"].included_reason,
+        ChunkInclusionReason::Seed
+    );
+    assert_eq!(
+        by_path["src/a.rs"].included_reason,
+        ChunkInclusionReason::Impact(1)
+    );
+}
+
 // T-603: expand_plan_is_deterministic [Spec T-008]
 #[test]
 fn expand_plan_is_deterministic() {
@@ -570,6 +699,7 @@ fn expand_plan_queries_import_counts_when_over_cap() {
         depth: 1,
         max_chunks: 1,
         max_bytes: 80_000,
+        include_tests: false,
     };
 
     let output = expand_plan(&conn, &task).unwrap();

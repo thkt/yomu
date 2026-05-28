@@ -61,12 +61,15 @@ pub fn get_unembedded_chunks_for_file(
     conn: &Connection,
     file_path: &str,
 ) -> Result<Vec<UnembeddedChunk>, StorageError> {
+    // `c.source_kind IS NOT 'test'` skips test chunks from the embed worklist
+    // (test code is FTS-searchable but not embedded). `IS NOT` is NULL-safe, so
+    // legacy rows with NULL source_kind stay embeddable.
     let mut stmt = conn.prepare_cached(
         "SELECT c.id, c.content, c.chunk_type, c.name, p.name
          FROM chunks c
          LEFT JOIN chunks p ON c.parent_chunk_id = p.id
          LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
-         WHERE c.file_path = ?1 AND e.chunk_id IS NULL AND c.chunk_type != 'inner_fn'",
+         WHERE c.file_path = ?1 AND e.chunk_id IS NULL AND c.chunk_type != 'inner_fn' AND c.source_kind IS NOT 'test'",
     )?;
     let rows = stmt.query_map([file_path], |row| {
         Ok(UnembeddedChunk {
