@@ -55,6 +55,16 @@ fn task_with_seeds(seeds: Vec<Seed>, depth: u32) -> TaskBrief {
 }
 
 fn insert_test_chunk(conn: &Connection, file_path: &str, name: &'static str, start: u32) {
+    insert_kind_chunk(conn, file_path, name, start, None);
+}
+
+fn insert_kind_chunk(
+    conn: &Connection,
+    file_path: &str,
+    name: &'static str,
+    start: u32,
+    source_kind: Option<SourceKind>,
+) {
     insert_chunk(
         conn,
         file_path,
@@ -65,7 +75,7 @@ fn insert_test_chunk(conn: &Connection, file_path: &str, name: &'static str, sta
             start_line: start,
             end_line: start + 2,
             parent_index: None,
-            source_kind: None,
+            source_kind,
             injection_flags: None,
         },
         "h",
@@ -711,4 +721,35 @@ fn expand_plan_queries_import_counts_when_over_cap() {
     );
     assert_eq!(output.total_chunks, 1);
     assert!(!output.degraded, "a satisfiable seed must not degrade");
+}
+
+// T-615: expand_plan_keeps_explicit_test_seed [#236]
+// A test file named directly as the seed must survive the default test filter.
+// Dropping it (as the pre-fix filter did) empties the closure, and the CLI then
+// misreports the empty result as an FTS fallback. Transitively-reached test
+// files are still dropped (T-217 integration).
+#[test]
+fn expand_plan_keeps_explicit_test_seed() {
+    let (conn, _dir) = test_db();
+    insert_kind_chunk(
+        &conn,
+        "src/feature/tests.rs",
+        "computes_sum",
+        1,
+        Some(SourceKind::Test),
+    );
+
+    let task = task_with_seeds(vec![seed_file("src/feature/tests.rs")], 1);
+    let output = expand_plan(&conn, &task).unwrap();
+
+    assert_eq!(
+        output.chunks.len(),
+        1,
+        "explicit test seed must survive the default test filter"
+    );
+    assert_eq!(output.chunks[0].file_path, "src/feature/tests.rs");
+    assert!(
+        !output.degraded,
+        "a satisfiable explicit seed must not degrade"
+    );
 }

@@ -1086,6 +1086,49 @@ fn setup_ts_alias_project() -> TempDir {
     dir
 }
 
+/// Like `setup_ts_alias_project` but the seed reaches its target through a
+/// `import type { ... }` specifier instead of a value import, exercising the
+/// `RefKind::TypeOnly` edge under the same baseUrl path alias.
+fn setup_ts_type_only_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("components")).unwrap();
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"baseUrl\": \"src\", \"paths\": { \"@/*\": [\"*\"] } } }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("components/widget.tsx"),
+        "import type { Theme } from \"@/types\";\n\
+         export function Widget(t: Theme) { return t.name; }\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("types.ts"),
+        "export interface Theme { name: string; }\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
 // T-613: brief_resolves_tsconfig_baseurl_path_alias [#127 Phase 2]
 // The seed imports `@/util/format`; tsconfig maps `@/*` to `*` under
 // `baseUrl: "src"`, so the forward closure must include `src/util/format.ts`.
@@ -1115,6 +1158,33 @@ fn brief_resolves_tsconfig_baseurl_path_alias() {
         stdout.contains("src/util/format.ts"),
         "forward closure must resolve baseUrl path alias `@/util/format` → \
          src/util/format.ts, got: {stdout}"
+    );
+}
+
+// T-614: brief_resolves_type_only_path_alias [#127 Phase 2]
+// The seed reaches `src/types.ts` only through `import type { Theme } from
+// "@/types"`. A type-only specifier must still emit a forward edge
+// (`RefKind::TypeOnly`), so the same baseUrl path alias must land the target in
+// the closure. Probes the last unverified TS gap from #127.
+#[test]
+fn brief_resolves_type_only_path_alias() {
+    let dir = setup_ts_type_only_project();
+    let output = yomu_cmd()
+        .args(["brief", "theme", "--seed-file", "src/components/widget.tsx"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "brief failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("src/types.ts"),
+        "type-only import `@/types` must resolve into forward closure → \
+         src/types.ts, got: {stdout}"
     );
 }
 
@@ -1820,6 +1890,80 @@ fn brief_include_tests_flag_keeps_test_chunks() {
     assert!(
         files.iter().any(|f| f.ends_with("feature/tests.rs")),
         "--include-tests must keep the inline test module, got: {files:?}"
+    );
+}
+
+// A test file reached by nothing (no `mod` declaration) and importing nothing
+// resolvable: its bidirectional closure is the seed alone, all test-kind. This
+// is the only shape that empties under the default test filter now that the
+// closure is bidirectional — an inline `mod tests;` file always pulls its src
+// parent in backward.
+fn setup_orphan_test_seed_project() -> TempDir {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("widget")).unwrap();
+    fs::write(src.join("lib.rs"), "pub fn noop() {}\n").unwrap();
+    fs::write(
+        src.join("widget/tests.rs"),
+        "#[test]\nfn solo() {\n    assert!(true);\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"orphan_test_e2e\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    let out = yomu_cmd()
+        .arg("index")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "index failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    dir
+}
+
+// T-616: brief_explicit_test_seed_keeps_seed_without_misattribution [#236]
+// Seeding directly on a test file whose whole closure is test-kind, without
+// --include-tests. The seed must survive (the caller named it), so the closure
+// is non-empty and the CLI does not emit the degraded note — that note means
+// "FTS-only seed selection" and would misreport the cause of an empty result.
+#[test]
+fn brief_explicit_test_seed_keeps_seed_without_misattribution() {
+    let dir = setup_orphan_test_seed_project();
+    let out = yomu_cmd()
+        .args([
+            "brief",
+            "fix the failing solo assertion",
+            "--seed-file",
+            "src/widget/tests.rs",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "brief failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("src/widget/tests.rs"),
+        "explicit test seed must survive the default test filter, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("FTS-only seed selection"),
+        "a non-empty closure must not emit the FTS-fallback degraded note (#236), got: {stdout}"
     );
 }
 

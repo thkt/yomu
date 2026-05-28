@@ -439,11 +439,16 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let paths: Vec<&str> = depth_by_path.keys().map(String::as_str).collect();
     let chunks = get_chunks_for_files(conn, &paths)?;
     let mut brief_chunks = build_brief_chunks(chunks, &depth_by_path, &forward_paths);
-    // Drop test files from the closure unless the caller opted in. A test file
-    // reached via a `mod tests;` edge (or a test seed) is noise for a task about
-    // the code under test.
+    // Drop test files reached transitively (e.g. via a `mod tests;` edge): they
+    // are noise for a task about the code under test. An explicitly named seed
+    // is the exception — the caller asked for that file, so keep it even when it
+    // is a test. Dropping it would empty the closure and the CLI would then
+    // misreport the cause as an FTS fallback (#236).
     if !task.include_tests {
-        brief_chunks.retain(|c| c.source_kind != Some(SourceKind::Test));
+        let seed_set: HashSet<&str> = seeds.iter().map(String::as_str).collect();
+        brief_chunks.retain(|c| {
+            c.source_kind != Some(SourceKind::Test) || seed_set.contains(c.file_path.as_str())
+        });
     }
     // Single byte sum reused by the cap check and the final totals.
     let total_bytes: usize = brief_chunks.iter().map(|c| c.content.len()).sum();
