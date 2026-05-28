@@ -2391,6 +2391,7 @@ fn brief_task(seed_file: &str) -> brief::TaskBrief {
         depth: 1,
         max_chunks: 80,
         max_bytes: 80_000,
+        include_tests: false,
     }
 }
 
@@ -2466,6 +2467,7 @@ fn brief_fts_seeds_when_no_embedder_and_keyword_matches() {
         depth: 1,
         max_chunks: 80,
         max_bytes: 80_000,
+        include_tests: false,
     };
 
     let output = yomu.brief(&task, true).unwrap();
@@ -2498,6 +2500,7 @@ fn brief_falls_back_to_degraded_when_no_embedder() {
         depth: 1,
         max_chunks: 80,
         max_bytes: 80_000,
+        include_tests: false,
     };
 
     let output = yomu.brief(&task, true).unwrap();
@@ -2531,6 +2534,7 @@ fn brief_emits_warn_on_seed_inference_embed_query_failure() {
         depth: 1,
         max_chunks: 80,
         max_bytes: 80_000,
+        include_tests: false,
     };
 
     let output = yomu.brief(&task, true).unwrap();

@@ -58,6 +58,10 @@ fn is_test_filename(name: &str) -> bool {
     if RS_GO_PY_EXTS.contains(&ext) && stem.ends_with("_test") {
         return true;
     }
+    // Rust inline test module: `#[cfg(test)] mod tests;` split into `tests.rs`.
+    if ext == "rs" && stem == "tests" {
+        return true;
+    }
     false
 }
 
@@ -172,6 +176,68 @@ mod tests {
                 classify(input),
                 SourceKind::Vendor,
                 "expected SourceKind::Vendor (precedence over test) for input {input:?}"
+            );
+        }
+    }
+
+    // T-205: inline_test_module_filename_returns_test
+    //
+    // Perspective: Equivalence. Rust's `#[cfg(test)] mod tests;` split into a
+    // `tests.rs` file is the most common inline-test convention. The classifier
+    // must tag it Test so brief and search can exclude it.
+    //
+    // FR: FR-A1-1
+    #[test]
+    fn inline_test_module_filename_returns_test() {
+        let cases = ["src/tools/tests.rs", "src/storage/tests.rs", "tests.rs"];
+        for input in cases {
+            assert_eq!(
+                classify(input),
+                SourceKind::Test,
+                "expected SourceKind::Test for Rust inline test module {input:?}"
+            );
+        }
+    }
+
+    // T-206/T-207: tests_stem_is_rust_specific
+    //
+    // Perspective: Branch (negative). The new `tests.rs` branch is gated on the
+    // `rs` extension. Go (`_test.go`) and Python (`tests/` dir or `test_*.py`)
+    // must not be caught by a `tests` stem, or the classifier would over-trigger
+    // on legitimate non-test module names.
+    //
+    // FR: FR-A1-2
+    #[test]
+    fn tests_stem_is_rust_specific() {
+        let cases = ["src/foo/tests.go", "src/foo/tests.py"];
+        for input in cases {
+            assert_eq!(
+                classify(input),
+                SourceKind::Src,
+                "expected SourceKind::Src (tests stem is rs-only) for input {input:?}"
+            );
+        }
+    }
+
+    // T-208: non_tests_rust_filename_returns_src
+    //
+    // Perspective: Boundary. A `.rs` file whose stem is not exactly `tests`
+    // stays Src even when a sibling `tests.rs` exists. Guards the branch against
+    // widening beyond the exact stem (e.g. `_tests` plural must not match).
+    //
+    // FR: FR-A1-1
+    #[test]
+    fn non_tests_rust_filename_returns_src() {
+        let cases = [
+            "src/tools.rs",
+            "src/tools/format.rs",
+            "src/integration_tests.rs",
+        ];
+        for input in cases {
+            assert_eq!(
+                classify(input),
+                SourceKind::Src,
+                "expected SourceKind::Src for non-tests rust file {input:?}"
             );
         }
     }

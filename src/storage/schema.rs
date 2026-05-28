@@ -47,7 +47,7 @@ pub fn open_db(path: &Path) -> Result<Connection, StorageError> {
     Ok(conn)
 }
 
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 
 const DDL_FTS_CHUNKS: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(name, content, file_path, tokenize='trigram')";
 
@@ -293,6 +293,35 @@ fn migrate(conn: &Connection, from: u32, path: &Path) -> Result<(), StorageError
         conn.execute_batch(DDL_FTS_CHUNKS)?;
         conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
         notify_schema_change("yomu", "chunks v10", 0, "yomu index");
+    }
+
+    // v10 → v11: the brief-recall change reclassifies Rust inline `tests.rs`
+    // modules as `source_kind='test'` (previously `'src'`) and stops embedding
+    // test chunks. Existing v10 rows keep the old tag plus stale test
+    // embeddings, and `check_file` skips unchanged files by content hash, so
+    // neither is corrected on the next index without a rebuild. Drop + recreate
+    // the same dependent set as v10 so `yomu index` reclassifies and re-embeds
+    // uniformly; clearing embedded_chunk_ids also restores the
+    // embedded <= embeddable invariant get_stats / embed_pending rely on.
+    if from < 11 {
+        let _span = tracing::info_span!("migration_v11", path = %path.display()).entered();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS chunks; \
+             DROP TABLE IF EXISTS embedded_chunk_ids; \
+             DROP TABLE IF EXISTS vec_chunks; \
+             DROP TABLE IF EXISTS fts_chunks_vocab; \
+             DROP TABLE IF EXISTS fts_chunks;",
+        )?;
+        // Wipe file_references: dropping chunks invalidates the source_file /
+        // target_file rows (F-005). The next reindex repopulates per surviving
+        // file via replace_file_references.
+        conn.execute_batch("DELETE FROM file_references")?;
+        conn.execute_batch(DDL)?;
+        conn.execute_batch(&ddl_vec_chunks())?;
+        conn.execute_batch(DDL_EMBEDDED_CHUNK_IDS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS)?;
+        conn.execute_batch(DDL_FTS_CHUNKS_VOCAB)?;
+        notify_schema_change("yomu", "chunks v11", 0, "yomu index");
     }
 
     Ok(())

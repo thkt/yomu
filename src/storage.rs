@@ -45,8 +45,10 @@ pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, 
 pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     let total_chunks: u32 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
 
+    // Test chunks are chunked and FTS-indexed but not embedded, so they are not
+    // embeddable. `IS NOT` keeps NULL source_kind (legacy rows) embeddable.
     let embeddable_chunks: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM chunks WHERE chunk_type != 'inner_fn'",
+        "SELECT COUNT(*) FROM chunks WHERE chunk_type != 'inner_fn' AND source_kind IS NOT 'test'",
         [],
         |row| row.get(0),
     )?;
