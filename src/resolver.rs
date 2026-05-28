@@ -146,11 +146,21 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
         }
     };
 
-    let paths = match json
-        .get("compilerOptions")
-        .and_then(|co| co.get("paths"))
-        .and_then(|p| p.as_object())
-    {
+    let compiler_options = match json.get("compilerOptions") {
+        Some(co) => co,
+        None => return vec![],
+    };
+
+    // TypeScript resolves `paths` targets relative to `baseUrl` (which defaults
+    // to "." when omitted). Without folding `baseUrl` in, an alias like
+    // `{ "baseUrl": "src", "paths": { "@/*": ["*"] } }` resolves to the repo root
+    // instead of `src/`, dropping the target from the forward closure.
+    let base_url = compiler_options
+        .get("baseUrl")
+        .and_then(|b| b.as_str())
+        .unwrap_or(".");
+
+    let paths = match compiler_options.get("paths").and_then(|p| p.as_object()) {
         Some(p) => p,
         None => return vec![],
     };
@@ -158,17 +168,33 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
     paths
         .iter()
         .filter_map(|(key, value)| {
-            // key: "@/*", value: ["src/*"]
+            // key: "@/*", value: ["*"] (relative to baseUrl) or ["src/*"]
             let prefix = key.strip_suffix('*')?;
             let target_arr = value.as_array()?;
             let target_str = target_arr.first()?.as_str()?;
-            let target = target_str.strip_suffix('*')?;
+            let raw_target = target_str.strip_suffix('*')?;
             Some(PathAlias {
                 prefix: prefix.to_owned(),
-                target: target.to_owned(),
+                target: compose_alias_target(base_url, raw_target),
             })
         })
         .collect()
+}
+
+/// Prefix a tsconfig `paths` target with `base_url` (TypeScript resolves `paths`
+/// relative to `baseUrl`, which defaults to "."). `path_target` is the portion
+/// of a `paths` value before the `*` wildcard and is appended verbatim so its
+/// tail is preserved: `"src/"` for a path-segment wildcard (`src/*`),
+/// `"generated/lib-"` for a filename-prefix wildcard (`generated/lib-*`).
+/// Re-normalizing the tail would break the latter.
+fn compose_alias_target(base_url: &str, path_target: &str) -> String {
+    let base = base_url.trim_start_matches("./").trim_end_matches('/');
+    let prefix = if base.is_empty() || base == "." {
+        String::new()
+    } else {
+        format!("{base}/")
+    };
+    format!("{prefix}{path_target}")
 }
 
 #[cfg(test)]
@@ -297,6 +323,65 @@ mod tests {
                 target: "src/".to_owned(),
             }]
         );
+    }
+
+    // T-347: load_aliases_with_baseurl
+    // tsconfig `paths` targets are relative to `baseUrl`; `{ baseUrl: "src",
+    // paths: { "@/*": ["*"] } }` must yield the same `src/` target as the
+    // root-relative `["src/*"]` form.
+    #[test]
+    fn load_aliases_with_baseurl() {
+        let tmp = tempdir().unwrap();
+        let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "src",
+                "paths": {
+                    "@/*": ["*"]
+                }
+            }
+        }"#;
+        fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+        let aliases = load_aliases(tmp.path());
+        assert_eq!(
+            aliases,
+            vec![PathAlias {
+                prefix: "@/".to_owned(),
+                target: "src/".to_owned(),
+            }]
+        );
+    }
+
+    // T-348: compose_alias_target_variants
+    #[test]
+    fn compose_alias_target_variants() {
+        // baseUrl pushed, empty path target
+        assert_eq!(compose_alias_target("src", ""), "src/");
+        // leading "./" on baseUrl is normalized away
+        assert_eq!(compose_alias_target("./src", ""), "src/");
+        // baseUrl "." is skipped; the path target stands alone
+        assert_eq!(compose_alias_target(".", "src/"), "src/");
+        // both empty → repo root (empty prefix)
+        assert_eq!(compose_alias_target(".", ""), "");
+        // filename-prefix wildcard (e.g. `generated/lib-*`): the target tail is
+        // preserved verbatim with no forced trailing "/"
+        assert_eq!(
+            compose_alias_target(".", "generated/lib-"),
+            "generated/lib-"
+        );
+        assert_eq!(
+            compose_alias_target("src", "generated/lib-"),
+            "src/generated/lib-"
+        );
+    }
+
+    // T-349: load_aliases_no_compiler_options
+    // A tsconfig without `compilerOptions` yields no aliases (no panic).
+    #[test]
+    fn load_aliases_no_compiler_options() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join("tsconfig.json"), "{}").unwrap();
+        assert!(load_aliases(tmp.path()).is_empty());
     }
 
     // T-332: load_aliases_no_tsconfig
