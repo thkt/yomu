@@ -282,6 +282,7 @@ fn render_json_emits_spec_shape() {
         degraded: true,
         total_chunks: 1,
         total_bytes: 11,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_json(&output);
@@ -317,6 +318,7 @@ fn render_json_includes_seed_and_modkinds() {
         degraded: false,
         total_chunks: 3,
         total_bytes: 0,
+        reachable_files: Vec::new(),
     };
     let parsed: serde_json::Value = serde_json::from_str(&render_json(&output)).unwrap();
     assert_eq!(parsed["chunks"][0]["included_reason"], "seed");
@@ -345,6 +347,7 @@ fn render_plain_outputs_separator_and_header() {
         degraded: false,
         total_chunks: 2,
         total_bytes: 0,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_plain(&output);
@@ -362,6 +365,7 @@ fn render_plain_returns_empty_string_for_empty_output() {
         degraded: false,
         total_chunks: 0,
         total_bytes: 0,
+        reachable_files: Vec::new(),
     };
     assert_eq!(render_plain(&output), "");
 }
@@ -383,6 +387,7 @@ fn render_plain_prepends_degraded_note() {
         degraded: true,
         total_chunks: 1,
         total_bytes: 11,
+        reachable_files: Vec::new(),
     };
     let rendered = render_plain(&output);
     assert!(
@@ -403,6 +408,7 @@ fn render_plain_empty_degraded_returns_only_note() {
         degraded: true,
         total_chunks: 0,
         total_bytes: 0,
+        reachable_files: Vec::new(),
     };
     assert_eq!(
         render_plain(&output),
@@ -574,6 +580,7 @@ fn render_json_emits_per_chunk_injection_flags() {
         degraded: false,
         total_chunks: 1,
         total_bytes: 11,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_json(&output);
@@ -610,6 +617,7 @@ fn render_json_emits_per_chunk_source_kind() {
         degraded: false,
         total_chunks: 1,
         total_bytes: 11,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_json(&output);
@@ -638,6 +646,7 @@ fn render_json_skips_source_kind_when_none() {
         degraded: false,
         total_chunks: 1,
         total_bytes: 11,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_json(&output);
@@ -655,6 +664,7 @@ fn render_json_emits_injection_check_even_with_empty_chunks() {
         degraded: false,
         total_chunks: 0,
         total_bytes: 0,
+        reachable_files: Vec::new(),
     };
 
     let rendered = render_json(&output);
@@ -751,5 +761,66 @@ fn expand_plan_keeps_explicit_test_seed() {
     assert!(
         !output.degraded,
         "a satisfiable explicit seed must not degrade"
+    );
+}
+
+// T-002: expand_plan_surfaces_pre_cap_reachable_files [#128 FR-002]
+// The reachable set is the closure after the test filter and before the cap:
+// a forward-reached test file is excluded (retain), and the set does not shrink
+// when the cap does. cap-fit divides by this, isolating the cap from the filter.
+#[test]
+fn expand_plan_surfaces_pre_cap_reachable_files() {
+    let (conn, _dir) = test_db();
+    for (path, name) in [
+        ("src/a.rs", "a"),
+        ("src/b.rs", "b"),
+        ("src/c.rs", "c"),
+        ("src/d.rs", "d"),
+    ] {
+        insert_test_chunk(&conn, path, name, 1);
+    }
+    insert_kind_chunk(&conn, "src/d/tests.rs", "t", 1, Some(SourceKind::Test));
+    let edge = |source: &str, target: &str| Reference {
+        source_file: source.into(),
+        target_file: target.into(),
+        symbol_name: None,
+        ref_kind: RefKind::Named,
+    };
+    replace_file_references(&conn, "src/a.rs", &[edge("src/a.rs", "src/b.rs")]).unwrap();
+    replace_file_references(&conn, "src/b.rs", &[edge("src/b.rs", "src/c.rs")]).unwrap();
+    replace_file_references(&conn, "src/c.rs", &[edge("src/c.rs", "src/d.rs")]).unwrap();
+    replace_file_references(&conn, "src/d.rs", &[edge("src/d.rs", "src/d/tests.rs")]).unwrap();
+
+    let reachable = |max_chunks: u32| -> Vec<String> {
+        let task = TaskBrief {
+            task: "find".to_owned(),
+            seeds: vec![seed_file("src/a.rs")],
+            depth: 5,
+            max_chunks,
+            max_bytes: 80_000,
+            include_tests: false,
+        };
+        let mut r = expand_plan(&conn, &task).unwrap().reachable_files;
+        r.sort();
+        r
+    };
+
+    let expected = vec![
+        "src/a.rs".to_owned(),
+        "src/b.rs".to_owned(),
+        "src/c.rs".to_owned(),
+        "src/d.rs".to_owned(),
+    ];
+    // Forward-reached test file (src/d/tests.rs) is excluded by the test filter.
+    assert_eq!(
+        reachable(80),
+        expected,
+        "reachable set excludes the forward-reached test file"
+    );
+    // Pre-cap: shrinking the cap to 2 must not shrink the reachable set.
+    assert_eq!(
+        reachable(2),
+        expected,
+        "reachable set is captured pre-cap, independent of max_chunks"
     );
 }
