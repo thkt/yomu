@@ -114,12 +114,26 @@ pub fn canary_violations(
         .collect()
 }
 
+/// The ground-truth corpus bundled with the crate (`tests/fixtures/brief/gt.yaml`).
+const BUNDLED_GT_YAML: &str = include_str!("../../tests/fixtures/brief/gt.yaml");
+
+/// Loads and validates the bundled ground-truth corpus.
+///
+/// Convenience over [`load_from_str`] for the two production call sites — the
+/// Gate1 seeded-recall gate and the `yomu recall` CLI — that measure against the
+/// same bundled corpus.
+///
+/// # Errors
+/// Propagates [`load_from_str`]. The bundled corpus is also covered by a load
+/// test, so an error here signals the fixture was edited into an invalid state.
+pub fn load_bundled() -> Result<GtCorpus, GtLoadError> {
+    load_from_str(BUNDLED_GT_YAML)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
-
-    const BUNDLED_GT_YAML: &str = include_str!("../../tests/fixtures/brief/gt.yaml");
 
     fn wf(path: &str, weight: u32) -> WeightedFile {
         WeightedFile {
@@ -264,8 +278,7 @@ entries:
     // T-005: bundled_gt_corpus_loads_with_ten_weighted_entries
     #[test]
     fn bundled_gt_corpus_loads_with_ten_weighted_entries() {
-        let corpus = load_from_str(BUNDLED_GT_YAML)
-            .expect("bundled gt.yaml loads and passes weight validation");
+        let corpus = load_bundled().expect("bundled gt.yaml loads and passes weight validation");
         assert!(
             corpus.entries.len() >= 10,
             "FR-005: corpus must carry >= 10 domain-diverse entries, got {}",
