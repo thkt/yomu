@@ -1,0 +1,6 @@
+[submodule "vendor/rurico"]
+	path = vendor/rurico
+	url = https://github.com/thkt/rurico.git
+[submodule "vendor/amici"]
+	path = vendor/amici
+	url = https://github.com/thkt/amici.git

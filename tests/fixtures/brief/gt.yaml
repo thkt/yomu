@@ -1,0 +1,269 @@
+# Ground-truth (GT) corpus for `yomu brief` recall measurement (#128 Phase 3).
+#
+# Each entry pairs a realistic investigation/change task with the file set a
+# complete answer must span (`must_include`), each file carrying a domain-assigned
+# importance weight (5 = central, lower = supporting). The corpus is loaded by
+# `recall::corpus::load_from_str` and measured against seeded `brief` output by the
+# Gate1 seeded-recall gate (tests/brief_recall.rs, Phase 3).
+#
+# Targets are the pinned `vendor/` submodules rurico@1d6650a and amici@ae8c068 —
+# real Rust CLIs that are NOT yomu itself, so must-include sets cannot be reverse-
+# engineered from yomu's own structure (AS-004 / anti-tautology).
+#
+# Selection method (AS-004): each must-include set is named by reasoning from the
+# repo's source and responsibilities about what a complete answer needs — NOT by
+# running `brief` and copying its output. The BR-002 canary (recall::corpus::
+# canary_violations, run over the real corpus by Phase 3 T-006b) is only a floor
+# check: every entry carries at least one must-include file OUTSIDE the seed's
+# 1-hop forward closure (a reverse dependent, or a 2+-hop forward file), so the
+# bidirectional / multi-hop closure mechanism (#235) must do real work and recall
+# cannot be vacuously high. The `rationale` of each entry names that file and its
+# closure direction. Closure structure was confirmed empirically against an index
+# of each pinned submodule (`brief --depth 1/2`).
+
+entries:
+  # --- rurico (embedding / reranker / model-lifecycle Rust CLI) ---
+
+  - id: rurico-model-io-shared-utils
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: model-io
+    task: >-
+      Add a new length-bucket boundary to the shared model I/O helpers and
+      propagate the change to every backend that pads and buckets sequences.
+    seed:
+      - src/model_io.rs
+    rationale: >-
+      model_io.rs owns BUCKET_BOUNDS / pad_sequences and config loading. A complete
+      answer spans the two MLX backends that consume them and the lifecycle that
+      wraps download_artifacts. embed/mlx.rs, reranker/mlx.rs and model_lifecycle.rs
+      are reverse dependents of model_io.rs (1-hop impact), unreachable by forward
+      closure, so the entry exercises backward closure (BR-002).
+    must_include:
+      - path: src/model_io.rs
+        weight: 5
+      - path: src/embed/mlx.rs
+        weight: 3
+      - path: src/reranker/mlx.rs
+        weight: 3
+      - path: src/model_lifecycle.rs
+        weight: 2
+
+  - id: rurico-artifact-kind-verification
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: artifact-verification
+    task: >-
+      Extend artifact kind markers to verify a new model variant and validate its
+      config and safetensors files at load time.
+    seed:
+      - src/artifacts.rs
+    rationale: >-
+      artifacts.rs defines the kind markers and VerifiedArtifacts. The trait it
+      relies on (model_io.rs) is forward; model_lifecycle.rs calls Kind::verify and
+      is a reverse dependent (1-hop impact), and modernbert/config.rs is loaded
+      during verification at 2-hop forward. The reverse and multi-hop files lie
+      outside the 1-hop forward closure (BR-002).
+    must_include:
+      - path: src/artifacts.rs
+        weight: 5
+      - path: src/model_io.rs
+        weight: 3
+      - path: src/model_lifecycle.rs
+        weight: 3
+      - path: src/modernbert/config.rs
+        weight: 2
+
+  - id: rurico-modernbert-config-field
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: transformer-config
+    task: >-
+      Add a new ModernBERT config field and thread it through the transformer
+      forward pass and the artifact verification that loads config.json.
+    seed:
+      - src/modernbert/config.rs
+    rationale: >-
+      config.rs is a leaf (no internal forward imports). Its consumers are all
+      reverse dependents: modernbert.rs re-exports it (1-hop impact), and
+      modernbert/model.rs (the transformer) and artifacts.rs (config loading during
+      verification) reach it at 2-hop impact. The whole answer sits outside the
+      forward closure, exercising backward closure (BR-002).
+    must_include:
+      - path: src/modernbert/config.rs
+        weight: 5
+      - path: src/modernbert/model.rs
+        weight: 3
+      - path: src/modernbert.rs
+        weight: 2
+      - path: src/artifacts.rs
+        weight: 2
+
+  - id: rurico-reranker-mlx-scoring
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: reranker-backend
+    task: >-
+      Change the cross-encoder scoring path in the reranker MLX backend and keep
+      the lazy wrapper and the underlying transformer consistent.
+    seed:
+      - src/reranker/mlx.rs
+    rationale: >-
+      reranker/mlx.rs imports the Rerank trait (reranker.rs, forward-1) and model
+      I/O. A complete scoring change also spans modernbert/model.rs (the transformer
+      it runs) and reranker/lazy.rs (the deferred-init wrapper), both at 2-hop
+      forward and outside the 1-hop forward closure, so the entry exercises
+      multi-hop forward closure plus the cap (BR-002).
+    must_include:
+      - path: src/reranker/mlx.rs
+        weight: 5
+      - path: src/reranker.rs
+        weight: 3
+      - path: src/modernbert/model.rs
+        weight: 3
+      - path: src/reranker/lazy.rs
+        weight: 2
+
+  - id: rurico-embedding-forward-pass
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: embedding-backend
+    task: >-
+      Modify the batched MLX forward pass in the embedding backend and keep the
+      caller, pooling, and transformer layers aligned.
+    seed:
+      - src/embed/mlx.rs
+    rationale: >-
+      embed/mlx.rs runs the forward pass; embed/embedder.rs (its caller) is
+      forward-1. embed/pooling.rs (post-inference pooling) and modernbert/model.rs
+      (the transformer) are 2-hop forward, outside the 1-hop forward closure, so the
+      entry exercises multi-hop forward closure (BR-002).
+    must_include:
+      - path: src/embed/mlx.rs
+        weight: 5
+      - path: src/embed/embedder.rs
+        weight: 3
+      - path: src/embed/pooling.rs
+        weight: 3
+      - path: src/modernbert/model.rs
+        weight: 2
+
+  # --- amici (eval-harness / storage / CLI Rust library) ---
+
+  - id: amici-fts-trigram-cleaner
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: fts-search
+    task: >-
+      Optimize the cross-product limiting in the FTS5 trigram cleaner so single-term
+      OR-groups skip the fixed-only fallback, without regressing the eval pipeline.
+    seed:
+      - src/storage/fts.rs
+    rationale: >-
+      fts.rs is a leaf utility. storage.rs re-exports clean_for_trigram and
+      eval/pipeline.rs calls it (both 1-hop impact); eval/oracle_pipeline.rs reuses
+      the pipeline at 2-hop impact. All consumers are reverse dependents outside the
+      forward closure, exercising backward closure (BR-002).
+    must_include:
+      - path: src/storage/fts.rs
+        weight: 5
+      - path: src/eval/pipeline.rs
+        weight: 3
+      - path: src/storage.rs
+        weight: 2
+      - path: src/eval/oracle_pipeline.rs
+        weight: 2
+
+  - id: amici-ir-metrics
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: ir-metrics
+    task: >-
+      Add a new IR metric (e.g. Recall@k variant) to the metrics module and surface
+      it through baseline capture and the oracle-gap regression check.
+    seed:
+      - src/eval/metrics.rs
+    rationale: >-
+      metrics.rs is a leaf computing Recall@k / MRR@k / nDCG@k. Its consumers are
+      reverse dependents at 1-hop impact: eval/baseline.rs stores metric results,
+      bin/eval_harness.rs computes and reports them, eval/oracle_gap.rs compares
+      them. The whole answer is outside the forward closure, exercising backward
+      closure (BR-002).
+    must_include:
+      - path: src/eval/metrics.rs
+        weight: 5
+      - path: src/eval/baseline.rs
+        weight: 3
+      - path: src/bin/eval_harness.rs
+        weight: 2
+      - path: src/eval/oracle_gap.rs
+        weight: 2
+
+  - id: amici-cli-exit-codes
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: cli-exit-codes
+    task: >-
+      Add a new sysexits-style exit code and CliError mapping and propagate it to
+      the modules that translate errors into process exit codes.
+    seed:
+      - src/cli/exit_code.rs
+    rationale: >-
+      exit_code.rs is a leaf defining exit-code constants and the CliError trait.
+      cli.rs re-exports it (1-hop impact) and model.rs maps its degraded states to
+      exit codes (2-hop impact). Both consumers are reverse dependents outside the
+      forward closure, exercising backward closure (BR-002).
+    must_include:
+      - path: src/cli/exit_code.rs
+        weight: 5
+      - path: src/cli.rs
+        weight: 3
+      - path: src/model.rs
+        weight: 2
+
+  - id: amici-baseline-snapshot-schema
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: baseline-schema
+    task: >-
+      Add a config_hash field to BaselineSnapshot with a serde default preserving
+      pre-field behavior, and detect drift in the oracle-gap comparison.
+    seed:
+      - src/eval/baseline.rs
+    rationale: >-
+      baseline.rs defines BaselineSnapshot; metrics.rs is its only forward import.
+      The schema change spans reverse dependents at 1-hop impact: eval/oracle_gap.rs
+      compares snapshots, bin/eval_harness.rs builds them, eval/io.rs serializes
+      them. These lie outside the forward closure, exercising backward closure
+      (BR-002).
+    must_include:
+      - path: src/eval/baseline.rs
+        weight: 5
+      - path: src/eval/oracle_gap.rs
+        weight: 3
+      - path: src/bin/eval_harness.rs
+        weight: 2
+      - path: src/eval/io.rs
+        weight: 2
+
+  - id: amici-embedder-degradation
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: model-loading
+    task: >-
+      Add a structured field to the embedder degraded-load logging and keep the
+      reranker loader, which mirrors the same degradation pattern, consistent.
+    seed:
+      - src/model/embedder.rs
+    rationale: >-
+      embedder.rs calls degrade_with_warn in model.rs (forward-1). The mirrored
+      reranker loader, model/reranker.rs, is a 2-hop forward sibling outside the
+      1-hop forward closure and must change in lockstep, so the entry exercises
+      multi-hop forward closure (BR-002).
+    must_include:
+      - path: src/model/embedder.rs
+        weight: 5
+      - path: src/model.rs
+        weight: 3
+      - path: src/model/reranker.rs
+        weight: 2
