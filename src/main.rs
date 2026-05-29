@@ -146,6 +146,16 @@ Examples:
         #[arg(long)]
         include_tests: bool,
     },
+    /// Measure seed-less recall and weighted cap-fit against the bundled GT corpus.
+    #[command(after_help = "\
+Examples:
+  yomu recall --repo rurico
+  yomu --json recall --repo amici")]
+    Recall {
+        /// GT corpus repo to measure against the current index (e.g. rurico, amici)
+        #[arg(long)]
+        repo: String,
+    },
     /// Manage the embedding model.
     #[command(
         subcommand_required = true,
@@ -245,6 +255,23 @@ fn main() -> ExitCode {
         Err(e) => return emit_error(&e, json),
     };
 
+    // recall emits its (possibly degraded) report to stdout and exits non-zero
+    // when degraded (FR-012), so it cannot use the uniform Ok→write / Err→emit
+    // path below. Handled here, after Yomu::new opens the index it measures.
+    if let Command::Recall { repo } = &command {
+        return match yomu.recall(repo, json) {
+            Ok((text, degraded)) => {
+                let code = write_output(&text);
+                if degraded {
+                    ExitCode::from(ErrorCode::TempFailure.exit_code())
+                } else {
+                    code
+                }
+            }
+            Err(e) => emit_error(&e, json),
+        };
+    }
+
     let result = match command {
         Command::Search {
             query,
@@ -333,6 +360,7 @@ fn main() -> ExitCode {
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
         Command::Verify => unreachable!("handled before Yomu::new()"),
+        Command::Recall { .. } => unreachable!("handled before the command match"),
         Command::Brief {
             task,
             seed_file,
@@ -409,7 +437,7 @@ fn render_clap_error(e: &clap::Error) -> ExitCode {
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "search", "index", "rebuild", "impact", "status", "verify", "brief", "model",
+    "search", "index", "rebuild", "impact", "status", "verify", "brief", "model", "recall",
 ];
 
 fn build_seeds(files: Vec<String>, symbols: Vec<String>) -> Vec<brief::Seed> {

@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub mod corpus;
 
@@ -23,7 +23,7 @@ pub struct WeightedFile {
 }
 
 /// Recall and cap-fit for one ground-truth entry.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RecallReport {
     /// Unweighted must-include hit rate: present / total.
     pub recall: f64,
@@ -104,6 +104,92 @@ pub fn measure(
 /// the integration gate wires a measured mean to the committed constant.
 pub fn gate_passes(mean: f64, floor: f64) -> bool {
     mean >= floor
+}
+
+/// One ground-truth entry's seed-less recall, tagged with its id, for the
+/// `yomu recall` report (FR-011). Flattens [`RecallReport`] so each entry object
+/// carries `recall` / `cap_fit` / `degraded` directly.
+#[derive(Debug, Clone, Serialize)]
+pub struct EntryReport {
+    pub id: String,
+    #[serde(flatten)]
+    pub report: RecallReport,
+}
+
+/// Seed-less recall report for one repo's GT entries (FR-011). `aggregate` holds
+/// the mean recall / cap-fit and a degraded flag set when any entry degraded or
+/// no entry matched. Emitted per-repo; the recall workflow merges repos.
+#[derive(Debug, Clone, Serialize)]
+pub struct CorpusReport {
+    pub repo: String,
+    pub aggregate: RecallReport,
+    pub entries: Vec<EntryReport>,
+}
+
+impl CorpusReport {
+    /// Builds a report from per-entry measurements, with the aggregate as the
+    /// unweighted mean. An empty entry set (no GT entry matched `repo`) is
+    /// degraded with a vacuous 1.0 mean, mirroring [`measure`]'s degraded-on-
+    /// vacuous contract so a `--repo` typo never reads as a silent pass.
+    pub fn new(repo: String, entries: Vec<EntryReport>) -> Self {
+        let aggregate = if entries.is_empty() {
+            RecallReport {
+                recall: 1.0,
+                cap_fit: 1.0,
+                degraded: true,
+            }
+        } else {
+            let n = entries.len() as f64;
+            RecallReport {
+                recall: entries.iter().map(|e| e.report.recall).sum::<f64>() / n,
+                cap_fit: entries.iter().map(|e| e.report.cap_fit).sum::<f64>() / n,
+                degraded: entries.iter().any(|e| e.report.degraded),
+            }
+        };
+        Self {
+            repo,
+            aggregate,
+            entries,
+        }
+    }
+}
+
+/// Renders a [`CorpusReport`] as a single-line JSON object (FR-011).
+pub fn render_recall_json(report: &CorpusReport) -> String {
+    serde_json::to_string(report).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// Renders a [`CorpusReport`] as a human-readable plain-text table (FR-011).
+pub fn render_recall_plain(report: &CorpusReport) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "recall report: {} (degraded: {})",
+        report.repo, report.aggregate.degraded
+    );
+    let _ = writeln!(
+        out,
+        "  aggregate: recall={:.3} cap_fit={:.3} over {} entries",
+        report.aggregate.recall,
+        report.aggregate.cap_fit,
+        report.entries.len()
+    );
+    for entry in &report.entries {
+        let _ = writeln!(
+            out,
+            "  {:<40} recall={:.3} cap_fit={:.3}{}",
+            entry.id,
+            entry.report.recall,
+            entry.report.cap_fit,
+            if entry.report.degraded {
+                " (degraded)"
+            } else {
+                ""
+            }
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -203,6 +289,75 @@ mod tests {
             (r.cap_fit - 1.0).abs() < f64::EPSILON,
             "numerator constrained to reachable → cap_fit 1.0 (not 2.0), got {}",
             r.cap_fit
+        );
+    }
+
+    // T-020: corpus_report_aggregates_mean_and_renders_keys_per_entry_and_aggregate
+    #[test]
+    fn corpus_report_aggregates_mean_and_renders_keys() {
+        let entries = vec![
+            EntryReport {
+                id: "e1".to_owned(),
+                report: RecallReport {
+                    recall: 1.0,
+                    cap_fit: 1.0,
+                    degraded: false,
+                },
+            },
+            EntryReport {
+                id: "e2".to_owned(),
+                report: RecallReport {
+                    recall: 0.5,
+                    cap_fit: 0.5,
+                    degraded: false,
+                },
+            },
+        ];
+        let report = CorpusReport::new("rurico".to_owned(), entries);
+        assert!(
+            (report.aggregate.recall - 0.75).abs() < f64::EPSILON,
+            "aggregate recall is the mean (0.75), got {}",
+            report.aggregate.recall
+        );
+        assert!(
+            (report.aggregate.cap_fit - 0.75).abs() < f64::EPSILON,
+            "aggregate cap_fit is the mean (0.75), got {}",
+            report.aggregate.cap_fit
+        );
+        assert!(
+            !report.aggregate.degraded,
+            "no entry degraded → aggregate not degraded"
+        );
+
+        let json = render_recall_json(&report);
+        assert!(
+            json.contains("\"repo\":\"rurico\""),
+            "repo present, got: {json}"
+        );
+        assert!(
+            json.contains("\"id\":\"e1\""),
+            "entry id present, got: {json}"
+        );
+        // recall/cap_fit keys appear per-entry (2) plus once in the aggregate (3).
+        assert_eq!(
+            json.matches("\"recall\":").count(),
+            3,
+            "recall key present per-entry and in aggregate, got: {json}"
+        );
+        assert_eq!(
+            json.matches("\"cap_fit\":").count(),
+            3,
+            "cap_fit key present per-entry and in aggregate, got: {json}"
+        );
+    }
+
+    // T-022: corpus_report_with_no_entries_is_degraded
+    #[test]
+    fn corpus_report_with_no_entries_is_degraded() {
+        let report = CorpusReport::new("ghost".to_owned(), Vec::new());
+        assert!(
+            report.aggregate.degraded,
+            "no entries (e.g. --repo mismatch) → degraded, never a silent pass"
         );
     }
 }
