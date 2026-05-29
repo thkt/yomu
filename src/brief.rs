@@ -75,6 +75,11 @@ pub struct BriefOutput {
     pub degraded: bool,
     pub total_chunks: u32,
     pub total_bytes: u32,
+    /// Distinct files reachable in the closure after the test filter and before
+    /// the cap. Surfaced for recall measurement (FR-002): cap-fit's denominator
+    /// is the must-include weight reachable here, isolating the cap's effect
+    /// from the closure's coverage. Not serialized in the CLI output.
+    pub reachable_files: Vec<String>,
 }
 
 fn collect_seed_paths(task: &TaskBrief) -> Vec<String> {
@@ -432,6 +437,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
             degraded: true,
             total_chunks: 0,
             total_bytes: 0,
+            reachable_files: Vec::new(),
         });
     }
     let (depth_by_path, forward_paths) = collect_closure(conn, &seeds, task.depth)?;
@@ -450,6 +456,19 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
             c.source_kind != Some(SourceKind::Test) || seed_set.contains(c.file_path.as_str())
         });
     }
+
+    // Distinct files reachable after the test filter and before the cap, in
+    // chunk (source) order. Captured here so cap-fit (FR-002) can divide by the
+    // must-include weight the closure actually reached, not what the cap kept.
+    let reachable_files: Vec<String> = {
+        let mut seen = HashSet::new();
+        brief_chunks
+            .iter()
+            .filter(|c| seen.insert(c.file_path.as_str()))
+            .map(|c| c.file_path.clone())
+            .collect()
+    };
+
     // Single byte sum reused by the cap check and the final totals.
     let total_bytes: usize = brief_chunks.iter().map(|c| c.content.len()).sum();
 
@@ -489,6 +508,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
         degraded: false,
         total_chunks,
         total_bytes,
+        reachable_files,
     })
 }
 
