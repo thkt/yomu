@@ -7,12 +7,16 @@
 
 use std::collections::HashSet;
 
+use serde::Deserialize;
+
+pub mod corpus;
+
 /// A must-include file paired with its domain-assigned importance weight.
 ///
 /// Weight ranks how much dropping the file would hurt the brief's completeness
 /// (1 = supporting, higher = central). Used only by the weighted cap-fit metric;
 /// plain recall ignores it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct WeightedFile {
     pub path: String,
     pub weight: u32,
