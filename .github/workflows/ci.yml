@@ -21,6 +21,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+          # Gate1 (tests/brief_recall.rs) measures recall against the pinned
+          # vendor/ submodules; without them it fails the FR-017 setup check.
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -71,6 +74,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # Coverage runs the full suite incl. Gate1, which needs the vendor/
+          # submodules present (see the test job).
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable

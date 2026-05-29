@@ -1,0 +1,7 @@
+{
+  "seeded_floor": 0.90,
+  "measured_mean": 0.95,
+  "model_hash": "stub-test-support",
+  "gate1_index_seconds": 3,
+  "_note": "Gate1 committed threshold (#128 Phase 3). measured_mean is the mean seeded recall observed by tests/brief_recall.rs over vendor/rurico@1d6650a and vendor/amici@ae8c068 with the stub embedder (deterministic: the seeded brief path is graph-only, verified bit-identical across processes and re-indexes). seeded_floor is set below measured_mean with headroom so a single entry shifting one recall notch (mean 0.925) does not fail the gate, while a closure-mechanism collapse (the #235 failure mode) does. Ratchet seeded_floor up as recall improves. model_hash records the embedder identity (stub) rather than a semantic model hash; the real-model hash belongs to the Gate2 seed-less baseline (Phase 5). Two entries currently measure 0.75 because src/bin/eval_harness.rs imports the lib via the package-name path (use amici::...), which the resolver does not resolve to an internal edge, so the binary is absent from the closure (brief limitation, tracked in #242)."
+}

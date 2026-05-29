@@ -96,6 +96,16 @@ pub fn measure(
     }
 }
 
+/// Returns `true` when the mean seeded recall meets the committed `floor`.
+///
+/// FR-009: the seeded gate (Gate1) fails when `mean` is below `floor`. The floor
+/// is an inclusive minimum, so `mean == floor` passes. Keeping the comparison in
+/// one pure function lets the threshold be unit-tested without a live index, and
+/// the integration gate wires a measured mean to the committed constant.
+pub fn gate_passes(mean: f64, floor: f64) -> bool {
+    mean >= floor
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +174,19 @@ mod tests {
             "vacuous cap-fit reports 1.0 (verify.rs parity), got {}",
             r.cap_fit
         );
+    }
+
+    // T-009: gate_passes_is_false_below_floor_true_at_or_above
+    #[test]
+    fn gate_passes_is_false_below_floor_true_at_or_above() {
+        // FR-009: the seeded gate fails when mean recall is below the committed floor.
+        assert!(
+            !gate_passes(0.74, 0.80),
+            "mean below floor must fail the gate"
+        );
+        // The floor is an inclusive minimum: equal or above passes.
+        assert!(gate_passes(0.80, 0.80), "mean equal to floor must pass");
+        assert!(gate_passes(0.95, 0.80), "mean above floor must pass");
     }
 
     // cap-fit invariant: a must-include file present in `output` but absent from
