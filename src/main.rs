@@ -112,12 +112,6 @@ Examples:
   yomu status
   yomu --json status")]
     Status,
-    /// Verify injection matcher precision/recall against bundled corpora.
-    #[command(after_help = "\
-Examples:
-  yomu verify
-  yomu --json verify")]
-    Verify,
     /// Bundle forward-closure code for an agent (recall-complete brief).
     #[command(after_help = "\
 Examples:
@@ -145,16 +139,6 @@ Examples:
         /// Include test files in the closure (default: test files are excluded)
         #[arg(long)]
         include_tests: bool,
-    },
-    /// Measure seed-less recall and weighted cap-fit against the bundled GT corpus.
-    #[command(after_help = "\
-Examples:
-  yomu recall --repo rurico
-  yomu --json recall --repo amici")]
-    Recall {
-        /// GT corpus repo to measure against the current index (e.g. rurico, amici)
-        #[arg(long)]
-        repo: String,
     },
     /// Manage the embedding model.
     #[command(
@@ -235,17 +219,6 @@ fn main() -> ExitCode {
         };
     }
 
-    // verify uses bundled corpora only; it MUST NOT open or migrate the
-    // project index. AS-405 / Spec FR-406 isolate verify from DB state so it
-    // runs in any directory (read-only, non-project) without side effects.
-    if let Command::Verify = &command {
-        let result = Yomu::verify_standalone(json);
-        return match result {
-            Ok(output) => write_output(&output),
-            Err(e) => emit_error(&e, json),
-        };
-    }
-
     let yomu_options = YomuOptions {
         log_query: cli.log_query,
     };
@@ -254,23 +227,6 @@ fn main() -> ExitCode {
         Ok(y) => y,
         Err(e) => return emit_error(&e, json),
     };
-
-    // recall emits its (possibly degraded) report to stdout and exits non-zero
-    // when degraded (FR-012), so it cannot use the uniform Ok→write / Err→emit
-    // path below. Handled here, after Yomu::new opens the index it measures.
-    if let Command::Recall { repo } = &command {
-        return match yomu.recall(repo, json) {
-            Ok((text, degraded)) => {
-                let code = write_output(&text);
-                if degraded {
-                    ExitCode::from(ErrorCode::TempFailure.exit_code())
-                } else {
-                    code
-                }
-            }
-            Err(e) => emit_error(&e, json),
-        };
-    }
 
     let result = match command {
         Command::Search {
@@ -359,8 +315,6 @@ fn main() -> ExitCode {
             semantic,
         } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
         Command::Status => yomu.status(json),
-        Command::Verify => unreachable!("handled before Yomu::new()"),
-        Command::Recall { .. } => unreachable!("handled before the command match"),
         Command::Brief {
             task,
             seed_file,
@@ -437,7 +391,7 @@ fn render_clap_error(e: &clap::Error) -> ExitCode {
 }
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "search", "index", "rebuild", "impact", "status", "verify", "brief", "model", "recall",
+    "search", "index", "rebuild", "impact", "status", "brief", "model",
 ];
 
 fn build_seeds(files: Vec<String>, symbols: Vec<String>) -> Vec<brief::Seed> {

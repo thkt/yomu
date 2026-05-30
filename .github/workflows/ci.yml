@@ -35,7 +35,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Check
-        run: cargo check
+        run: cargo check --workspace
 
       - name: Install nextest
         uses: taiki-e/install-action@f48d2f8ba2b452934c948b7be1a768079c3632ff # v2.79.6
@@ -47,10 +47,10 @@ jobs:
         # deterministic stub (src/tools/embedder.rs). `yomu index` now embeds
         # (index = embed, ADR 0002), and CI runners have no model, so the stub
         # is what lets index-spawning integration tests run hermetically.
-        run: cargo nextest run --profile ci --features test-support
+        run: cargo nextest run --profile ci --features test-support -p yomu
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -p yomu -- -D warnings
 
       - name: Format check
         run: cargo fmt -- --check
@@ -96,7 +96,7 @@ jobs:
         # Match the Test job: the stub embedder (`--features test-support`) lets
         # index-spawning integration tests run without a model. The real-model
         # loader is cfg'd out here and excluded from coverage accordingly.
-        run: cargo llvm-cov --lcov --output-path lcov.info --features test-support
+        run: cargo llvm-cov -p yomu --lcov --output-path lcov.info --features test-support
 
       - name: Diff coverage gate (changed lines >= 95%)
         run: |

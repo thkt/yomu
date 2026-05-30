@@ -1,0 +1,10 @@
+[package]
+name = "recall-bench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+yomu = { path = "../.." }
+clap = { version = "4", features = ["derive"] }
