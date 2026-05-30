@@ -75,7 +75,7 @@ fn copy_tree(from: &Path, to: &Path) {
 /// (`src/...`), so only `src/` is copied; a minimal Cargo.toml gives the indexer
 /// a project root (mirrors the cli_integration setup). The vendored checkout is
 /// never written to (BR-005, hermetic).
-fn index_repo(repo: &str) -> (TempDir, Connection) {
+fn index_repo_dir(repo: &str) -> TempDir {
     let dir = tempdir().expect("tempdir");
     copy_tree(&vendor_dir(repo).join("src"), &dir.path().join("src"));
     fs::write(
@@ -100,6 +100,11 @@ fn index_repo(repo: &str) -> (TempDir, Connection) {
         "index {repo} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    dir
+}
+
+fn index_repo(repo: &str) -> (TempDir, Connection) {
+    let dir = index_repo_dir(repo);
     let conn = open_db(&dir.path().join(".yomu/index.db")).expect("open indexed db");
     (dir, conn)
 }
@@ -329,5 +334,128 @@ fn check_rev_rejects_mismatch_and_absence() {
     assert!(
         check_rev("rurico", rurico_rev, Some(rurico_rev)).is_ok(),
         "a HEAD matching the pinned rev must pass"
+    );
+}
+
+// T-012: `yomu recall --repo <name> --json` emits recall/cap_fit per entry and in
+// aggregate (FR-011). With the stub embedder seed inference is meaningless, so this
+// asserts the report SCHEMA, never the recall values. Reuses the Phase 3 index setup.
+#[test]
+fn recall_cli_json_emits_recall_and_cap_fit_schema() {
+    let dir = index_repo_dir("rurico");
+    let out = Command::new(env!("CARGO_BIN_EXE_yomu"))
+        .args(["recall", "--repo", "rurico", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .expect("spawn yomu recall");
+    assert!(
+        out.status.success(),
+        "recall --json should succeed with the stub embedder: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("recall --json must emit valid JSON ({e}), got: {stdout}"));
+    assert_eq!(json["repo"], "rurico", "report names the repo, got: {json}");
+    assert!(
+        json["aggregate"]["recall"].is_number(),
+        "aggregate carries recall, got: {json}"
+    );
+    assert!(
+        json["aggregate"]["cap_fit"].is_number(),
+        "aggregate carries cap_fit, got: {json}"
+    );
+    let entries = json["entries"].as_array().expect("entries is an array");
+    assert!(
+        !entries.is_empty(),
+        "rurico GT entries were measured, got: {json}"
+    );
+    for entry in entries {
+        assert!(
+            entry["id"].is_string(),
+            "per-entry id present, got: {entry}"
+        );
+        assert!(
+            entry["recall"].is_number(),
+            "per-entry recall present, got: {entry}"
+        );
+        assert!(
+            entry["cap_fit"].is_number(),
+            "per-entry cap_fit present, got: {entry}"
+        );
+    }
+}
+
+// T-013: when the embedding model is unavailable, `yomu recall` sets degraded and
+// exits non-zero rather than report a silent pass (FR-012). The degraded report is
+// still emitted to stdout (distinguishing this from a usage error).
+#[test]
+fn recall_cli_degrades_and_exits_nonzero_when_model_unavailable() {
+    let dir = index_repo_dir("rurico");
+    let out = Command::new(env!("CARGO_BIN_EXE_yomu"))
+        .args(["recall", "--repo", "rurico", "--json"])
+        .env("YOMU_TEST_EMBEDDER", "unavailable")
+        .current_dir(dir.path())
+        .output()
+        .expect("spawn yomu recall");
+    assert!(
+        !out.status.success(),
+        "model unavailable must exit non-zero (no silent pass)"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("degraded report must still be emitted to stdout ({e}), got: {stdout}")
+    });
+    assert_eq!(
+        json["aggregate"]["degraded"], true,
+        "report marks the aggregate degraded, got: {json}"
+    );
+}
+
+// T-023: `yomu recall` without --repo fails with a usage error instead of silently
+// expanding to `search recall`. Regression guard: `recall` must be in
+// maybe_expand_shorthand's known-subcommand list, else a missing required --repo
+// falls through to shorthand search expansion and runs the wrong command (exit 0).
+#[test]
+fn recall_cli_without_repo_is_usage_error_not_silent_search() {
+    let out = Command::new(env!("CARGO_BIN_EXE_yomu"))
+        .arg("recall")
+        .output()
+        .expect("spawn yomu recall");
+    assert!(
+        !out.status.success(),
+        "missing --repo must fail as a usage error, not silently run a search"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--repo"),
+        "usage error names the missing --repo arg, got stderr: {stderr}"
+    );
+}
+
+// T-024: `yomu recall --repo <name>` without --json renders the human-readable
+// report, exercising render_recall_plain (the JSON tests cover only the JSON
+// renderer, leaving the plain path otherwise unexecuted).
+#[test]
+fn recall_cli_plain_renders_human_report() {
+    let dir = index_repo_dir("rurico");
+    let out = Command::new(env!("CARGO_BIN_EXE_yomu"))
+        .args(["recall", "--repo", "rurico"])
+        .current_dir(dir.path())
+        .output()
+        .expect("spawn yomu recall");
+    assert!(
+        out.status.success(),
+        "plain recall should succeed with the stub embedder: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("recall report: rurico"),
+        "plain output carries the report header, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("aggregate:"),
+        "plain output carries the aggregate line, got: {stdout}"
     );
 }

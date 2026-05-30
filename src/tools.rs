@@ -26,6 +26,7 @@ use crate::error::ErrorCode;
 use crate::indexer;
 use crate::query::{self, QueryError};
 use crate::query_log::{self, QueryLogRecord};
+use crate::recall::{self, corpus};
 use crate::storage;
 
 use embedder::{DegradedReason, degraded_reason_user_note};
@@ -44,6 +45,11 @@ pub const MAX_SEARCH_LIMIT: u32 = 100;
 pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
 const BRIEF_MAX_INFERRED_SEEDS: u32 = 5;
+// Production `brief` defaults (mirrors main.rs clap defaults); `recall` measures
+// seed-less recall at the values agents actually run with.
+const RECALL_DEPTH: u32 = 3;
+const RECALL_MAX_CHUNKS: u32 = 80;
+const RECALL_MAX_BYTES: u32 = 80_000;
 
 /// Upper bound for the EmptyTarget `candidates` retry list emitted to agents.
 /// A short, scannable list is the actionable shape per ADR-0060.
@@ -866,20 +872,11 @@ impl Yomu {
         dedupe_seed_paths(results, max_seeds as usize)
     }
 
-    pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
-        if task.task.trim().is_empty() {
-            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTask));
-        }
-        if task
-            .seeds
-            .iter()
-            .any(|s| matches!(s.kind, brief::SeedKind::Symbol))
-        {
-            return Err(YomuError::InvalidInput(
-                InvalidInputKind::SeedSymbolUnimplemented,
-            ));
-        }
-
+    /// Runs `brief` over `task`, inferring file seeds from `task.task` when none
+    /// are given (seed-less), and returns the closure output with `degraded` set
+    /// when seed inference fell back or the closure was empty. Shared by `brief`
+    /// (renders) and `recall` (measures); callers validate `task` first.
+    fn brief_output(&self, task: &brief::TaskBrief) -> Result<brief::BriefOutput, YomuError> {
         let mut effective = task.clone();
         let mut degraded = false;
         if effective.seeds.is_empty() {
@@ -906,12 +903,68 @@ impl Yomu {
             );
             output.degraded = true;
         }
+        Ok(output)
+    }
 
+    pub fn brief(&self, task: &brief::TaskBrief, json: bool) -> Result<String, YomuError> {
+        if task.task.trim().is_empty() {
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTask));
+        }
+        if task
+            .seeds
+            .iter()
+            .any(|s| matches!(s.kind, brief::SeedKind::Symbol))
+        {
+            return Err(YomuError::InvalidInput(
+                InvalidInputKind::SeedSymbolUnimplemented,
+            ));
+        }
+
+        let output = self.brief_output(task)?;
         Ok(if json {
             brief::render_json(&output)
         } else {
             brief::render_plain(&output)
         })
+    }
+
+    /// Measures seed-less recall and weighted cap-fit for every bundled GT entry
+    /// whose repo matches `repo`, against the current index, and renders a
+    /// per-entry plus aggregate report (FR-011). Returns the rendered text and the
+    /// aggregate degraded flag. The caller exits non-zero when degraded (FR-012):
+    /// an unavailable embedding model makes seed inference fall back and flag
+    /// degraded, so a model-less run never reports a silent pass.
+    pub fn recall(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
+        let gt = corpus::load_bundled()
+            .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
+        let mut entries = Vec::new();
+        for entry in gt.entries.iter().filter(|e| e.repo == repo) {
+            let task = brief::TaskBrief {
+                task: entry.task.clone(),
+                seeds: Vec::new(),
+                depth: RECALL_DEPTH,
+                max_chunks: RECALL_MAX_CHUNKS,
+                max_bytes: RECALL_MAX_BYTES,
+                include_tests: false,
+            };
+            let output = self.brief_output(&task)?;
+            let out_files: HashSet<String> =
+                output.chunks.iter().map(|c| c.file_path.clone()).collect();
+            let reachable: HashSet<String> = output.reachable_files.iter().cloned().collect();
+            let mut report = recall::measure(&entry.must_include, &out_files, &reachable);
+            report.degraded |= output.degraded;
+            entries.push(recall::EntryReport {
+                id: entry.id.clone(),
+                report,
+            });
+        }
+        let report = recall::CorpusReport::new(repo.to_owned(), entries);
+        let text = if json {
+            recall::render_recall_json(&report)
+        } else {
+            recall::render_recall_plain(&report)
+        };
+        Ok((text, report.aggregate.degraded))
     }
 }
 
