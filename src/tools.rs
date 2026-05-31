@@ -4,6 +4,7 @@ mod format;
 mod impact;
 mod indexing;
 mod model;
+mod query_emit;
 mod reranker;
 mod search;
 mod status;
@@ -35,9 +36,15 @@ pub const MAX_SEARCH_OFFSET: u32 = 500;
 pub const MAX_IMPACT_DEPTH: u32 = 10;
 const BRIEF_MAX_INFERRED_SEEDS: u32 = 5;
 // Production `brief` defaults (mirrors main.rs clap defaults); `recall` measures
-// seed-less recall at the values agents actually run with.
+// seed-less recall at the values agents actually run with. `recall` is a
+// maintainer diagnostic consumed only by the `recall-bench` crate (ADR-0005); it
+// is cfg'd out of the `test-support` (coverage) build like the real-model loader
+// in `embedder.rs`, so these constants follow it out.
+#[cfg(not(feature = "test-support"))]
 const RECALL_DEPTH: u32 = 3;
+#[cfg(not(feature = "test-support"))]
 const RECALL_MAX_CHUNKS: u32 = 80;
+#[cfg(not(feature = "test-support"))]
 const RECALL_MAX_BYTES: u32 = 80_000;
 
 /// Upper bound for the EmptyTarget `candidates` retry list emitted to agents.

@@ -2,14 +2,18 @@ use std::collections::HashSet;
 
 use amici::model::{degrade_with_warn, record_degraded};
 
-use crate::recall::corpus;
-use crate::{brief, query, recall, storage};
+use crate::{brief, query, storage};
 
 use super::embedder::DegradedReason;
-use super::{
-    BRIEF_MAX_INFERRED_SEEDS, InvalidInputKind, RECALL_DEPTH, RECALL_MAX_BYTES, RECALL_MAX_CHUNKS,
-    Yomu, YomuError,
-};
+use super::{BRIEF_MAX_INFERRED_SEEDS, InvalidInputKind, Yomu, YomuError};
+
+// `recall` is a maintainer diagnostic used only by the `recall-bench` crate
+// (ADR-0005). It is cfg'd out of the `test-support` (coverage) build, so its
+// exclusive imports follow it out to avoid unused-import warnings there.
+#[cfg(not(feature = "test-support"))]
+use super::{RECALL_DEPTH, RECALL_MAX_BYTES, RECALL_MAX_CHUNKS};
+#[cfg(not(feature = "test-support"))]
+use crate::recall::{self, corpus};
 
 impl Yomu {
     fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
@@ -139,6 +143,7 @@ impl Yomu {
     /// aggregate degraded flag. The caller exits non-zero when degraded (FR-012):
     /// an unavailable embedding model makes seed inference fall back and flag
     /// degraded, so a model-less run never reports a silent pass.
+    #[cfg(not(feature = "test-support"))]
     pub fn recall(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
         let gt = corpus::load_bundled()
             .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;

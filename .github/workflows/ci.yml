@@ -95,8 +95,12 @@ jobs:
       - name: Generate lcov coverage
         # Match the Test job: the stub embedder (`--features test-support`) lets
         # index-spawning integration tests run without a model. The real-model
-        # loader is cfg'd out here and excluded from coverage accordingly.
-        run: cargo llvm-cov -p yomu --lcov --output-path lcov.info --features test-support
+        # loader and the `recall` diagnostic (ADR-0005, recall-bench only) are
+        # cfg'd out here. `model download` (real network I/O) and `emit_query_log`
+        # (real FS + env I/O; its logic is unit-tested in query_log) are reachable
+        # from production dispatch and cannot be cfg'd out, so their files are
+        # excluded by path — like the real-model loader.
+        run: cargo llvm-cov -p yomu --lcov --output-path lcov.info --features test-support --ignore-filename-regex 'tools/(model|query_emit)\.rs'
 
       - name: Diff coverage gate (changed lines >= 95%)
         run: |
