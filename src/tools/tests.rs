@@ -2763,6 +2763,13 @@ fn next_step_for_empty_query_returns_search_or_stdin_hint() {
     );
 }
 
+// T-002a: next_step for EmptyIndex points users at explicit indexing.
+#[test]
+fn next_step_for_empty_index_recommends_index_first() {
+    let e = YomuError::InvalidInput(InvalidInputKind::EmptyIndex);
+    assert_eq!(e.next_step(), Some("run `yomu index` first".to_owned()));
+}
+
 // T-003: next_step for QueryTooLong embeds the `max` value verbatim.
 // FR-002. Uses U+2264 (≤) per spec mapping table.
 #[test]
