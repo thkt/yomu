@@ -1,7 +1,13 @@
 use super::embedder::{
     DegradedReason, RECORDED_WARNINGS, get_recorded_warnings, record_embedder_warning,
 };
+use super::format::{
+    EnrichmentContext, format_coverage_note, format_dry_run_json, format_impact_json,
+    format_index_json, format_no_results_message, format_rebuild_json, format_results_grouped,
+    format_results_json, format_status_json,
+};
 use super::*;
+use crate::{brief, indexer, query};
 use std::collections::HashMap;
 use std::fs;
 
@@ -3342,4 +3348,113 @@ fn candidates_returns_empty_for_non_empty_target_variants() {
             "FR-001 negative: non-EmptyTarget variant {e:?} must return Vec::new()"
         );
     }
+}
+
+// --- Diff-coverage backfill for the tools/ split (PR #257) ---
+// These branches were already untested on `main`; the file move surfaced them
+// as "new" lines under the diff-coverage gate. Each test drives one branch the
+// existing suite skipped.
+
+// Indexed file with no inbound references takes the "no dependents" branch
+// (impact.rs: file_in_index=true, dependents empty).
+#[test]
+fn impact_indexed_file_without_dependents_reports_none() {
+    let (y, _dir) = test_yomu();
+    {
+        let conn = y.conn.lock().unwrap();
+        seed_index(&conn);
+    }
+    let text = y.impact("src/dummy.tsx", None, 3, false, false).unwrap();
+    assert!(
+        text.contains("No dependents found"),
+        "indexed file without dependents should report none: {text}"
+    );
+}
+
+// --semantic with stored embeddings exercises the vec-search path
+// (impact.rs: semantic_search bytes non-empty -> search_from_file).
+#[test]
+fn impact_semantic_with_embeddings_searches_related() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[
+            ("src/auth.tsx", "export function useAuth() {}"),
+            ("src/login.tsx", "import { useAuth } from './auth';"),
+        ],
+        Arc::new(MockEmbedder::default()),
+    );
+    y.index(IndexRunOptions::default(), false).unwrap();
+    let json = y.impact("src/auth.tsx", None, 3, true, true).unwrap();
+    let parsed = parse_json(&json);
+    // Stored embeddings drive semantic_search down the bytes-non-empty branch
+    // (search_from_file); the mock embedder makes every chunk similar, so the
+    // other file surfaces as a semantic relation rather than an empty list.
+    let related = parsed.get("semantic_related").and_then(|v| v.as_array());
+    assert!(
+        related.is_some_and(|a| !a.is_empty()),
+        "stored embeddings should produce semantic_related hits: {json}"
+    );
+}
+
+// Deleted-but-indexed file surfaces as an orphan in dry-run
+// (indexing.rs: orphans_to_remove > 0).
+#[test]
+fn dry_run_index_reports_orphaned_files() {
+    let (y, dir) = test_yomu_with_files(&[("src/A.tsx", "export function A() {}")]);
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    fs::remove_file(dir.path().join("src/A.tsx")).unwrap();
+    let text = y.dry_run_index(IndexRunOptions::default(), false).unwrap();
+    assert!(
+        text.contains("orphaned files to remove"),
+        "deleted indexed file should be reported as orphan: {text}"
+    );
+}
+
+// Seed-less brief infers seeds via the embedder vec-search path
+// (briefing.rs: embedder_seed_paths success, no degrade).
+#[test]
+fn brief_infers_seeds_from_task_with_embedder() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/auth.tsx", "export function useAuth() { return null; }")],
+        Arc::new(MockEmbedder::default()),
+    );
+    y.index(IndexRunOptions::default(), false).unwrap();
+    let task = brief::TaskBrief {
+        task: "authentication hook".to_owned(),
+        seeds: vec![],
+        depth: 2,
+        max_chunks: 40,
+        max_bytes: 40_000,
+        include_tests: false,
+    };
+    let json = y.brief(&task, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(
+        parsed["degraded"], false,
+        "embedder-backed seed inference should not degrade: {json}"
+    );
+}
+
+// Seed-less brief falls back to FTS when the embedder is unavailable
+// (briefing.rs: infer_seed_paths Err arm -> fts_fallback_seed_paths).
+#[test]
+fn brief_falls_back_to_fts_when_embedder_unavailable() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/auth.tsx", "export function useAuth() { return null; }")],
+        Arc::new(FailingEmbedder::all_fail("model unavailable")),
+    );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    let task = brief::TaskBrief {
+        task: "authentication hook".to_owned(),
+        seeds: vec![],
+        depth: 2,
+        max_chunks: 40,
+        max_bytes: 40_000,
+        include_tests: false,
+    };
+    let json = y.brief(&task, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(
+        parsed["degraded"], true,
+        "embedder failure should degrade to FTS-only seed selection: {json}"
+    );
 }
