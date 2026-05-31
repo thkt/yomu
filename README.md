@@ -58,13 +58,14 @@ yomu doesn't compete with that workflow. It **reduces the iterations**:
 | grep/glob (iterative) | 3–5   | Each miss adds noise                      |
 | yomu search           | 1     | Code + imports + siblings in one response |
 
-The classic RAG problems — index sync lag, stale embeddings, cold starts — are addressed:
+The classic RAG problems — index sync lag, stale embeddings, cold starts — are addressed by keeping indexing explicit and queries read-only:
 
-| Solution              | Details                                                                            |
-| --------------------- | ---------------------------------------------------------------------------------- |
-| No sync lag           | Every `search` checks index freshness and re-chunks automatically if files changed |
-| No API key required   | Local embedding model, FTS5 full-text fallback when model unavailable              |
-| Incremental embedding | 50 chunks per search call, most-imported files first. No upfront build             |
+| Solution               | Details                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| Read-only queries      | `search` / `impact` never mutate the index, so agents can call them freely         |
+| Fast incremental index | `yomu index` re-chunks only changed files (by mtime), ~2.5s on 3,535 files         |
+| No API key required    | Local embedding model, FTS5 full-text fallback when the model is unavailable       |
+| One-pass embedding     | `index` chunks and embeds in a single pass (ADR-0002). No per-query embedding cost |
 
 grep is the right tool when you know the name. yomu is for the moment before that — when you know the concept but not the identifier.
 
@@ -98,7 +99,7 @@ Semantic search uses a local embedding model ([Ruri v3](https://huggingface.co/c
 
 If the model is not installed or unavailable, `search` falls back to text-only mode (FTS5). All other commands (`index`, `rebuild`, `impact`, `status`) work without the model.
 
-No manual indexing. `search` auto-indexes on first call.
+Indexing is explicit: run `yomu index` before searching. Queries (`search` / `impact`) are read-only and never auto-index.
 
 #### Platform notes
 
@@ -135,11 +136,11 @@ Returns ranked results with full context. Each result includes:
 
 Options:
 
-| Flag         | Default | Description                                                              |
-| ------------ | ------- | ------------------------------------------------------------------------ |
-| `--limit`    | 10      | Max results (max: 100)                                                   |
-| `--offset`   | 0       | Pagination offset (max: 500)                                             |
-| `--from`     | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
+| Flag       | Default | Description                                                                                              |
+| ---------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `--limit`  | 10      | Max results (max: 100)                                                                                   |
+| `--offset` | 0       | Pagination offset (max: 500)                                                                             |
+| `--from`   | —       | Search for code similar to a file or symbol (`src/foo.rs` or `src/foo.rs:my_fn`). Query becomes optional |
 
 `--from` uses the stored embeddings of the target — no re-embedding needed:
 
@@ -189,8 +190,8 @@ Options: `--symbol` (optional, filter to specific export), `--depth` (default: 3
       "file_path": "src/indexer.rs",
       "depth": 1,
       "references": [
-        {"ref_kind": "named", "via_symbol": "Db"},
-        {"ref_kind": "named", "via_symbol": "open_db"}
+        { "ref_kind": "named", "via_symbol": "Db" },
+        { "ref_kind": "named", "via_symbol": "open_db" }
       ]
     },
     {
@@ -208,11 +209,13 @@ Options: `--symbol` (optional, filter to specific export), `--depth` (default: 3
 
 ### `yomu index` / `yomu rebuild` / `yomu status`
 
-| Command   | Details                                                                                                |
-| --------- | ------------------------------------------------------------------------------------------------------ |
-| `index`   | Update the chunk index. No API calls, ~2.5s on 3,535 files. Usually not needed — `search` auto-indexes |
-| `rebuild` | Full re-parse from scratch                                                                             |
-| `status`  | Files, chunks, embedding coverage, references                                                          |
+| Command   | Details                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `index`   | Update the chunk index (chunks + embeddings, one pass). No API calls, ~2.5s on 3,535 files. Run after files change |
+| `rebuild` | Full re-parse from scratch                                                                                         |
+| `status`  | Files, chunks, embedding coverage, references                                                                      |
+
+Queries (`search` / `impact`) are read-only and never reindex. Deciding _when_ to reindex is the consumer's responsibility — for example, run `yomu index` from a Claude Code `Stop` or `PostToolUse(Edit|Write)` hook. Since `index` only re-chunks changed files (by mtime), re-running it is cheap and idempotent.
 
 ## How it works
 
@@ -223,7 +226,7 @@ Source files → tree-sitter AST → Semantic chunks → Local embeddings (Ruri 
 | Stage     | Details                                                                                                                                                                                                                                  |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Indexing  | tree-sitter splits code at function/component/type boundaries. Each chunk is one searchable unit. The import graph is built in the same pass. On vercel/ai: 3,535 files → 9,015 chunks + 5,026 import references in 2.5s, zero API calls |
-| Embedding | Chunks are embedded incrementally via a local model (Ruri v3, 310M params). 50 chunks per `search` call, prioritized by import count — the most-used code gets searchable first. No upfront build required                               |
+| Embedding | Chunks are embedded by a local model (Ruri v3, 310M params) during `yomu index`, in the same pass as chunking (ADR-0002). No API calls, no per-query cost                                                                                |
 | Search    | Three-tier hybrid: vector similarity → name/path matching → FTS5 full-text. Reranked with IDF-weighted keyword scoring. Frequently-imported files rank higher, test files are pushed down                                                |
 
 ## Supported file types
@@ -242,15 +245,15 @@ Other files fall back to character-based chunking with overlap.
 
 Per ADR-0066 Group 2 (sysexits.h) — agents and scripts can branch on the number for retry policy. With `--json`, errors emit a single-line envelope to stderr: `{"error":{"code":"<CODE>","message":"<text>"}}`.
 
-| Code | `error.code`   | Triggers                                                                                |
-| ---- | -------------- | --------------------------------------------------------------------------------------- |
-| 0    | (none)         | Success                                                                                 |
-| 64   | `USAGE_ERROR`  | Invalid CLI input — clap parse failure, empty query/task, out-of-range numeric argument |
-| 70   | `INTERNAL`     | Invariant violation, search/query failure                                               |
-| 73   | `CANT_CREAT`   | Index DB create/migrate failure, indexing pipeline failure                              |
-| 74   | `IO_ERROR`     | Filesystem IO failure                                                                   |
+| Code | `error.code`   | Triggers                                                                                    |
+| ---- | -------------- | ------------------------------------------------------------------------------------------- |
+| 0    | (none)         | Success                                                                                     |
+| 64   | `USAGE_ERROR`  | Invalid CLI input — clap parse failure, empty query/task, out-of-range numeric argument     |
+| 70   | `INTERNAL`     | Invariant violation, search/query failure                                                   |
+| 73   | `CANT_CREAT`   | Index DB create/migrate failure, indexing pipeline failure                                  |
+| 74   | `IO_ERROR`     | Filesystem IO failure                                                                       |
 | 75   | `TEMP_FAILURE` | Embedder unavailable (model missing / probe failed) — retryable after `yomu model download` |
-| 104  | `UNKNOWN`      | Reserved for unclassified failures (currently unused — surfaces if a path drifts off)    |
+| 104  | `UNKNOWN`      | Reserved for unclassified failures (currently unused — surfaces if a path drifts off)       |
 
 > **Breaking change (0.16+)**: prior versions emitted `1`/`2`/`4` for failures. Callers that branch on these numbers must migrate to the sysexits values above. Text-mode stderr remains the same `error: <message>` shape.
 
