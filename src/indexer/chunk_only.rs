@@ -140,7 +140,7 @@ fn check_file(
 }
 
 /// Build a [`PendingFile`] from already-loaded source. The function is pure:
-/// it does not touch the filesystem - callers must supply `mtime_epoch` (read
+/// it does not touch the filesystem — callers must supply `mtime_epoch` (read
 /// via [`fs_optional::read_mtime_epoch`]) so tests can drive the chunking
 /// pipeline without writing fixtures.
 pub(super) fn prepare_chunks(
