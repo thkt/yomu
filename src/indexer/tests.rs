@@ -1,9 +1,15 @@
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
+use super::chunk_only::{
+    CheckedFile, FileAction, MAX_FILE_SIZE, build_references, file_hash, prepare_chunks,
+    read_source, run_chunk_only_index_inner, to_rel_path,
+};
 use super::*;
 use crate::resolver::Resolver;
 use crate::rust_resolver::RustResolver;
+use crate::storage::{self, RefKind};
 
 use rurico::embed::{
     AlternatingEmbedder, FailingEmbedder, MismatchEmbedder, MockChunkedEmbedder, MockEmbedder,
