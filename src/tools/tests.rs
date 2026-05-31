@@ -1,7 +1,13 @@
 use super::embedder::{
     DegradedReason, RECORDED_WARNINGS, get_recorded_warnings, record_embedder_warning,
 };
+use super::format::{
+    EnrichmentContext, format_coverage_note, format_dry_run_json, format_impact_json,
+    format_index_json, format_no_results_message, format_rebuild_json, format_results_grouped,
+    format_results_json, format_status_json,
+};
 use super::*;
+use crate::{brief, indexer, query};
 use std::collections::HashMap;
 use std::fs;
 
