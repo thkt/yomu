@@ -179,10 +179,10 @@ mod tests {
     #[test]
     fn explicit_search_not_double_injected() {
         let cli = parse_cli_args(["yomu", "search", "認証"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("認証")),
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { query, .. } if query.as_deref() == Some("認証")),
+            "expected Search with query=認証",
+        );
     }
 
     // T-049: parse_cli_args(["yomu", "query"]) → Command::Search (json=false) - regression
@@ -190,10 +190,10 @@ mod tests {
     fn shorthand_without_flags_has_json_false() {
         let cli = parse_cli_args(["yomu", "query"]).unwrap();
         assert!(!cli.json, "json should default to false");
-        match cli.command.unwrap() {
-            Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { query, .. } if query.as_deref() == Some("query")),
+            "expected Search with query=query",
+        );
     }
 
     // T-569: --log-query is a global flag and must be preserved during shorthand expansion.
@@ -201,22 +201,20 @@ mod tests {
     fn shorthand_with_log_query_flag_sets_log_query_true() {
         let cli = parse_cli_args(["yomu", "--log-query", "query"]).unwrap();
         assert!(cli.log_query, "log_query should be true");
-        match cli.command.unwrap() {
-            Command::Search { query, .. } => assert_eq!(query.as_deref(), Some("query")),
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { query, .. } if query.as_deref() == Some("query")),
+            "expected Search with query=query",
+        );
     }
 
     // T-076: --path parses into path vec
     #[test]
     fn search_path_filter_parses() {
         let cli = parse_cli_args(["yomu", "search", "query", "--path", "src/fetcher/"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { path, .. } => {
-                assert_eq!(path, vec!["src/fetcher/"]);
-            }
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { path, .. } if path == ["src/fetcher/"]),
+            "expected Search with path=[src/fetcher/]",
+        );
     }
 
     // T-563: multiple --path values
@@ -232,22 +230,20 @@ mod tests {
             "src/client/",
         ])
         .unwrap();
-        match cli.command.unwrap() {
-            Command::Search { path, .. } => {
-                assert_eq!(path, vec!["src/fetcher/", "src/client/"]);
-            }
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { path, .. } if path == ["src/fetcher/", "src/client/"]),
+            "expected Search with path=[src/fetcher/, src/client/]",
+        );
     }
 
     // T-564: --path absent → empty vec (full search)
     #[test]
     fn search_no_path_defaults_to_empty() {
         let cli = parse_cli_args(["yomu", "search", "query"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { path, .. } => assert!(path.is_empty()),
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { path, .. } if path.is_empty()),
+            "expected Search with empty path",
+        );
     }
 
     // T-025: typo (OSA ≤ 1) → clap error, not shorthand expansion
@@ -276,65 +272,56 @@ mod tests {
     #[test]
     fn from_flag_without_query_parses_ok() {
         let cli = parse_cli_args(["yomu", "search", "--from", "src/foo.rs"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { query, from, .. } => {
-                assert_eq!(query, None);
-                assert_eq!(from.as_deref(), Some("src/foo.rs"));
-            }
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { query, from, .. } if query.is_none() && from.as_deref() == Some("src/foo.rs")),
+            "expected Search with query=None, from=src/foo.rs",
+        );
     }
 
     // T-078: --semantic flag on impact parses to semantic=true
     #[test]
     fn impact_semantic_flag_parses() {
         let cli = parse_cli_args(["yomu", "impact", "src/foo.rs", "--semantic"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Impact {
-                target, semantic, ..
-            } => {
-                assert_eq!(target, "src/foo.rs");
-                assert!(semantic, "expected semantic=true");
-            }
-            other => panic!("expected Impact, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Impact { target, semantic, .. } if target == "src/foo.rs" && semantic),
+            "expected Impact with target=src/foo.rs, semantic=true",
+        );
     }
 
     // T-079: impact without --semantic defaults to semantic=false
     #[test]
     fn impact_no_semantic_flag_defaults_false() {
         let cli = parse_cli_args(["yomu", "impact", "src/foo.rs"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Impact { semantic, .. } => {
-                assert!(!semantic, "expected semantic=false by default");
-            }
-            other => panic!("expected Impact, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Impact { semantic, .. } if !semantic),
+            "expected Impact with semantic=false by default",
+        );
     }
 
     // T-565: brief_parses_with_required_task
     #[test]
     fn brief_parses_with_required_task() {
         let cli = parse_cli_args(["yomu", "brief", "implement search"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Brief {
-                task,
-                seed_file,
-                seed_symbol,
-                depth,
-                max_chunks,
-                max_bytes,
-                ..
-            } => {
-                assert_eq!(task, "implement search");
-                assert!(seed_file.is_empty());
-                assert!(seed_symbol.is_empty());
-                assert_eq!(depth, 3);
-                assert_eq!(max_chunks, 80);
-                assert_eq!(max_bytes, 80_000);
-            }
-            other => panic!("expected Brief, got {other:?}"),
-        }
+        assert!(
+            matches!(
+                cli.command.unwrap(),
+                Command::Brief {
+                    task,
+                    seed_file,
+                    seed_symbol,
+                    depth,
+                    max_chunks,
+                    max_bytes,
+                    ..
+                } if task == "implement search"
+                    && seed_file.is_empty()
+                    && seed_symbol.is_empty()
+                    && depth == 3
+                    && max_chunks == 80
+                    && max_bytes == 80_000
+            ),
+            "expected Brief with task=implement search and default depth/chunks/bytes",
+        );
     }
 
     // T-566: brief_rejects_depth_out_of_range [Spec FR-005b]
@@ -378,29 +365,23 @@ mod tests {
             "Foo",
         ])
         .unwrap();
-        match cli.command.unwrap() {
-            Command::Brief {
-                seed_file,
-                seed_symbol,
-                ..
-            } => {
-                assert_eq!(seed_file, vec!["src/a.rs", "src/b.rs"]);
-                assert_eq!(seed_symbol, vec!["Foo"]);
-            }
-            other => panic!("expected Brief, got {other:?}"),
-        }
+        assert!(
+            matches!(
+                cli.command.unwrap(),
+                Command::Brief { seed_file, seed_symbol, .. }
+                    if seed_file == ["src/a.rs", "src/b.rs"] && seed_symbol == ["Foo"]
+            ),
+            "expected Brief with seed_file=[src/a.rs, src/b.rs], seed_symbol=[Foo]",
+        );
     }
 
     // T-016: no --from, no query → from defaults to None (error comes from resolve_query)
     #[test]
     fn no_from_no_query_has_from_none() {
         let cli = parse_cli_args(["yomu", "search"]).unwrap();
-        match cli.command.unwrap() {
-            Command::Search { query, from, .. } => {
-                assert_eq!(query, None);
-                assert_eq!(from, None);
-            }
-            other => panic!("expected Search, got {other:?}"),
-        }
+        assert!(
+            matches!(cli.command.unwrap(), Command::Search { query, from, .. } if query.is_none() && from.is_none()),
+            "expected Search with query=None, from=None",
+        );
     }
 }
