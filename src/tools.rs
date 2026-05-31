@@ -216,7 +216,7 @@ pub enum InvalidInputKind {
     QueryOrFromRequired,
     #[error("target must not be empty")]
     EmptyTarget { candidates: Vec<String> },
-    #[error("index is empty — run `yomu index` first, or use `yomu search` which auto-indexes")]
+    #[error("index is empty — run `yomu index` first")]
     EmptyIndex,
     #[error("task must not be empty")]
     EmptyTask,
@@ -259,9 +259,7 @@ impl InvalidInputKind {
             Self::EmptyTarget { .. } => {
                 "provide a target path, e.g. `yomu impact src/foo.rs`".to_owned()
             }
-            Self::EmptyIndex => {
-                "run `yomu index` first, or use `yomu search` which auto-indexes".to_owned()
-            }
+            Self::EmptyIndex => "run `yomu index` first".to_owned(),
             Self::EmptyTask => {
                 "provide a task description, e.g. `yomu brief \"add OAuth login\"`".to_owned()
             }
