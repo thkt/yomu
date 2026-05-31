@@ -3458,3 +3458,61 @@ fn brief_falls_back_to_fts_when_embedder_unavailable() {
         "embedder failure should degrade to FTS-only seed selection: {json}"
     );
 }
+
+// FTS fallback with a keyword-less task returns no seeds and still degrades
+// (briefing.rs: fts_fallback_seed_paths early return on empty keywords).
+#[test]
+fn brief_fts_fallback_with_no_keywords_still_degrades() {
+    let (y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/auth.tsx", "export function useAuth() {}")],
+        Arc::new(FailingEmbedder::all_fail("model unavailable")),
+    );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    let task = brief::TaskBrief {
+        // single-char token yields no extractable keywords (extract_keywords
+        // drops tokens shorter than 2 chars), so the FTS fallback returns early.
+        task: "x".to_owned(),
+        seeds: vec![],
+        depth: 2,
+        max_chunks: 40,
+        max_bytes: 40_000,
+        include_tests: false,
+    };
+    let json = y.brief(&task, true).unwrap();
+    let parsed = parse_json(&json);
+    assert_eq!(
+        parsed["degraded"], true,
+        "keyword-less FTS fallback should still degrade: {json}"
+    );
+}
+
+// rerank enabled with an uncached model surfaces the install note
+// (search.rs: reranker_note Some -> notes.push).
+#[test]
+fn search_notes_reranker_model_absent_when_enabled() {
+    let (mut y, _dir) = test_yomu_with_files_and_embedder(
+        &[("src/A.tsx", "export function A() {}")],
+        Arc::new(MockEmbedder::default()),
+    );
+    indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
+    y.rerank_enabled = true;
+    let _ = y.reranker.set(ModelLoad::Absent);
+    let text = y.search(Some("function"), 10, 0, &[], false, None).unwrap();
+    assert!(
+        text.contains("reranking requested"),
+        "rerank-enabled with an absent model should surface a note: {text}"
+    );
+}
+
+// An unreadable (invalid UTF-8) file is counted as a dry-run error
+// (indexing.rs: files_errored > 0 -> ", N errors").
+#[test]
+fn dry_run_index_counts_unreadable_files_as_errors() {
+    let (y, dir) = test_yomu_with_files(&[("src/good.tsx", "export function A() {}")]);
+    fs::write(dir.path().join("src/bad.tsx"), [0xFF, 0xFE, 0x00, 0x80]).unwrap();
+    let text = y.dry_run_index(IndexRunOptions::default(), false).unwrap();
+    assert!(
+        text.contains("error"),
+        "an unreadable file should be counted as a dry-run error: {text}"
+    );
+}
