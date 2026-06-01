@@ -10,6 +10,19 @@ use super::{
 
 const SEMANTIC_THRESHOLD: f32 = 0.7;
 
+/// The data `Yomu::impact` gathers for one target before rendering: index
+/// presence, transitive + symbol dependents, grouped direct references, and
+/// semantically-related files. Bundling the DB results lets the fetch and
+/// render seams pass one value instead of a long argument list.
+#[derive(Debug)]
+struct ImpactReport {
+    file_in_index: bool,
+    dependents: Vec<storage::Dependent>,
+    symbol_refs: Vec<String>,
+    direct_refs: HashMap<String, Vec<storage::DirectReference>>,
+    semantic_related: Vec<storage::SearchResult>,
+}
+
 impl Yomu {
     /// Lexicographically-first `max` indexed file paths. Used to populate
     /// `EmptyTarget.candidates` when impact is invoked with an empty target
@@ -35,12 +48,7 @@ impl Yomu {
         json: bool,
         semantic: bool,
     ) -> Result<String, YomuError> {
-        if target.is_empty() {
-            let candidates = self.first_indexed_paths(MAX_EMPTY_TARGET_CANDIDATES);
-            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTarget {
-                candidates,
-            }));
-        }
+        self.require_nonempty_target(target)?;
 
         let stats = self.with_db(storage::get_stats)?;
         if stats.total_chunks == 0 {
@@ -48,14 +56,45 @@ impl Yomu {
         }
 
         let (file_path, parsed_symbol) = parse_impact_target(target);
-
         validate_path(file_path)?;
-
         let symbol_filter = symbol.or(parsed_symbol);
         let max_depth = depth.min(MAX_IMPACT_DEPTH);
+
+        let report = self.gather_impact_report(file_path, symbol_filter, max_depth, semantic)?;
+        Ok(render_impact_output(
+            target,
+            file_path,
+            &report,
+            symbol_filter,
+            json,
+        ))
+    }
+
+    /// Rejects an empty impact target, surfacing the first indexed paths as
+    /// candidates so the caller can correct the argument (#197, FR-004 / BR-002).
+    fn require_nonempty_target(&self, target: &str) -> Result<(), YomuError> {
+        if target.is_empty() {
+            let candidates = self.first_indexed_paths(MAX_EMPTY_TARGET_CANDIDATES);
+            return Err(YomuError::InvalidInput(InvalidInputKind::EmptyTarget {
+                candidates,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Gathers everything `impact` reports on for one target, isolating the DB
+    /// access from the orchestration and rendering. The four graph queries run
+    /// in one `with_db` transaction; the semantic pass is a separate query made
+    /// only when requested.
+    fn gather_impact_report(
+        &self,
+        file_path: &str,
+        symbol_filter: Option<&str>,
+        max_depth: u32,
+        semantic: bool,
+    ) -> Result<ImpactReport, YomuError> {
         let fp = file_path.to_owned();
         let sym_owned = symbol_filter.map(str::to_owned);
-
         let (file_in_index, dependents, symbol_refs, direct_refs) = self.with_db(move |conn| {
             let exists = storage::file_exists_in_index(conn, &fp)?;
             let dependents = storage::get_transitive_dependents(conn, &fp, max_depth)?;
@@ -77,38 +116,13 @@ impl Yomu {
             vec![]
         };
 
-        if json {
-            let (degraded, notes) = never_degraded();
-            return Ok(format_impact_json(
-                target,
-                file_in_index,
-                &dependents,
-                &direct_refs,
-                &symbol_refs,
-                &semantic_related,
-                degraded,
-                notes,
-            ));
-        }
-
-        if dependents.is_empty() && semantic_related.is_empty() {
-            return Ok(if file_in_index {
-                format!("No dependents found for `{}`.", target)
-            } else {
-                format!(
-                    "`{}` not found in index. Run `yomu index` to update.",
-                    file_path
-                )
-            });
-        }
-
-        let text = if symbol_filter.is_some() {
-            format_impact_results(target, &symbol_refs, &dependents, &semantic_related)
-        } else {
-            format_impact_all(target, &dependents, &semantic_related)
-        };
-
-        Ok(text)
+        Ok(ImpactReport {
+            file_in_index,
+            dependents,
+            symbol_refs,
+            direct_refs,
+            semantic_related,
+        })
     }
 
     fn semantic_search(
@@ -134,5 +148,54 @@ impl Yomu {
         let mut seen: HashSet<String> = HashSet::new();
         results.retain(|r| seen.insert(r.chunk.file_path.clone()));
         Ok(results)
+    }
+}
+
+/// Renders a gathered [`ImpactReport`] to the user-facing string: JSON when
+/// requested; an empty-result message (no dependents found, or the target not
+/// in the index) when there is nothing to show; otherwise the symbol-scoped vs
+/// whole-file view. Pure (depends only on its arguments), so it is
+/// unit-testable without a DB.
+fn render_impact_output(
+    target: &str,
+    file_path: &str,
+    report: &ImpactReport,
+    symbol_filter: Option<&str>,
+    json: bool,
+) -> String {
+    if json {
+        let (degraded, notes) = never_degraded();
+        return format_impact_json(
+            target,
+            report.file_in_index,
+            &report.dependents,
+            &report.direct_refs,
+            &report.symbol_refs,
+            &report.semantic_related,
+            degraded,
+            notes,
+        );
+    }
+
+    if report.dependents.is_empty() && report.semantic_related.is_empty() {
+        return if report.file_in_index {
+            format!("No dependents found for `{}`.", target)
+        } else {
+            format!(
+                "`{}` not found in index. Run `yomu index` to update.",
+                file_path
+            )
+        };
+    }
+
+    if symbol_filter.is_some() {
+        format_impact_results(
+            target,
+            &report.symbol_refs,
+            &report.dependents,
+            &report.semantic_related,
+        )
+    } else {
+        format_impact_all(target, &report.dependents, &report.semantic_related)
     }
 }
