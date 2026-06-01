@@ -116,6 +116,23 @@ fn search_rejects_long_query() {
     );
 }
 
+// T-711: validate_search_query accepts an at-limit query and a missing query
+// (complements T-175 empty / T-176 over-limit: the reject boundary is MAX + 1,
+// so MAX itself must pass; None defers to the `--from` path).
+#[test]
+fn validate_search_query_accepts_at_limit_and_none() {
+    use super::search::validate_search_query;
+    let at_limit = "a".repeat(MAX_QUERY_LENGTH);
+    assert!(
+        validate_search_query(Some(&at_limit)).is_ok(),
+        "a query of exactly MAX_QUERY_LENGTH must be accepted"
+    );
+    assert!(
+        validate_search_query(None).is_ok(),
+        "a missing query is validated by the --from path, not here"
+    );
+}
+
 // T-177: search_rejects_path_traversal
 #[test]
 fn search_rejects_path_traversal() {
