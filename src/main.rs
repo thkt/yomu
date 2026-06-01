@@ -49,6 +49,10 @@ fn main() -> ExitCode {
     run(env::args_os())
 }
 
+// #137: `run` is an oversized subcommand dispatch. Grandfathered until the
+// cli/ handler split shrinks it; `expect` (not `allow`) makes clippy flag the
+// stale attribute once it drops under the 100-line ceiling, forcing removal.
+#[expect(clippy::too_many_lines)]
 fn run<I, T>(args: I) -> ExitCode
 where
     I: IntoIterator<Item = T>,

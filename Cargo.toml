@@ -63,6 +63,10 @@ enum_glob_use = "deny"
 str_to_string = "deny"
 # arguments
 needless_pass_by_value = "deny"
+# function size: hugeness backstop at clippy's 100-line default. The
+# THRESHOLDS fn<=30 target is stricter and not enforced here. Pairs with the
+# file-size gate in .github/workflows/ci.yml (#255).
+too_many_lines = "deny"
 
 [profile.release]
 opt-level = 3

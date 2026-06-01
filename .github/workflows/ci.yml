@@ -25,6 +25,45 @@ jobs:
           # vendor/ submodules; without them it fails the FR-017 setup check.
           submodules: recursive
 
+      # File-size ratchet gate (#255): block re-bloat of the yomu crate's src/
+      # past the THRESHOLDS file ceiling (sibling crates/ are out of scope).
+      # Runs before the build for fast feedback and lives in this required job
+      # so it blocks merge. Pre-existing oversized files are grandfathered in
+      # `allowlist`; once a file is split below the ceiling the gate forces its
+      # removal from the list, so the ratchet cannot silently rot — analogous
+      # to the self-expiring `#[expect(clippy::too_many_lines)]` in src/main.rs.
+      - name: File size gate
+        run: |
+          threshold=400
+          allowlist="src/brief.rs src/indexer/chunker/ts.rs src/query.rs src/storage/search.rs src/tools/format.rs"
+          fail=0
+          # 1. New or regrown source files over the ceiling fail (tests excluded).
+          while IFS= read -r f; do
+            # Skip split-out test modules. Inline `#[cfg(test)]` still counts;
+            # split a long inline test module to tests.rs (THRESHOLDS exempts tests).
+            case "$f" in */tests.rs) continue ;; esac
+            case " $allowlist " in *" $f "*) continue ;; esac
+            n=$(wc -l < "$f" | tr -d ' ')
+            if [ "$n" -gt "$threshold" ]; then
+              echo "::error file=$f::$f is $n lines (> $threshold). Split it (#255 / THRESHOLDS)."
+              fail=1
+            fi
+          done < <(git ls-files 'src/**/*.rs' 'src/*.rs')
+          # 2. Allowlist entries now within the ceiling (or gone) must be removed.
+          for f in $allowlist; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is allowlisted in the file-size gate but no longer exists; remove it."
+              fail=1
+              continue
+            fi
+            n=$(wc -l < "$f" | tr -d ' ')
+            if [ "$n" -le "$threshold" ]; then
+              echo "::error file=$f::$f is now $n lines (<= $threshold); remove it from the file-size gate allowlist."
+              fail=1
+            fi
+          done
+          exit $fail
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
