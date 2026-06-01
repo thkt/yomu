@@ -4881,6 +4881,32 @@ fn get_chunk_by_id_projects_source_kind_and_injection_flags() {
     );
 }
 
+// T-709: get_chunks_by_ids_empty_ids_returns_empty_map
+//
+// Perspective: Boundary (empty input short-circuits before any query).
+#[test]
+fn get_chunks_by_ids_empty_ids_returns_empty_map() {
+    let (conn, _dir) = test_db();
+    let map = get_chunks_by_ids(&conn, &[], None, &[]).unwrap();
+    assert!(
+        map.is_empty(),
+        "empty id list yields empty map without a query"
+    );
+}
+
+// T-710: get_chunks_for_files_empty_paths_returns_empty
+//
+// Perspective: Boundary (empty input short-circuits before any query).
+#[test]
+fn get_chunks_for_files_empty_paths_returns_empty() {
+    let (conn, _dir) = test_db();
+    let chunks = get_chunks_for_files(&conn, &[]).unwrap();
+    assert!(
+        chunks.is_empty(),
+        "empty path list yields empty vec without a query"
+    );
+}
+
 // T-304: get_chunks_by_ids_projects_source_kind_and_injection_flags
 //
 // Perspective: Equivalence (3 rows, each fully populated) + Boundary (offset 1
