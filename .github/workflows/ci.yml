@@ -35,7 +35,7 @@ jobs:
       - name: File size gate
         run: |
           threshold=400
-          allowlist="src/brief.rs src/indexer/chunker/ts.rs src/storage/search.rs src/tools/format.rs"
+          allowlist="src/brief.rs src/indexer/chunker/ts.rs src/storage/search.rs"
           fail=0
           # 1. New or regrown source files over the ceiling fail (tests excluded).
           while IFS= read -r f; do
