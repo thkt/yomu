@@ -6,6 +6,10 @@ use rurico::embed::{Embedder, FailingEmbedder, MockEmbedder, ModelId};
 use rurico::reranker::{MockReranker, RankedResult, Rerank, RerankerError};
 use tempfile::tempdir;
 
+use super::rank::{
+    IMPORT_RANK_BONUS, MAX_RESULTS_PER_FILE, TYPE_HINT_BONUS, is_test_path, keyword_hit_ratio,
+    semantic_confidence,
+};
 use super::*;
 use crate::storage;
 
