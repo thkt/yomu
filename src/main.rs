@@ -49,17 +49,12 @@ fn main() -> ExitCode {
     run(env::args_os())
 }
 
-// #137: `run` is an oversized subcommand dispatch. Grandfathered until the
-// cli/ handler split shrinks it; `expect` (not `allow`) makes clippy flag the
-// stale attribute once it drops under the 100-line ceiling, forcing removal.
-#[expect(clippy::too_many_lines)]
 fn run<I, T>(args: I) -> ExitCode
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
     handle_probe_if_needed();
-
     init_subscriber("yomu=warn");
 
     let cli = match parse_cli_args(args) {
@@ -67,38 +62,38 @@ where
         Err(e) if is_clap_display_exit(&e) => e.exit(),
         Err(e) => return render_clap_error(&e),
     };
-    let json = cli.json;
-
-    let command = match cli.command {
-        Some(cmd) => cmd,
-        None => {
-            let err =
-                cli::Cli::command().error(ErrorKind::MissingSubcommand, "requires a subcommand");
-            return render_clap_error(&err);
-        }
+    let Some(command) = cli.command else {
+        let err = cli::Cli::command().error(ErrorKind::MissingSubcommand, "requires a subcommand");
+        return render_clap_error(&err);
     };
 
-    // model subcommands do not require a project root or DB
+    dispatch(command, cli.json, cli.log_query)
+}
+
+/// Routes a parsed subcommand to its handler. `model` needs no project root or
+/// DB, so it runs before `Yomu::new`; every other command shares the DB-backed
+/// `Yomu` and funnels its `Result` through [`finish`].
+fn dispatch(command: Command, json: bool, log_query: bool) -> ExitCode {
     if let Command::Model { command } = &command {
         let result = match command {
             ModelCommand::Download => Yomu::model_download(json),
         };
-        return match result {
-            Ok(output) => write_output(&output),
-            Err(e) => emit_error(&e, json),
-        };
+        return finish(result, json);
     }
 
-    let yomu_options = YomuOptions {
-        log_query: cli.log_query,
-    };
-
-    let yomu = match Yomu::new(yomu_options) {
+    let yomu = match Yomu::new(YomuOptions { log_query }) {
         Ok(y) => y,
         Err(e) => return emit_error(&e, json),
     };
+    run_command(&yomu, command, json)
+}
 
-    let result = match command {
+/// Subcommand fan-out: each arm is a thin wire to a `Yomu` method, except the
+/// search query resolution ([`resolve_search_query`]) and the brief request
+/// assembly. Kept as one match (over the 30-line guideline but well under
+/// clippy's 100) so the dispatch table reads top-to-bottom.
+fn run_command(yomu: &Yomu, command: Command, json: bool) -> ExitCode {
+    match command {
         Command::Search {
             query,
             limit,
@@ -111,20 +106,11 @@ where
                 deprecation_warn("--format", "--json");
             }
             let json = json || format.as_deref() == Some("json");
-            if from.is_some() {
-                // Literal query: use as-is. "-" / None: try stdin (optional with --from).
-                let is_literal = query.as_deref().is_some_and(|q| q != "-");
-                let query = if is_literal {
-                    query
-                } else {
-                    match resolve_query(query) {
-                        Ok(q) => Some(q),
-                        Err(QueryError::NoQuery(_)) => None,
-                        Err(e @ QueryError::Io(_)) => {
-                            return emit_error_code(&e.to_string(), ErrorCode::IoError, json);
-                        }
-                    }
-                };
+            let query = match resolve_search_query(query, from.is_some()) {
+                Ok(q) => q,
+                Err(e) => return render_query_error(&e, json),
+            };
+            finish(
                 yomu.search(
                     query.as_deref(),
                     limit,
@@ -132,59 +118,28 @@ where
                     &path,
                     json,
                     from.as_deref(),
-                )
-            } else {
-                let query = match resolve_query(query) {
-                    Ok(q) => q,
-                    Err(QueryError::NoQuery(reason)) => {
-                        let kind = match reason {
-                            NoQueryReason::Terminal => InvalidInputKind::QueryOrFromRequired,
-                            NoQueryReason::EmptyStdin => InvalidInputKind::EmptyQuery,
-                        };
-                        return emit_error(&YomuError::InvalidInput(kind), json);
-                    }
-                    Err(e @ QueryError::Io(_)) => {
-                        return emit_error_code(&e.to_string(), ErrorCode::IoError, json);
-                    }
-                };
-                yomu.search(Some(&query), limit, offset, &path, json, None)
-            }
+                ),
+                json,
+            )
         }
         Command::Index {
             dry_run,
             exclude_vendor,
-        } => {
-            let opts = IndexRunOptions {
-                force: false,
-                exclude_vendor,
-            };
-            if dry_run {
-                yomu.dry_run_index(opts, json)
-            } else {
-                yomu.index(opts, json)
-            }
-        }
+        } => handle_index_run(yomu, dry_run, exclude_vendor, IndexMode::Fresh, json),
         Command::Rebuild {
             dry_run,
             exclude_vendor,
-        } => {
-            let opts = IndexRunOptions {
-                force: true,
-                exclude_vendor,
-            };
-            if dry_run {
-                yomu.dry_run_index(opts, json)
-            } else {
-                yomu.rebuild(opts, json)
-            }
-        }
+        } => handle_index_run(yomu, dry_run, exclude_vendor, IndexMode::Rebuild, json),
         Command::Impact {
             target,
             symbol,
             depth,
             semantic,
-        } => yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
-        Command::Status => yomu.status(json),
+        } => finish(
+            yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
+            json,
+        ),
+        Command::Status => finish(yomu.status(json), json),
         Command::Brief {
             task,
             seed_file,
@@ -202,14 +157,107 @@ where
                 max_bytes,
                 include_tests,
             };
-            yomu.brief(&task_brief, json)
+            finish(yomu.brief(&task_brief, json), json)
         }
         Command::Model { .. } => unreachable!("handled before Yomu::new()"),
-    };
+    }
+}
 
+/// Single exit point for every command result, keeping each `run_command` arm a
+/// one-liner: success writes the output, failure renders the typed error.
+fn finish(result: Result<String, YomuError>, json: bool) -> ExitCode {
     match result {
         Ok(output) => write_output(&output),
         Err(e) => emit_error(&e, json),
+    }
+}
+
+/// Whether an index command overwrites the existing index. `Rebuild` forces a
+/// full rebuild; `Fresh` indexes without forcing.
+#[derive(Debug, Clone, Copy)]
+enum IndexMode {
+    Fresh,
+    Rebuild,
+}
+
+/// Runs an index or rebuild, collapsing the dry-run, fresh-index, and
+/// force-rebuild variants. A dry run reports without writing; otherwise
+/// `IndexMode::Rebuild` forces a rebuild over a plain index.
+fn handle_index_run(
+    yomu: &Yomu,
+    dry_run: bool,
+    exclude_vendor: bool,
+    mode: IndexMode,
+    json: bool,
+) -> ExitCode {
+    let force = matches!(mode, IndexMode::Rebuild);
+    let opts = IndexRunOptions {
+        force,
+        exclude_vendor,
+    };
+    let result = if dry_run {
+        yomu.dry_run_index(opts, json)
+    } else if force {
+        yomu.rebuild(opts, json)
+    } else {
+        yomu.index(opts, json)
+    };
+    finish(result, json)
+}
+
+/// Resolves the search query from the argument or stdin, reading the real
+/// stdin. With `--from` a missing query is allowed (`Ok(None)`); without it a
+/// missing query surfaces as a [`QueryError`] the caller renders via
+/// [`render_query_error`].
+fn resolve_search_query(
+    query: Option<String>,
+    has_from: bool,
+) -> Result<Option<String>, QueryError> {
+    let stdin = io::stdin();
+    let is_terminal = stdin.is_terminal();
+    resolve_search_query_with(query, has_from, &mut stdin.lock(), is_terminal)
+}
+
+/// Stdin-injectable core of [`resolve_search_query`] (the seam unit tests
+/// drive). A literal `--from` query is returned as-is; otherwise the query is
+/// read via [`resolve_query_with`], and `--from` turns a missing query into
+/// `Ok(None)` rather than an error.
+fn resolve_search_query_with(
+    query: Option<String>,
+    has_from: bool,
+    stdin: &mut impl Read,
+    stdin_is_terminal: bool,
+) -> Result<Option<String>, QueryError> {
+    // Literal query under --from: use as-is. "-" / None falls through to stdin.
+    if has_from && query.as_deref().is_some_and(|q| q != "-") {
+        return Ok(query);
+    }
+    match resolve_query_with(query, stdin, stdin_is_terminal) {
+        Ok(q) => Ok(Some(q)),
+        Err(QueryError::NoQuery(_)) if has_from => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Renders a search [`QueryError`] to the process exit code: a missing query is
+/// a usage error (mapped to the matching [`InvalidInputKind`]); an I/O failure
+/// keeps its message under [`ErrorCode::IoError`].
+fn render_query_error(error: &QueryError, json: bool) -> ExitCode {
+    match error {
+        QueryError::NoQuery(reason) => {
+            emit_error(&YomuError::InvalidInput(missing_query_kind(reason)), json)
+        }
+        QueryError::Io(msg) => emit_error_code(msg, ErrorCode::IoError, json),
+    }
+}
+
+/// Maps a missing-query reason to its user-facing input error: no query at all
+/// is a usage error; an empty pipe is a distinct empty-query error. Split out so
+/// the mapping is unit-tested directly rather than only through the binary.
+fn missing_query_kind(reason: &NoQueryReason) -> InvalidInputKind {
+    match reason {
+        NoQueryReason::Terminal => InvalidInputKind::QueryOrFromRequired,
+        NoQueryReason::EmptyStdin => InvalidInputKind::EmptyQuery,
     }
 }
 
@@ -297,74 +345,5 @@ fn resolve_query_with(
     }
 }
 
-fn resolve_query(arg: Option<String>) -> Result<String, QueryError> {
-    let stdin = io::stdin();
-    let is_terminal = stdin.is_terminal();
-    resolve_query_with(arg, &mut stdin.lock(), is_terminal)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    // T-305: resolve_query_with_direct_arg
-    #[test]
-    fn resolve_query_with_direct_arg() {
-        let mut stdin = Cursor::new(b"");
-        let result = resolve_query_with(Some("auth hooks".into()), &mut stdin, true);
-        assert_eq!(result.unwrap(), "auth hooks");
-    }
-
-    // T-306: resolve_query_with_dash_reads_stdin
-    #[test]
-    fn resolve_query_with_dash_reads_stdin() {
-        let mut stdin = Cursor::new(b"piped query");
-        let result = resolve_query_with(Some("-".into()), &mut stdin, false);
-        assert_eq!(result.unwrap(), "piped query");
-    }
-
-    // T-307: resolve_query_with_none_reads_stdin
-    #[test]
-    fn resolve_query_with_none_reads_stdin() {
-        let mut stdin = Cursor::new(b"  streaming hooks  ");
-        let result = resolve_query_with(None, &mut stdin, false);
-        assert_eq!(result.unwrap(), "streaming hooks");
-    }
-
-    // T-308: resolve_query_with_none_terminal_returns_no_query
-    #[test]
-    fn resolve_query_with_none_terminal_returns_no_query() {
-        let mut stdin = Cursor::new(b"");
-        let result = resolve_query_with(None, &mut stdin, true);
-        let err = result.unwrap_err();
-        assert!(matches!(err, QueryError::NoQuery(_)));
-        assert!(err.to_string().contains("query required"));
-    }
-
-    // T-309: resolve_query_with_empty_stdin_returns_no_query
-    #[test]
-    fn resolve_query_with_empty_stdin_returns_no_query() {
-        let mut stdin = Cursor::new(b"   ");
-        let result = resolve_query_with(None, &mut stdin, false);
-        let err = result.unwrap_err();
-        assert!(matches!(err, QueryError::NoQuery(_)));
-        assert!(err.to_string().contains("empty query"));
-    }
-
-    // RC-005: I/O errors must not be swallowed as NoQuery
-    // T-310: resolve_query_with_io_error_returns_io_variant
-    #[test]
-    fn resolve_query_with_io_error_returns_io_variant() {
-        struct FailingReader;
-        impl io::Read for FailingReader {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
-            }
-        }
-        let result = resolve_query_with(None, &mut FailingReader, false);
-        let err = result.unwrap_err();
-        assert!(matches!(err, QueryError::Io(_)));
-        assert!(err.to_string().contains("failed to read from stdin"));
-    }
-}
+mod tests;
