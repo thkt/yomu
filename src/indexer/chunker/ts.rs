@@ -3,28 +3,20 @@ use crate::storage::ChunkType;
 use tree_sitter::{Node, Parser};
 
 use super::{
-    FileChunks, ImportKind, ImportSpecifier, ParsedImport, RawChunk, ReExport,
-    attach_pending_comments, chunk_fallback, classify_function, extract_inner_functions,
-    extract_name, find_child_by_kind, make_chunk, make_parser, other_or_skip,
-    should_extract_subchunks,
+    FileChunks, RawChunk, ReExport, attach_pending_comments, chunk_fallback, classify_function,
+    extract_inner_functions, extract_name, find_child_by_kind, make_chunk, make_parser,
+    other_or_skip, should_extract_subchunks,
 };
 
-fn has_type_keyword(node: &Node) -> bool {
-    let mut cursor = node.walk();
-    node.children(&mut cursor)
-        .any(|child| !child.is_named() && child.kind() == "type")
-}
+mod imports;
+
+#[cfg(test)]
+use super::ParsedImport;
 
 fn has_star_export(node: &Node) -> bool {
     let mut cursor = node.walk();
     node.children(&mut cursor)
         .any(|c| c.kind() == "*" || c.kind() == "namespace_export")
-}
-
-fn extract_import_source(node: &Node, source: &str) -> Option<String> {
-    let string_node = find_child_by_kind(node, "string")?;
-    let fragment = find_child_by_kind(&string_node, "string_fragment")?;
-    Some(source[fragment.byte_range()].to_owned())
 }
 
 fn extract_export_source(node: &Node, source: &str) -> Option<String> {
@@ -41,100 +33,6 @@ fn extract_specifier_name(spec: &Node, source: &str) -> Option<String> {
     spec.child_by_field_name("name")
         .or_else(|| find_child_by_kind(spec, "identifier"))
         .map(|n| source[n.byte_range()].to_string())
-}
-
-fn parse_import_specifier(
-    node: &Node,
-    source: &str,
-    is_type_import: bool,
-) -> Option<ImportSpecifier> {
-    let has_inline_type = has_type_keyword(node);
-    let mut identifiers: Vec<String> = Vec::new();
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "identifier" {
-            identifiers.push(source[child.byte_range()].to_string());
-        }
-    }
-    let (name, alias) = match identifiers.len() {
-        0 => return None,
-        1 => (identifiers.remove(0), None),
-        _ => {
-            let name = identifiers.remove(0);
-            let alias = Some(identifiers.remove(0));
-            (name, alias)
-        }
-    };
-    let kind = if is_type_import || has_inline_type {
-        ImportKind::TypeOnly
-    } else {
-        ImportKind::Named
-    };
-    Some(ImportSpecifier { name, alias, kind })
-}
-
-fn parse_named_imports_node(
-    node: &Node,
-    source: &str,
-    is_type_import: bool,
-    specifiers: &mut Vec<ImportSpecifier>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "import_specifier"
-            && let Some(spec) = parse_import_specifier(&child, source, is_type_import)
-        {
-            specifiers.push(spec);
-        }
-    }
-}
-
-fn parse_import_clause(clause: &Node, source: &str, is_type_import: bool) -> Vec<ImportSpecifier> {
-    let mut specifiers = Vec::new();
-    let mut cursor = clause.walk();
-    for child in clause.children(&mut cursor) {
-        match child.kind() {
-            "identifier" => {
-                let name = source[child.byte_range()].to_string();
-                let kind = if is_type_import {
-                    ImportKind::TypeOnly
-                } else {
-                    ImportKind::Default
-                };
-                specifiers.push(ImportSpecifier {
-                    name,
-                    alias: None,
-                    kind,
-                });
-            }
-            "named_imports" => {
-                parse_named_imports_node(&child, source, is_type_import, &mut specifiers);
-            }
-            "namespace_import" => {
-                let alias = find_child_by_kind(&child, "identifier")
-                    .map(|id| source[id.byte_range()].to_string());
-                specifiers.push(ImportSpecifier {
-                    name: "*".to_owned(),
-                    alias,
-                    kind: ImportKind::Namespace,
-                });
-            }
-            _ => {}
-        }
-    }
-    specifiers
-}
-
-fn parse_single_import(node: &Node, source: &str) -> Option<ParsedImport> {
-    let source_path = extract_import_source(node, source)?;
-    let is_type_import = has_type_keyword(node);
-    let specifiers = find_child_by_kind(node, "import_clause").map_or_else(Vec::new, |clause| {
-        parse_import_clause(&clause, source, is_type_import)
-    });
-    Some(ParsedImport {
-        specifiers,
-        source: source_path,
-    })
 }
 
 fn classify_lexical_declaration(node: &Node, source: &str) -> (ChunkType, Option<String>) {
@@ -273,7 +171,7 @@ fn chunk_js_like_with_imports(source: &str, parser: &mut Parser) -> FileChunks {
     for node in root.children(&mut cursor) {
         if node.kind() == "import_statement" {
             imports.push(source[node.byte_range()].to_string());
-            if let Some(pi) = parse_single_import(&node, source) {
+            if let Some(pi) = imports::parse_single_import(&node, source) {
                 parsed_imports.push(pi);
             }
             pending_comments.clear();
@@ -368,7 +266,7 @@ fn parse_imports_from_ast(source: &str, parser: &mut Parser) -> Vec<ParsedImport
     let mut cursor = root.walk();
     root.children(&mut cursor)
         .filter(|node| node.kind() == "import_statement")
-        .filter_map(|node| parse_single_import(&node, source))
+        .filter_map(|node| imports::parse_single_import(&node, source))
         .collect()
 }
 
