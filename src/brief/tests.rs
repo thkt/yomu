@@ -4,6 +4,8 @@ use rusqlite::Connection;
 use tempfile::{TempDir, tempdir};
 use tracing_test::traced_test;
 
+use super::cap::apply_cap;
+use super::topo::topo_sort;
 use super::*;
 use crate::storage::{
     EMBEDDING_DIMS, NewChunk, RefKind, Reference, SourceKind, ce, insert_chunk, open_db,
@@ -436,6 +438,33 @@ fn topo_sort_orders_dependencies_first() {
         order,
         vec!["src/c.rs", "src/b.rs", "src/a.rs"],
         "BR-002: dependencies (depended-upon) come first"
+    );
+}
+
+// T-708: topo_sort_orders_fan_in_after_all_dependencies
+#[test]
+fn topo_sort_orders_fan_in_after_all_dependencies() {
+    // src/a.rs depends on BOTH src/b.rs and src/c.rs (out-degree 2), so its
+    // in-degree counter decrements past a non-zero value (b processed) before
+    // reaching zero (c processed) — the multi-dependency arm of Kahn's pass that
+    // a linear chain never exercises (BR-002).
+    let chunks = vec![
+        make_brief_chunk("src/a.rs", "a"),
+        make_brief_chunk("src/b.rs", "b"),
+        make_brief_chunk("src/c.rs", "c"),
+    ];
+    let edges = vec![
+        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
+        ("src/a.rs".to_owned(), "src/c.rs".to_owned()),
+    ];
+
+    let sorted = topo_sort(chunks, &edges);
+
+    let order: Vec<&str> = sorted.iter().map(|c| c.file_path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["src/b.rs", "src/c.rs", "src/a.rs"],
+        "BR-002: a dependent file is ordered after every file it depends on"
     );
 }
 

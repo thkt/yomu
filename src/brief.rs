@@ -1,6 +1,6 @@
 //! Brief expansion plan: TaskBrief -> forward closure -> chunks -> cap -> topo -> BriefOutput.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use rusqlite::Connection;
@@ -11,6 +11,9 @@ use crate::storage::{
     Chunk, ChunkType, SourceKind, StorageError, get_chunks_for_files, get_edges_among_files,
     get_import_counts, get_transitive_dependencies_multi, get_transitive_dependents,
 };
+
+mod cap;
+mod topo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SeedKind {
@@ -179,181 +182,6 @@ fn to_u32_saturating(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// Pure budget check on pre-computed totals. Callers compute `chunk_count`
-/// and `total_bytes` once and pass them in, so the O(n) byte sum is not
-/// repeated per call.
-fn under_cap(chunk_count: usize, total_bytes: usize, max_chunks: u32, max_bytes: u32) -> bool {
-    to_u32_saturating(chunk_count) <= max_chunks && to_u32_saturating(total_bytes) <= max_bytes
-}
-
-/// Selects which chunk indices to drop, breadth-first. Returns the drop set and
-/// the surviving byte total. Groups chunks by file and hands each file one chunk
-/// per round before any file gets a second, so the budget spreads across the
-/// closure and maximizes file coverage (recall@N). Files are visited
-/// closest-first (depth ASC) then by centrality (incoming DESC); within a file,
-/// chunks keep source order.
-///
-/// Guarantee: under a chunk-count-bound budget, every closure file keeps at
-/// least one chunk. Under a byte-bound budget this cannot always hold — a file
-/// whose chunks all exceed the remaining byte budget is dropped, because the
-/// hard `max_bytes` cap forbids including it.
-fn select_drops(
-    chunks: &[BriefChunk],
-    depth_by_path: &HashMap<String, u32>,
-    incoming_counts: &HashMap<String, u32>,
-    max_chunks: u32,
-    max_bytes: u32,
-) -> (HashSet<usize>, usize) {
-    let mut by_file: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, c) in chunks.iter().enumerate() {
-        by_file.entry(c.file_path.as_str()).or_default().push(i);
-    }
-    for idxs in by_file.values_mut() {
-        idxs.sort_by_key(|&i| chunks[i].start_line);
-    }
-    let mut files: Vec<&str> = by_file.keys().copied().collect();
-    files.sort_by(|a, b| {
-        let depth = |p: &str| depth_by_path.get(p).copied().unwrap_or(0);
-        let incoming = |p: &str| incoming_counts.get(p).copied().unwrap_or(0);
-        depth(a)
-            .cmp(&depth(b))
-            .then(incoming(b).cmp(&incoming(a)))
-            .then(a.cmp(b))
-    });
-
-    let max_round = by_file.values().map(Vec::len).max().unwrap_or(0);
-    let mut keep: HashSet<usize> = HashSet::new();
-    let mut bytes: usize = 0;
-    'rounds: for round in 0..max_round {
-        for file in &files {
-            let Some(&idx) = by_file[*file].get(round) else {
-                continue;
-            };
-            if to_u32_saturating(keep.len() + 1) > max_chunks {
-                break 'rounds;
-            }
-            let len = chunks[idx].content.len();
-            if to_u32_saturating(bytes + len) > max_bytes {
-                continue; // over the byte budget; skip (see the byte-bound caveat above)
-            }
-            keep.insert(idx);
-            bytes += len;
-        }
-    }
-
-    let drop_idx: HashSet<usize> = (0..chunks.len()).filter(|i| !keep.contains(i)).collect();
-    (drop_idx, bytes)
-}
-
-/// Caps the chunk set to the budget via breadth-first retention (BR-001
-/// revised, see [`select_drops`]). Pure: takes pre-computed `depth_by_path`,
-/// `incoming_counts`, and `total_bytes` so callers can test deterministically
-/// without DB access and the early under-budget check reuses the precomputed
-/// byte sum instead of recomputing it. Returns the surviving chunks paired with
-/// their total byte count.
-pub fn apply_cap(
-    chunks: Vec<BriefChunk>,
-    depth_by_path: &HashMap<String, u32>,
-    incoming_counts: &HashMap<String, u32>,
-    max_chunks: u32,
-    max_bytes: u32,
-    total_bytes: usize,
-) -> (Vec<BriefChunk>, usize) {
-    if under_cap(chunks.len(), total_bytes, max_chunks, max_bytes) {
-        return (chunks, total_bytes);
-    }
-    let (drop_idx, remaining_bytes) = select_drops(
-        &chunks,
-        depth_by_path,
-        incoming_counts,
-        max_chunks,
-        max_bytes,
-    );
-    let kept = chunks
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| !drop_idx.contains(i))
-        .map(|(_, c)| c)
-        .collect();
-    (kept, remaining_bytes)
-}
-
-type DepGraph = (HashMap<String, u32>, HashMap<String, Vec<String>>);
-
-fn build_dep_graph(chunks: &[BriefChunk], edges: &[(String, String)]) -> DepGraph {
-    let in_scope: HashSet<&str> = chunks.iter().map(|c| c.file_path.as_str()).collect();
-    let mut out_degree: HashMap<String, u32> =
-        in_scope.iter().map(|p| ((*p).to_owned(), 0)).collect();
-    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
-    for (src, tgt) in edges {
-        if src != tgt && in_scope.contains(src.as_str()) && in_scope.contains(tgt.as_str()) {
-            *out_degree.entry(src.clone()).or_insert(0) += 1;
-            dependents.entry(tgt.clone()).or_default().push(src.clone());
-        }
-    }
-    (out_degree, dependents)
-}
-
-fn append_cycle_tail(
-    positions: &mut HashMap<String, usize>,
-    next_idx: &mut usize,
-    all_files: &HashMap<String, u32>,
-) {
-    let mut leftover: Vec<&String> = all_files
-        .keys()
-        .filter(|p| !positions.contains_key(*p))
-        .collect();
-    leftover.sort();
-    for p in leftover {
-        positions.insert(p.clone(), *next_idx);
-        *next_idx += 1;
-    }
-}
-
-fn kahn_positions(graph: DepGraph) -> HashMap<String, usize> {
-    let (mut out_degree, dependents) = graph;
-    let mut available: BTreeSet<String> = out_degree
-        .iter()
-        .filter(|(_, d)| **d == 0)
-        .map(|(p, _)| p.clone())
-        .collect();
-    let mut positions: HashMap<String, usize> = HashMap::new();
-    let mut idx = 0;
-    while let Some(p) = available.iter().next().cloned() {
-        available.remove(&p);
-        positions.insert(p.clone(), idx);
-        idx += 1;
-        if let Some(deps) = dependents.get(&p) {
-            for dep in deps {
-                if let Some(d) = out_degree.get_mut(dep) {
-                    *d -= 1;
-                    if *d == 0 {
-                        available.insert(dep.clone());
-                    }
-                }
-            }
-        }
-    }
-    append_cycle_tail(&mut positions, &mut idx, &out_degree);
-    positions
-}
-
-/// Applies BR-002 topological order: dependencies first (depended-upon files
-/// come before their dependents), tie-breaking by file_path lex order.
-/// Within the same file, chunks keep their `start_line` ordering. Cycles
-/// degrade to lex order at the tail of the result.
-pub fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<BriefChunk> {
-    let positions = kahn_positions(build_dep_graph(&chunks, edges));
-    let mut sorted = chunks;
-    sorted.sort_by_key(|c| {
-        (
-            positions.get(&c.file_path).copied().unwrap_or(usize::MAX),
-            c.start_line,
-        )
-    });
-    sorted
-}
-
 #[derive(Serialize)]
 struct JsonOutput<'a> {
     degraded: bool,
@@ -473,7 +301,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let total_bytes: usize = brief_chunks.iter().map(|c| c.content.len()).sum();
 
     // BR-001 priority data is only needed when chunks exceed the budget.
-    let incoming_counts = if under_cap(
+    let incoming_counts = if cap::under_cap(
         brief_chunks.len(),
         total_bytes,
         task.max_chunks,
@@ -483,7 +311,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     } else {
         get_import_counts(conn, &paths)?
     };
-    let (capped, capped_bytes) = apply_cap(
+    let (capped, capped_bytes) = cap::apply_cap(
         brief_chunks,
         &depth_by_path,
         &incoming_counts,
@@ -497,7 +325,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
     let capped_paths: HashSet<&str> = capped.iter().map(|c| c.file_path.as_str()).collect();
     let capped_paths: Vec<&str> = capped_paths.into_iter().collect();
     let edges = get_edges_among_files(conn, &capped_paths)?;
-    let ordered = topo_sort(capped, &edges);
+    let ordered = topo::topo_sort(capped, &edges);
 
     // topo_sort only reorders chunks, so the cap's surviving byte count holds.
     let total_chunks = to_u32_saturating(ordered.len());
