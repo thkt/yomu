@@ -22,22 +22,10 @@ impl Yomu {
         json: bool,
         from_target: Option<&str>,
     ) -> Result<String, YomuError> {
-        if let Some(q) = query {
-            if q.is_empty() {
-                return Err(YomuError::InvalidInput(InvalidInputKind::EmptyQuery));
-            }
-            if q.len() > MAX_QUERY_LENGTH {
-                return Err(YomuError::InvalidInput(InvalidInputKind::QueryTooLong {
-                    max: MAX_QUERY_LENGTH,
-                    actual: q.len(),
-                }));
-            }
-        }
-
+        validate_search_query(query)?;
         for path in paths {
             validate_path(path)?;
         }
-
         let limit = limit.min(MAX_SEARCH_LIMIT);
 
         if let Some(from) = from_target {
@@ -47,13 +35,27 @@ impl Yomu {
 
         let query =
             query.ok_or_else(|| YomuError::InvalidInput(InvalidInputKind::QueryOrFromRequired))?;
-
-        let embedder = self.get_embedder();
         let offset = offset.min(MAX_SEARCH_OFFSET);
 
-        tracing::debug!(query, limit, offset, ?paths, "search request");
-
         let stats = self.with_db(storage::get_stats)?;
+        let outcome = self.run_search_query(query, limit, offset, paths)?;
+        let notes = self.build_search_notes(&stats, outcome.degraded);
+
+        self.format_search_results(&outcome.results, &stats, notes, json, outcome.degraded)
+    }
+
+    /// Runs the embedding-backed query and emits the query log when enabled,
+    /// isolating the DB + timing path from `search`'s validation and note
+    /// assembly so each part is testable on its own (RC-009 test seam).
+    fn run_search_query(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+        paths: &[String],
+    ) -> Result<query::SearchOutcome, YomuError> {
+        let embedder = self.get_embedder();
+        tracing::debug!(query, limit, offset, ?paths, "search request");
 
         let start = Instant::now();
         let outcome = query::search(
@@ -70,9 +72,14 @@ impl Yomu {
             let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
             self.emit_query_log(query, &outcome, latency_ms);
         }
+        Ok(outcome)
+    }
 
+    /// Assembles the user-facing advisory notes (index-coverage hint, reranker
+    /// status, degraded-embedding warning) appended to search output.
+    fn build_search_notes(&self, stats: &storage::IndexStatus, degraded: bool) -> Vec<String> {
         let mut notes: Vec<String> = Vec::new();
-        if let Some(msg) = index_hint(&stats) {
+        if let Some(msg) = index_hint(stats) {
             notes.push(msg);
         }
         if let Some(note) = self.reranker_note() {
@@ -82,11 +89,10 @@ impl Yomu {
             if let Some(note) = degraded_reason_user_note(*reason, "yomu model download") {
                 notes.push(note);
             }
-        } else if outcome.degraded {
+        } else if degraded {
             notes.push("embedding model not loaded; results from text search only".into());
         }
-
-        self.format_search_results(&outcome.results, &stats, notes, json, outcome.degraded)
+        notes
     }
 
     fn search_from(
@@ -190,4 +196,22 @@ impl Yomu {
         }
         self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids, None, &[]))
     }
+}
+
+/// Rejects an empty or over-length query before any DB work. Returns `Ok(())`
+/// when no query is supplied; the `--from` path validates its target separately.
+pub(super) fn validate_search_query(query: Option<&str>) -> Result<(), YomuError> {
+    let Some(q) = query else {
+        return Ok(());
+    };
+    if q.is_empty() {
+        return Err(YomuError::InvalidInput(InvalidInputKind::EmptyQuery));
+    }
+    if q.len() > MAX_QUERY_LENGTH {
+        return Err(YomuError::InvalidInput(InvalidInputKind::QueryTooLong {
+            max: MAX_QUERY_LENGTH,
+            actual: q.len(),
+        }));
+    }
+    Ok(())
 }
