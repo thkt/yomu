@@ -28,14 +28,16 @@ jobs:
       # File-size ratchet gate (#255): block re-bloat of the yomu crate's src/
       # past the THRESHOLDS file ceiling (sibling crates/ are out of scope).
       # Runs before the build for fast feedback and lives in this required job
-      # so it blocks merge. Pre-existing oversized files are grandfathered in
-      # `allowlist`; once a file is split below the ceiling the gate forces its
-      # removal from the list, so the ratchet cannot silently rot — analogous
-      # to the self-expiring `#[expect(clippy::too_many_lines)]` in src/main.rs.
+      # so it blocks merge. Pre-existing oversized files were grandfathered in
+      # `allowlist` and split below the ceiling over #137; the list is now empty,
+      # so every src/ file is at or under the ceiling. Step 2 self-cleans the
+      # list (forcing removal once an allowlisted file shrinks), so the ratchet
+      # cannot silently rot — analogous to the self-expiring
+      # `#[expect(clippy::too_many_lines)]` in src/main.rs.
       - name: File size gate
         run: |
           threshold=400
-          allowlist="src/indexer/chunker/ts.rs"
+          allowlist=""
           fail=0
           # 1. New or regrown source files over the ceiling fail (tests excluded).
           while IFS= read -r f; do
