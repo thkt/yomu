@@ -933,6 +933,50 @@ fn chunk_rust_parses_nested_grouped_use() {
     assert_eq!(result.parsed_imports[1].specifiers[0].name, "Baz");
 }
 
+// T-720: chunk_rust_parses_doubly_nested_grouped_use
+#[test]
+fn chunk_rust_parses_doubly_nested_grouped_use() {
+    // `bar::{Baz, Qux}` is a `scoped_use_list` nested inside the outer list, so it
+    // recurses through `scoped_use_list_imports` and re-roots under `crate::foo::bar`.
+    let source = "use crate::foo::{bar::{Baz, Qux}};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 1);
+    assert_eq!(result.parsed_imports[0].source, "crate::foo::bar");
+    assert_eq!(result.parsed_imports[0].specifiers.len(), 2);
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "Baz");
+    assert_eq!(result.parsed_imports[0].specifiers[1].name, "Qux");
+}
+
+// T-721: chunk_rust — a list mixing a bare name and a nested group keeps the base group first
+#[test]
+fn chunk_rust_parses_mixed_identifier_and_nested_group() {
+    // Quux populates base_specifiers; bar::{Baz, Qux} goes through the scoped_use_list
+    // arm into extra_imports. The base group must be emitted before the scoped extra.
+    let source = "use crate::foo::{Quux, bar::{Baz, Qux}};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert_eq!(result.parsed_imports.len(), 2);
+    assert_eq!(result.parsed_imports[0].source, "crate::foo");
+    assert_eq!(result.parsed_imports[0].specifiers[0].name, "Quux");
+    assert_eq!(result.parsed_imports[1].source, "crate::foo::bar");
+    assert_eq!(result.parsed_imports[1].specifiers.len(), 2);
+    assert_eq!(result.parsed_imports[1].specifiers[0].name, "Baz");
+    assert_eq!(result.parsed_imports[1].specifiers[1].name, "Qux");
+}
+
+// T-722: chunk_rust — a scoped use-list member missing its path is skipped, not panicked
+#[test]
+fn chunk_rust_skips_scoped_member_without_path() {
+    // `::Bar` parses as a scoped_identifier with no `path` field; scoped_identifier_import
+    // returns None and the member is dropped rather than producing a partial import.
+    let source = "use crate::foo::{::Bar};\nfn run() {}";
+    let result = chunk_file(source, "rs");
+    assert!(
+        result.parsed_imports.is_empty(),
+        "malformed scoped member should be skipped, got: {:?}",
+        result.parsed_imports
+    );
+}
+
 // T-472: chunk_rust_parses_use_as_clause
 #[test]
 fn chunk_rust_parses_use_as_clause() {
