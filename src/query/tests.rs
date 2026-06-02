@@ -49,7 +49,7 @@ fn search_with_mock_embedder() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "button",
         10,
         0,
@@ -250,7 +250,7 @@ fn search_fallback_merges_vector_and_name_results() {
     let conn = Arc::new(Mutex::new(conn));
     let results = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         5,
         0,
@@ -316,7 +316,7 @@ fn search_deduplicates_vector_and_name_results() {
     let conn = Arc::new(Mutex::new(conn));
     let results = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         5,
         0,
@@ -707,7 +707,7 @@ fn search_returns_results_sorted_by_score() {
     let conn = Arc::new(Mutex::new(conn));
     let results = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth hook",
         5,
         0,
@@ -933,7 +933,7 @@ fn search_degrades_on_embed_failure() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &FailingEmbedder::query_only("embedding unavailable"),
+        Some(&FailingEmbedder::query_only("embedding unavailable")),
         "auth",
         10,
         0,
@@ -954,9 +954,9 @@ fn search_degrades_on_embed_failure() {
     );
 }
 
-// T-290: search_degrades_on_model_not_available
+// T-290: search_degrades_when_embedder_returns_error
 #[test]
-fn search_degrades_on_model_not_available() {
+fn search_degrades_when_embedder_returns_error() {
     let embedder = FailingEmbedder::all_fail("embedder not available");
 
     let dir = tempdir().unwrap();
@@ -964,10 +964,55 @@ fn search_degrades_on_model_not_available() {
     let conn = storage::open_db(&db_path).unwrap();
     let conn = Arc::new(Mutex::new(conn));
 
-    let outcome = search(&conn, &embedder, "test", 10, 0, None, &[], false).unwrap();
+    let outcome = search(&conn, Some(&embedder), "test", 10, 0, None, &[], false).unwrap();
     assert!(
         outcome.degraded,
         "should degrade to FTS5 when model not available"
+    );
+}
+
+// T-292: search_degrades_when_embedder_absent
+#[test]
+fn search_degrades_when_embedder_absent() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    storage::replace_file_chunks_only(
+        &conn,
+        "src/Auth.tsx",
+        &[storage::NewChunk {
+            chunk_type: &storage::ChunkType::Component,
+            name: Some("AuthForm"),
+            content: "function AuthForm() { return <form/>; }",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+            source_kind: None,
+            injection_flags: None,
+        }],
+        "h1",
+        "",
+        &[],
+        None,
+    )
+    .unwrap();
+
+    let conn = Arc::new(Mutex::new(conn));
+    // `None` embedder = model absent at load time. Exercises the query.rs None arm
+    // directly (the tools::search wrapper covers it only transitively via try_embedder().ok()).
+    let outcome = search(&conn, None, "auth", 10, 0, None, &[], false).unwrap();
+    assert!(
+        outcome.degraded,
+        "absent embedder (None) must degrade to FTS"
+    );
+    assert!(
+        !outcome.results.is_empty(),
+        "FTS results should still return when the embedder is absent"
+    );
+    assert_ne!(
+        outcome.results[0].match_source,
+        storage::MatchSource::Semantic
     );
 }
 
@@ -1074,7 +1119,7 @@ fn reranker_reorders_results_by_cross_encoder_score() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         5,
         0,
@@ -1127,7 +1172,7 @@ fn no_reranker_produces_rrf_results() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         5,
         0,
@@ -1139,7 +1184,7 @@ fn no_reranker_produces_rrf_results() {
 
     let outcome_existing = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         5,
         0,
@@ -1208,7 +1253,7 @@ fn reranker_increases_fetch_limit() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "component",
         limit,
         offset,
@@ -1302,7 +1347,7 @@ fn reranker_scores_applied_before_cap_per_file() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "auth",
         10,
         0,
@@ -1351,7 +1396,7 @@ fn reranker_scores_applied_before_cap_per_file() {
 #[ignore = "requires model download"]
 fn search_returns_results() {
     use rurico::embed::download_model;
-    let paths = download_model(ModelId::default()).expect("download model");
+    let paths = download_model(ModelId::DEFAULT).expect("download model");
     let embedder = Embedder::new(&paths).expect("load model");
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
@@ -1378,7 +1423,7 @@ fn search_returns_results() {
     .unwrap();
 
     let conn = Arc::new(Mutex::new(conn));
-    let outcome = search(&conn, &embedder, "button", 10, 0, None, &[], false).unwrap();
+    let outcome = search(&conn, Some(&embedder), "button", 10, 0, None, &[], false).unwrap();
     assert!(!outcome.results.is_empty(), "expected at least one result");
 }
 
@@ -1532,7 +1577,7 @@ fn text_only_search_with_offset_returns_results() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &FailingEmbedder::query_only("unavailable"),
+        Some(&FailingEmbedder::query_only("unavailable")),
         "widget",
         3,
         10,
@@ -1580,7 +1625,7 @@ fn search_chunk_only_index_with_embedder_falls_back_to_text() {
     let conn = Arc::new(Mutex::new(conn));
     let outcome = search(
         &conn,
-        &MockEmbedder::default(),
+        Some(&MockEmbedder::default()),
         "button",
         10,
         0,

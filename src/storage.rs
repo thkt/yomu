@@ -94,7 +94,7 @@ use rurico::embed::ChunkedEmbedding;
 
 #[cfg(test)]
 pub(crate) fn ce(v: Vec<f32>) -> ChunkedEmbedding {
-    ChunkedEmbedding::new(vec![v])
+    ChunkedEmbedding::try_new(vec![v]).expect("ce: vec![v] always has exactly one chunk")
 }
 
 #[cfg(test)]

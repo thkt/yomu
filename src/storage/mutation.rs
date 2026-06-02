@@ -60,7 +60,7 @@ pub(super) fn insert_sub_embeddings(
     chunk_id: i64,
     chunked_emb: &ChunkedEmbedding,
 ) -> Result<(), StorageError> {
-    for (sub_idx, emb_slice) in chunked_emb.chunks.iter().enumerate() {
+    for (sub_idx, emb_slice) in chunked_emb.chunks().iter().enumerate() {
         let bytes: &[u8] = cast_slice(emb_slice);
         conn.prepare_cached(
             "INSERT INTO vec_chunks (embedding, chunk_id, sub_idx) VALUES (?1, ?2, ?3)",
