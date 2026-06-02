@@ -231,6 +231,118 @@ fn build_references_rust_crate_import() {
     assert_eq!(refs[0].ref_kind, RefKind::Named);
 }
 
+// T-723 [Issue #242]: bin_importing_lib_via_package_name_joins_backward_closure
+// Whole real pipeline from one fixture: run_chunk_only_index drives chunker ->
+// resolve (crate_name match) -> build_references -> write_file_metadata persist.
+// A separate bin target imports the lib as `<pkg>::...` (cannot say `crate::`);
+// the persisted bin -> lib edge must place the bin in the lib's backward closure
+// (brief's dependents). Exercises the production persist path, not a test-only
+// one, so a resolve/storage path mismatch surfaces as a missing dependent.
+#[test]
+fn bin_importing_lib_via_package_name_joins_backward_closure() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src").join("eval")).unwrap();
+    fs::create_dir_all(root.join("src").join("bin")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("eval").join("metrics.rs"),
+        "pub struct Hit;\npub struct Recall;",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("bin").join("tool.rs"),
+        "use myapp::eval::metrics::{Hit, Recall};\nfn main() {}",
+    )
+    .unwrap();
+
+    let db_path = root.join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+    run_chunk_only_index(&conn, root, false).unwrap();
+
+    // Two specifiers fan out to two persisted edges (count guard for the symbol
+    // fan-out; symbol values are pinned separately in T-724).
+    let ref_count = storage::get_reference_count(&conn.lock().unwrap()).unwrap();
+    assert_eq!(
+        ref_count, 2,
+        "bin `use myapp::eval::metrics::{{Hit, Recall}}` must persist one edge per specifier, got {ref_count}"
+    );
+
+    // The persisted bin -> lib edge is the lib's sole direct dependent.
+    let deps = storage::get_transitive_dependents(&conn.lock().unwrap(), "src/eval/metrics.rs", 3)
+        .unwrap();
+    assert_eq!(
+        deps,
+        vec![storage::Dependent {
+            file_path: "src/bin/tool.rs".to_owned(),
+            depth: 1,
+        }],
+        "lib's backward closure must surface the bin importing it via `<pkg>::...`, got: {deps:?}"
+    );
+}
+
+// T-724 [Issue #242]: build_references_fans_out_multi_specifier_symbols
+// A single `use <pkg>::a::b::{X, Y}` import carries multiple specifiers;
+// build_references must emit one Reference per specifier, each keeping its own
+// symbol_name. Guards the import_to_references fan-out that T-723's integration
+// path cannot observe (get_transitive_dependents returns paths/depth, no symbols).
+#[test]
+fn build_references_fans_out_multi_specifier_symbols() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(src.join("eval")).unwrap();
+    fs::write(src.join("eval").join("metrics.rs"), "").unwrap();
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let rust_resolver = RustResolver::new(tmp.path());
+    let imports = vec![chunker::ParsedImport {
+        specifiers: vec![
+            chunker::ImportSpecifier {
+                name: "Hit".to_owned(),
+                alias: None,
+                kind: chunker::ImportKind::Named,
+            },
+            chunker::ImportSpecifier {
+                name: "Recall".to_owned(),
+                alias: None,
+                kind: chunker::ImportKind::Named,
+            },
+        ],
+        source: "myapp::eval::metrics".to_owned(),
+    }];
+    let refs = build_references(&imports, "src/bin/tool.rs", &rust_resolver);
+
+    assert_eq!(
+        refs.len(),
+        2,
+        "two specifiers must fan out to two edges, got: {refs:?}"
+    );
+    for r in &refs {
+        assert_eq!(r.source_file, "src/bin/tool.rs");
+        assert_eq!(r.target_file, "src/eval/metrics.rs");
+        assert_eq!(r.ref_kind, RefKind::Named);
+    }
+    let mut names: Vec<&str> = refs
+        .iter()
+        .filter_map(|r| r.symbol_name.as_deref())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["Hit", "Recall"],
+        "each specifier must keep its own symbol_name"
+    );
+}
+
 // T-382: run_chunk_only_index_stores_chunks_without_embeddings
 #[test]
 fn run_chunk_only_index_stores_chunks_without_embeddings() {
