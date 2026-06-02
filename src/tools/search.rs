@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::{query, storage};
 
-use super::embedder::degraded_reason_user_note;
+use super::embedder::EmbedderDegraded;
 use super::format::{
     EnrichmentContext, format_no_results_message, format_results_grouped, format_results_json,
 };
@@ -54,7 +54,7 @@ impl Yomu {
         offset: u32,
         paths: &[String],
     ) -> Result<query::SearchOutcome, YomuError> {
-        let embedder = self.get_embedder();
+        let embedder = self.try_embedder().ok();
         tracing::debug!(query, limit, offset, ?paths, "search request");
 
         let start = Instant::now();
@@ -86,7 +86,7 @@ impl Yomu {
             notes.push(note);
         }
         if let Some(reason) = self.degraded_reason() {
-            if let Some(note) = degraded_reason_user_note(*reason, "yomu model download") {
+            if let Some(note) = EmbedderDegraded(*reason).user_note("yomu model download") {
                 notes.push(note);
             }
         } else if degraded {

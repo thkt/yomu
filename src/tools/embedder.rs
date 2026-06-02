@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rurico::embed::{ChunkedEmbedding, Embed, EmbedError};
+use rurico::embed::Embed;
 
 // Real-model loading is compiled only into the production binary. Under
 // `--features test-support` the embedder is a deterministic stub (see the
@@ -16,7 +16,7 @@ use rurico::embed::MockEmbedder;
 #[cfg(feature = "test-support")]
 use std::env;
 
-pub(super) use amici::model::embedder::{DegradedReason, degraded_reason_user_note};
+pub(super) use amici::model::embedder::{DegradedReason, EmbedderDegraded};
 
 use super::Yomu;
 
@@ -44,24 +44,10 @@ pub(super) fn get_recorded_warnings() -> Vec<(DegradedReason, String)> {
     RECORDED_WARNINGS.with(|w| w.borrow().clone())
 }
 
-struct NoOpEmbedder;
-
-impl Embed for NoOpEmbedder {
-    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
-        Err(EmbedError::Inference("embedder not available".into()))
-    }
-    fn embed_document(&self, _text: &str) -> Result<ChunkedEmbedding, EmbedError> {
-        Err(EmbedError::Inference("embedder not available".into()))
-    }
-    fn embed_text(&self, _text: &str, _prefix: &str) -> Result<Vec<f32>, EmbedError> {
-        Err(EmbedError::Inference("embedder not available".into()))
-    }
-}
-
 #[cfg(not(feature = "test-support"))]
 fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
     let result = try_load_embedder_with(
-        || cached_artifacts(ModelId::default()),
+        || cached_artifacts(ModelId::DEFAULT),
         |e| tracing::warn!(error = %e, "failed to delete corrupt model files"),
         |e| tracing::warn!(error = %e, "embedder probe failed"),
     );
@@ -109,11 +95,6 @@ impl Yomu {
             .as_ref()
             .map(Arc::clone)
             .map_err(|r| *r)
-    }
-
-    pub(super) fn get_embedder(&self) -> &dyn Embed {
-        static NOOP: NoOpEmbedder = NoOpEmbedder;
-        self.try_embedder().unwrap_or(&NOOP)
     }
 
     pub(super) fn degraded_reason(&self) -> Option<&DegradedReason> {

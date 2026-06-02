@@ -23,7 +23,7 @@ enum EmbedFailure {
 }
 
 fn validate_chunked_embeddings(embs: Vec<ChunkedEmbedding>) -> Result<Vec<ChunkedEmbedding>, ()> {
-    if embs.iter().any(|e| e.chunks.is_empty()) {
+    if embs.iter().any(|e| e.chunks().is_empty()) {
         return Err(());
     }
     Ok(embs)

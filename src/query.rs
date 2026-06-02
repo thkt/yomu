@@ -245,7 +245,7 @@ fn search_pipeline(
 #[allow(clippy::too_many_arguments)]
 pub fn search(
     conn: &Arc<Mutex<Db>>,
-    embedder: &(impl Embed + ?Sized),
+    embedder: Option<&dyn Embed>,
     query: &str,
     limit: u32,
     offset: u32,
@@ -253,12 +253,15 @@ pub fn search(
     path_filter: &[String],
     capture_stages: bool,
 ) -> Result<SearchOutcome, QueryError> {
-    let (query_embedding, degraded) = match embedder.embed_query(query) {
-        Ok(emb) => (Some(emb), false),
-        Err(e) => {
-            tracing::warn!(error = %e, "Query embedding failed, falling back to text search");
-            (None, true)
-        }
+    let (query_embedding, degraded) = match embedder {
+        Some(e) => match e.embed_query(query) {
+            Ok(emb) => (Some(emb), false),
+            Err(err) => {
+                tracing::warn!(error = %err, "Query embedding failed, falling back to text search");
+                (None, true)
+            }
+        },
+        None => (None, true),
     };
 
     let conn = conn.lock().expect("DB lock poisoned (query::search)");
