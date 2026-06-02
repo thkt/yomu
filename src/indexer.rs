@@ -32,7 +32,7 @@ pub enum IndexError {
     CorpusInit(#[from] injection::CorpusError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct IndexResult {
     pub files_processed: u32,
     pub chunks_created: u32,
