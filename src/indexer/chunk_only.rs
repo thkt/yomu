@@ -3,7 +3,7 @@ mod references;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::{DryRunResult, IndexError, IndexResult, chunker, injection, source_kind, walker};
@@ -185,6 +185,7 @@ pub(super) fn prepare_chunks(
     })
 }
 
+#[derive(Clone, Copy)]
 enum FileOutcome {
     Processed(u32),
     Skipped,
@@ -300,6 +301,58 @@ pub fn dry_run_index(
     })
 }
 
+impl IndexResult {
+    /// Folds one file's [`FileOutcome`] into the running counts.
+    fn record(&mut self, outcome: FileOutcome) {
+        match outcome {
+            FileOutcome::Processed(n) => {
+                self.chunks_created += n;
+                self.files_processed += 1;
+            }
+            FileOutcome::Skipped => self.files_skipped += 1,
+            FileOutcome::Errored => self.files_errored += 1,
+        }
+    }
+}
+
+/// Indexes every changed file under one DB lock, returning the run counts and
+/// the set of relative paths seen (used by the caller for orphan removal). The
+/// lock guard drops on return, before the caller re-locks for cleanup.
+/// Past the 30-line guideline only because the 5-arg signature wraps; the body is one cohesive locked pass.
+fn index_changed_files(
+    conn: &Arc<Mutex<Db>>,
+    root: &Path,
+    files: &[PathBuf],
+    force: bool,
+    corpus: &injection::Corpus,
+) -> Result<(IndexResult, HashSet<String>), IndexError> {
+    let resolver = Resolver::new(root);
+    let rust_resolver = RustResolver::new(root);
+    let mut result = IndexResult::default();
+    let mut current_rel_paths = HashSet::with_capacity(files.len());
+    let conn_guard = conn.lock().expect("DB lock poisoned (index_changed_files)");
+    let _automerge = storage::FtsAutomergeGuard::new(&conn_guard)?;
+
+    for file_path in files {
+        let rel_path = to_rel_path(root, file_path);
+        current_rel_paths.insert(rel_path.clone());
+        let outcome = process_file(
+            &conn_guard,
+            rel_path,
+            file_path,
+            force,
+            &resolver,
+            &rust_resolver,
+            corpus,
+        )?;
+        result.record(outcome);
+    }
+    if result.files_processed > 0 {
+        storage::fts_optimize(&conn_guard)?;
+    }
+    Ok((result, current_rel_paths))
+}
+
 pub(super) fn run_chunk_only_index_inner(
     conn: &Arc<Mutex<Db>>,
     root: &Path,
@@ -316,71 +369,18 @@ pub(super) fn run_chunk_only_index_inner(
         "Starting chunk-only indexing"
     );
 
-    let resolver = Resolver::new(root);
-    let rust_resolver = RustResolver::new(root);
-
-    let (files_processed, chunks_created, files_skipped, files_errored, current_rel_paths) = {
-        let mut files_processed = 0u32;
-        let mut chunks_created = 0u32;
-        let mut files_skipped = 0u32;
-        let mut files_errored = 0u32;
-        let mut current_rel_paths = HashSet::with_capacity(files.len());
-
-        let conn_guard = conn
-            .lock()
-            .expect("DB lock poisoned (run_chunk_only_index_inner)");
-        let _automerge = storage::FtsAutomergeGuard::new(&conn_guard)?;
-
-        for file_path in &files {
-            let rel_path = to_rel_path(root, file_path);
-            current_rel_paths.insert(rel_path.clone());
-            match process_file(
-                &conn_guard,
-                rel_path,
-                file_path,
-                force,
-                &resolver,
-                &rust_resolver,
-                &corpus,
-            )? {
-                FileOutcome::Processed(n) => {
-                    chunks_created += n;
-                    files_processed += 1;
-                }
-                FileOutcome::Skipped => files_skipped += 1,
-                FileOutcome::Errored => files_errored += 1,
-            }
-        }
-
-        if files_processed > 0 {
-            storage::fts_optimize(&conn_guard)?;
-        }
-
-        (
-            files_processed,
-            chunks_created,
-            files_skipped,
-            files_errored,
-            current_rel_paths,
-        )
-    };
-
+    let (result, current_rel_paths) = index_changed_files(conn, root, &files, force, &corpus)?;
     remove_orphans(conn, &current_rel_paths)?;
 
     tracing::info!(
-        files_processed,
-        chunks_created,
-        files_skipped,
-        files_errored,
+        files_processed = result.files_processed,
+        chunks_created = result.chunks_created,
+        files_skipped = result.files_skipped,
+        files_errored = result.files_errored,
         "Chunk-only indexing complete"
     );
 
-    Ok(IndexResult {
-        files_processed,
-        chunks_created,
-        files_skipped,
-        files_errored,
-    })
+    Ok(result)
 }
 
 pub fn run_chunk_only_index(
