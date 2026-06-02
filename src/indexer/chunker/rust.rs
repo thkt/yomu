@@ -41,69 +41,80 @@ fn extract_impl_methods(impl_node: &Node, source: &str, impl_index: usize) -> Ve
     result
 }
 
+/// An [`ImportSpecifier`] with no alias — the common shape for a `use` leaf, a
+/// `*` glob, or a `mod` declaration. `use x as y` builds its specifier inline
+/// because it carries an alias.
+fn simple_specifier(name: String, kind: ImportKind) -> ImportSpecifier {
+    ImportSpecifier {
+        name,
+        alias: None,
+        kind,
+    }
+}
+
+/// A `a::b` member *inside* a `use` list (e.g. `bar::Baz` in
+/// `use crate::foo::{bar::Baz, Quux}`). Unlike [`parse_scoped_identifier`], the
+/// enclosing `use` was already `is_internal_path`-filtered, so this re-roots the
+/// member under `base_path` without re-checking internality.
+fn scoped_identifier_import(base_path: &str, node: &Node, source: &str) -> Option<ParsedImport> {
+    let path_node = node.child_by_field_name("path")?;
+    let name_node = node.child_by_field_name("name")?;
+    let nested_path = format!("{}::{}", base_path, &source[path_node.byte_range()]);
+    Some(ParsedImport {
+        source: nested_path,
+        specifiers: vec![simple_specifier(
+            source[name_node.byte_range()].to_owned(),
+            ImportKind::Named,
+        )],
+    })
+}
+
+/// A nested `a::{...}` group *inside* a `use` list (e.g. `bar::{Baz, Qux}` in
+/// `use crate::foo::{bar::{Baz, Qux}}`). Re-roots under `base_path` and recurses
+/// into [`collect_use_list_imports`]; like [`scoped_identifier_import`] it skips
+/// the `is_internal_path` check that top-level [`parse_scoped_use_list`] applies.
+fn scoped_use_list_imports(base_path: &str, node: &Node, source: &str) -> Vec<ParsedImport> {
+    node.child_by_field_name("path")
+        .zip(node.child_by_field_name("list"))
+        .map(|(inner_path, inner_list)| {
+            let nested_path = format!("{}::{}", base_path, &source[inner_path.byte_range()]);
+            collect_use_list_imports(&nested_path, &inner_list, source)
+        })
+        .unwrap_or_default()
+}
+
+/// Flattens a `use` list's members into [`ParsedImport`]s. Bare names and globs
+/// collapse into a single import at `base_path`; scoped members
+/// ([`scoped_identifier_import`], [`scoped_use_list_imports`]) each get their own
+/// re-rooted entry, ordered after the `base_path` group.
 fn collect_use_list_imports(base_path: &str, list: &Node, source: &str) -> Vec<ParsedImport> {
     let mut base_specifiers = Vec::new();
     let mut extra_imports = Vec::new();
     let mut cursor = list.walk();
     for child in list.children(&mut cursor) {
         match child.kind() {
-            "identifier" => {
-                base_specifiers.push(ImportSpecifier {
-                    name: source[child.byte_range()].to_owned(),
-                    alias: None,
-                    kind: ImportKind::Named,
-                });
+            "identifier" => base_specifiers.push(simple_specifier(
+                source[child.byte_range()].to_owned(),
+                ImportKind::Named,
+            )),
+            "use_wildcard" => {
+                base_specifiers.push(simple_specifier("*".to_owned(), ImportKind::Namespace));
             }
             "scoped_identifier" => {
-                if let (Some(path_node), Some(name_node)) = (
-                    child.child_by_field_name("path"),
-                    child.child_by_field_name("name"),
-                ) {
-                    let nested_path = format!("{}::{}", base_path, &source[path_node.byte_range()]);
-                    extra_imports.push(ParsedImport {
-                        source: nested_path,
-                        specifiers: vec![ImportSpecifier {
-                            name: source[name_node.byte_range()].to_owned(),
-                            alias: None,
-                            kind: ImportKind::Named,
-                        }],
-                    });
-                }
+                extra_imports.extend(scoped_identifier_import(base_path, &child, source));
             }
             "scoped_use_list" => {
-                if let (Some(inner_path), Some(inner_list)) = (
-                    child.child_by_field_name("path"),
-                    child.child_by_field_name("list"),
-                ) {
-                    let nested_path =
-                        format!("{}::{}", base_path, &source[inner_path.byte_range()]);
-                    extra_imports.extend(collect_use_list_imports(
-                        &nested_path,
-                        &inner_list,
-                        source,
-                    ));
-                }
-            }
-            "use_wildcard" => {
-                base_specifiers.push(ImportSpecifier {
-                    name: "*".to_owned(),
-                    alias: None,
-                    kind: ImportKind::Namespace,
-                });
+                extra_imports.extend(scoped_use_list_imports(base_path, &child, source));
             }
             _ => {}
         }
     }
-    if !base_specifiers.is_empty() {
-        extra_imports.insert(
-            0,
-            ParsedImport {
-                source: base_path.to_owned(),
-                specifiers: base_specifiers,
-            },
-        );
-    }
-    extra_imports
+    let base_group = (!base_specifiers.is_empty()).then(|| ParsedImport {
+        source: base_path.to_owned(),
+        specifiers: base_specifiers,
+    });
+    // `Option::into_iter` yields the base group (0 or 1) before the scoped extras.
+    base_group.into_iter().chain(extra_imports).collect()
 }
 
 fn parse_scoped_identifier(
@@ -119,11 +130,10 @@ fn parse_scoped_identifier(
     }
     Some(ParsedImport {
         source: path.to_owned(),
-        specifiers: vec![ImportSpecifier {
-            name: source[name_node.byte_range()].to_owned(),
-            alias: None,
-            kind: ImportKind::Named,
-        }],
+        specifiers: vec![simple_specifier(
+            source[name_node.byte_range()].to_owned(),
+            ImportKind::Named,
+        )],
     })
 }
 
@@ -152,11 +162,7 @@ fn parse_use_wildcard(node: &Node, source: &str, crate_name: Option<&str>) -> Op
     }
     Some(ParsedImport {
         source: path.to_owned(),
-        specifiers: vec![ImportSpecifier {
-            name: "*".to_owned(),
-            alias: None,
-            kind: ImportKind::Namespace,
-        }],
+        specifiers: vec![simple_specifier("*".to_owned(), ImportKind::Namespace)],
     })
 }
 
@@ -198,11 +204,7 @@ fn parse_mod_decl(node: &Node, source: &str) -> Option<ParsedImport> {
     let name = source[name_node.byte_range()].to_owned();
     Some(ParsedImport {
         source: name.clone(),
-        specifiers: vec![ImportSpecifier {
-            name,
-            alias: None,
-            kind: ImportKind::ModDecl,
-        }],
+        specifiers: vec![simple_specifier(name, ImportKind::ModDecl)],
     })
 }
 
@@ -241,6 +243,85 @@ fn extract_rust_impl_name(node: &Node, source: &str) -> Option<String> {
     }
 }
 
+/// Accumulates the imports and chunks discovered while walking a Rust file's
+/// top-level nodes. `pending` holds doc comments awaiting the next chunk; its
+/// `'a` lifetime ties the borrowed [`Node`]s to the parse tree they index.
+#[derive(Debug, Default)]
+struct RustChunkState<'a> {
+    imports: Vec<String>,
+    parsed_imports: Vec<ParsedImport>,
+    chunks: Vec<RawChunk>,
+    pending: Vec<Node<'a>>,
+}
+
+impl<'a> RustChunkState<'a> {
+    /// Routes one top-level node to its accumulator. Comments queue in `pending`
+    /// for the next chunk; every other kind clears `pending`, so a `use`/`mod`
+    /// between a doc comment and its item drops the comment. Takes `&Node<'a>`
+    /// (not the elided `&Node` of the sibling methods) because the comment arm
+    /// stores `*node` into `pending: Vec<Node<'a>>`.
+    fn add_node(&mut self, node: &Node<'a>, source: &str, crate_name: Option<&str>) {
+        match node.kind() {
+            "use_declaration" => {
+                self.imports.push(source[node.byte_range()].to_owned());
+                self.parsed_imports
+                    .extend(parse_rust_use(node, source, crate_name));
+                self.pending.clear();
+            }
+            "mod_item" => self.add_mod(node, source),
+            "line_comment" | "block_comment" => self.pending.push(*node),
+            "impl_item" => self.add_impl(node, source),
+            _ => self.classify_or_clear(node, source),
+        }
+    }
+
+    /// `mod foo;` becomes an import; `mod foo { ... }` falls through to a chunk.
+    fn add_mod(&mut self, node: &Node, source: &str) {
+        if let Some(import) = parse_mod_decl(node, source) {
+            self.parsed_imports.push(import);
+            self.pending.clear();
+        } else {
+            self.classify_or_clear(node, source);
+        }
+    }
+
+    /// Emits the impl header chunk followed by one chunk per method, linking each
+    /// method back to the header via `parent_index`.
+    fn add_impl(&mut self, node: &Node, source: &str) {
+        let impl_index = self.chunks.len();
+        let name = extract_rust_impl_name(node, source);
+        let mut impl_chunk = make_chunk(source, node, ChunkType::RustImpl, name);
+        attach_pending_comments(&mut impl_chunk, &mut self.pending, source);
+        self.chunks.push(impl_chunk);
+        self.chunks
+            .extend(extract_impl_methods(node, source, impl_index));
+    }
+
+    /// Pushes a classifiable node as a chunk (carrying any pending comments); a
+    /// node that is not a chunk boundary instead discards the pending comments.
+    fn classify_or_clear(&mut self, node: &Node, source: &str) {
+        if let Some(mut chunk) = classify_rust_node(node, source) {
+            attach_pending_comments(&mut chunk, &mut self.pending, source);
+            self.chunks.push(chunk);
+        } else {
+            self.pending.clear();
+        }
+    }
+
+    /// Consumes the accumulated state into [`FileChunks`], substituting the
+    /// line-based fallback when no structural chunk was found.
+    fn into_file_chunks(mut self, source: &str) -> FileChunks {
+        if self.chunks.is_empty() {
+            self.chunks = chunk_fallback(source);
+        }
+        FileChunks {
+            imports: self.imports,
+            parsed_imports: self.parsed_imports,
+            chunks: self.chunks,
+        }
+    }
+}
+
 pub(super) fn chunk_rust(source: &str, crate_name: Option<&str>) -> FileChunks {
     let Some(mut parser) = make_parser(&tree_sitter_rust::LANGUAGE.into()) else {
         return FileChunks::chunks_only(chunk_fallback(source));
@@ -250,56 +331,10 @@ pub(super) fn chunk_rust(source: &str, crate_name: Option<&str>) -> FileChunks {
         return FileChunks::chunks_only(chunk_fallback(source));
     };
     let root = tree.root_node();
-    let mut imports = Vec::new();
-    let mut parsed_imports = Vec::new();
-    let mut chunks = Vec::new();
-    let mut pending_comments: Vec<Node> = Vec::new();
+    let mut state = RustChunkState::default();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
-        match node.kind() {
-            "use_declaration" => {
-                imports.push(source[node.byte_range()].to_owned());
-                parsed_imports.extend(parse_rust_use(&node, source, crate_name));
-                pending_comments.clear();
-            }
-            "mod_item" => {
-                if let Some(import) = parse_mod_decl(&node, source) {
-                    parsed_imports.push(import);
-                    pending_comments.clear();
-                } else if let Some(mut chunk) = classify_rust_node(&node, source) {
-                    attach_pending_comments(&mut chunk, &mut pending_comments, source);
-                    chunks.push(chunk);
-                } else {
-                    pending_comments.clear();
-                }
-            }
-            "line_comment" | "block_comment" => {
-                pending_comments.push(node);
-            }
-            "impl_item" => {
-                let impl_index = chunks.len();
-                let name = extract_rust_impl_name(&node, source);
-                let mut impl_chunk = make_chunk(source, &node, ChunkType::RustImpl, name);
-                attach_pending_comments(&mut impl_chunk, &mut pending_comments, source);
-                chunks.push(impl_chunk);
-                chunks.extend(extract_impl_methods(&node, source, impl_index));
-            }
-            _ => {
-                if let Some(mut chunk) = classify_rust_node(&node, source) {
-                    attach_pending_comments(&mut chunk, &mut pending_comments, source);
-                    chunks.push(chunk);
-                } else {
-                    pending_comments.clear();
-                }
-            }
-        }
+        state.add_node(&node, source, crate_name);
     }
-    if chunks.is_empty() {
-        chunks = chunk_fallback(source);
-    }
-    FileChunks {
-        imports,
-        parsed_imports,
-        chunks,
-    }
+    state.into_file_chunks(source)
 }
