@@ -17,16 +17,7 @@ pub struct EmbedResult {
 
 enum EmbedFailure {
     Abort(EmbedError),
-    /// rurico returned an empty `ChunkedEmbedding.chunks`, violating its documented contract.
-    Contract,
     Skip,
-}
-
-fn validate_chunked_embeddings(embs: Vec<ChunkedEmbedding>) -> Result<Vec<ChunkedEmbedding>, ()> {
-    if embs.iter().any(|e| e.chunks().is_empty()) {
-        return Err(());
-    }
-    Ok(embs)
 }
 
 pub(super) fn enrich_for_embedding(
@@ -99,9 +90,9 @@ fn run_embed_batch(
                 "embed batch"
             );
             *consecutive_errors = 0;
-            let validated =
-                validate_chunked_embeddings(embs).map_err(|()| EmbedFailure::Contract)?;
-            Ok((validated, elapsed))
+            // rurico's `ChunkedEmbedding::try_new` rejects empty chunks, so every
+            // embedding returned here is non-empty at the type level.
+            Ok((embs, elapsed))
         }
         Err(e) => Err(classify_embed_error(e, consecutive_errors, file_path)),
     }
@@ -180,11 +171,6 @@ fn embed_file_chunks(
         match run_embed_batch(embedder, texts, consecutive_errors, file_path) {
             Ok((embs, dur)) => (embs, dur),
             Err(EmbedFailure::Abort(e)) => return Err(IndexError::Embed(e)),
-            Err(EmbedFailure::Contract) => {
-                return Err(IndexError::Internal(
-                    "rurico returned empty ChunkedEmbedding.chunks (contract violation)".into(),
-                ));
-            }
             Err(EmbedFailure::Skip) => return Ok(None),
         };
 
@@ -330,6 +316,3 @@ fn chunks_per_sec(chunks_embedded: u32, elapsed_ms: u128) -> u128 {
         .checked_div(elapsed_ms)
         .unwrap_or(0)
 }
-
-#[cfg(test)]
-mod tests;
