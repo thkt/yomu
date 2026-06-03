@@ -12,12 +12,15 @@
 use std::process::ExitCode;
 
 use clap::Parser;
+use rurico::handle_probe_if_needed;
 use yomu::error::ErrorCode;
 use yomu::io::write_output;
 use yomu::tools::{Yomu, YomuOptions};
 
 #[derive(Parser)]
-#[command(about = "Measure seed-less recall and weighted cap-fit against the bundled GT corpus")]
+#[command(
+    about = "Measure GT-corpus recall: seed-less closure recall, or --compare for the seed-stage embedding-vs-no-embed arm comparison (#250)"
+)]
 struct Args {
     /// GT corpus repo to measure against the current index (e.g. rurico, amici).
     #[arg(long)]
@@ -25,9 +28,18 @@ struct Args {
     /// Emit a JSON report instead of the plain-text report.
     #[arg(long)]
     json: bool,
+    /// Run the seed-stage arm comparison (embedding vs no-embed) instead of
+    /// seed-less closure recall (#250 Phase 1).
+    #[arg(long)]
+    compare: bool,
 }
 
 fn main() -> ExitCode {
+    // Answer the embedder's mlx-forward probe before clap sees probe args, the
+    // same ordering the yomu binary's main uses. Without this a recall-bench
+    // re-exec'd as a probe never replies, so every embedding query degrades
+    // (#250).
+    handle_probe_if_needed();
     let args = Args::parse();
 
     let yomu = match Yomu::new(YomuOptions { log_query: false }) {
@@ -40,8 +52,14 @@ fn main() -> ExitCode {
 
     // Mirrors the recall dispatch removed from the yomu CLI (ADR-0005): emit the
     // possibly-degraded report and exit non-zero when degraded, so a missing
-    // model is not a silent pass.
-    match yomu.recall(&args.repo, args.json) {
+    // model is not a silent pass. `--compare` switches to the #250 Phase 1
+    // seed-stage arm comparison; both share the degraded-exit contract.
+    let outcome = if args.compare {
+        yomu.recall_arms(&args.repo, args.json)
+    } else {
+        yomu.recall(&args.repo, args.json)
+    };
+    match outcome {
         Ok((text, degraded)) => {
             let code = write_output(&text);
             if degraded {

@@ -46,6 +46,11 @@ const RECALL_DEPTH: u32 = 3;
 const RECALL_MAX_CHUNKS: u32 = 80;
 #[cfg(not(feature = "test-support"))]
 const RECALL_MAX_BYTES: u32 = 80_000;
+// Seed-stage candidate-list depth for the arm comparison (#250 Phase 1). Deeper
+// than ARM_K_VALUES (max 5) so a seed found at rank 5-9 is still recorded rather
+// than reported as a miss.
+#[cfg(not(feature = "test-support"))]
+const ARM_CANDIDATE_DEPTH: u32 = 10;
 
 /// Upper bound for the EmptyTarget `candidates` retry list emitted to agents.
 /// A short, scannable list is the actionable shape per ADR-0060.

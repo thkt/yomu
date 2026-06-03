@@ -11,6 +11,12 @@ use serde::{Deserialize, Serialize};
 
 pub mod corpus;
 
+mod arms;
+pub use arms::{
+    ARM_K_VALUES, Arm, ArmClassSummary, ArmComparisonReport, ArmEntryReport, QueryClass,
+    classify_query, hit_rank, recall_at_k, render_arm_json, render_arm_plain, summarize_arms,
+};
+
 /// A must-include file paired with its domain-assigned importance weight.
 ///
 /// Weight ranks how much dropping the file would hurt the brief's completeness
@@ -34,7 +40,7 @@ pub struct RecallReport {
     pub degraded: bool,
 }
 
-fn count_u32(n: usize) -> u32 {
+pub(super) fn count_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 

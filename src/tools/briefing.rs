@@ -1,3 +1,5 @@
+#[cfg(not(feature = "test-support"))]
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use amici::model::{degrade_with_warn, record_degraded};
@@ -11,7 +13,7 @@ use super::{BRIEF_MAX_INFERRED_SEEDS, InvalidInputKind, Yomu, YomuError};
 // (ADR-0005). It is cfg'd out of the `test-support` (coverage) build, so its
 // exclusive imports follow it out to avoid unused-import warnings there.
 #[cfg(not(feature = "test-support"))]
-use super::{RECALL_DEPTH, RECALL_MAX_BYTES, RECALL_MAX_CHUNKS};
+use super::{ARM_CANDIDATE_DEPTH, RECALL_DEPTH, RECALL_MAX_BYTES, RECALL_MAX_CHUNKS};
 #[cfg(not(feature = "test-support"))]
 use crate::recall::{self, corpus};
 
@@ -175,6 +177,121 @@ impl Yomu {
             recall::render_recall_plain(&report)
         };
         Ok((text, report.aggregate.degraded))
+    }
+
+    /// No-embed arm seed candidates (#250): a competent keyword search, not the
+    /// production AND-fallback ([`Self::fts_fallback_seed_paths`], which only
+    /// fires when the embedder is down and ANDs every task term). Each extracted
+    /// keyword runs as its own single-term `search_by_fts` (AND-of-one, leaving
+    /// the shared query builder untouched); results merge by best score so a file
+    /// matching any strong term surfaces. Phase-1 fair FTS baseline, not the
+    /// deferred Phase-2 ripgrep design.
+    #[cfg(not(feature = "test-support"))]
+    fn arm_fts_seed_paths(&self, task: &str, depth: u32) -> Vec<String> {
+        let keywords = query::extract_keywords(task);
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+        let conn = self
+            .conn
+            .lock()
+            .expect("DB lock poisoned (arm_fts_seed_paths)");
+        let mut best: HashMap<String, f32> = HashMap::new();
+        for kw in &keywords {
+            let results = storage::search_by_fts(
+                &conn,
+                &[kw.as_str()],
+                None,
+                &HashSet::new(),
+                None,
+                depth,
+                &[],
+            )
+            .unwrap_or_default();
+            for r in results {
+                best.entry(r.chunk.file_path)
+                    .and_modify(|s| {
+                        if r.score > *s {
+                            *s = r.score;
+                        }
+                    })
+                    .or_insert(r.score);
+            }
+        }
+        drop(conn);
+        let mut ranked: Vec<(String, f32)> = best.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked
+            .into_iter()
+            .take(depth as usize)
+            .map(|(p, _)| p)
+            .collect()
+    }
+
+    /// Measures seed-stage retrieval for both arms (embedding vs FTS5-only)
+    /// against every bundled GT entry whose repo matches `repo`, and renders the
+    /// arm-comparison report (#250 Phase 1). Returns the rendered text and a
+    /// degraded flag set when the embedding arm could not run (model
+    /// unavailable); the caller exits non-zero when degraded, mirroring
+    /// [`Yomu::recall`].
+    ///
+    /// The no-embed arm is the deletion test: the FTS5 keyword path the
+    /// production seed inference uses only as a fallback, run here as a
+    /// standalone arm. The embedding-skip stays inside this maintainer
+    /// diagnostic (ADR-0005 / OUTCOME.md:39), never a product CLI flag. A
+    /// degraded embedding arm records an empty candidate list rather than
+    /// falling back to FTS, so the two arms stay isolated.
+    #[cfg(not(feature = "test-support"))]
+    pub fn recall_arms(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
+        let gt = corpus::load_bundled()
+            .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
+        let depth = ARM_CANDIDATE_DEPTH;
+        let k = depth as usize;
+        let mut entries = Vec::new();
+        let mut degraded = false;
+        for entry in gt.entries.iter().filter(|e| e.repo == repo) {
+            let class = recall::classify_query(&entry.task, &entry.seed);
+            let seed_set: HashSet<String> = entry.seed.iter().cloned().collect();
+            let must_set: HashSet<String> =
+                entry.must_include.iter().map(|f| f.path.clone()).collect();
+
+            let emb_ranked = match self.embedder_seed_paths(&entry.task, depth) {
+                Ok(paths) => paths,
+                Err(reason) => {
+                    record_degraded(reason, "recall arms: embedding");
+                    degraded = true;
+                    Vec::new()
+                }
+            };
+            let fts_ranked = self.arm_fts_seed_paths(&entry.task, depth);
+
+            entries.push(recall::ArmEntryReport {
+                id: entry.id.clone(),
+                arm: recall::Arm::Embedding,
+                class,
+                seed_rank: recall::hit_rank(&emb_ranked, &seed_set, k),
+                must_recall: recall::recall_at_k(&emb_ranked, &must_set, k),
+            });
+            entries.push(recall::ArmEntryReport {
+                id: entry.id.clone(),
+                arm: recall::Arm::NoEmbed,
+                class,
+                seed_rank: recall::hit_rank(&fts_ranked, &seed_set, k),
+                must_recall: recall::recall_at_k(&fts_ranked, &must_set, k),
+            });
+        }
+        let report = recall::ArmComparisonReport::new(
+            repo.to_owned(),
+            entries,
+            recall::ARM_K_VALUES,
+            degraded,
+        );
+        let text = if json {
+            recall::render_arm_json(&report)
+        } else {
+            recall::render_arm_plain(&report)
+        };
+        Ok((text, degraded))
     }
 }
 
