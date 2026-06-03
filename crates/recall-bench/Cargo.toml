@@ -8,3 +8,7 @@ publish = false
 [dependencies]
 yomu = { path = "../.." }
 clap = { version = "4", features = ["derive"] }
+# Embedder runs mlx forward in a self-reexec probe subprocess; the binary must
+# answer the probe before clap parsing, exactly as the yomu binary's main does.
+# Rev is locked to yomu's rurico (same git source must resolve to one rev).
+rurico = { git = "https://github.com/thkt/rurico", rev = "adbe3a8" }
