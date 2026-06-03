@@ -1,4 +1,5 @@
 use super::*;
+use std::assert_matches;
 use std::io::Cursor;
 
 /// A reader whose every `read` fails, for exercising the stdin I/O error path.
@@ -39,7 +40,7 @@ fn resolve_query_with_none_terminal_returns_no_query() {
     let mut stdin = Cursor::new(b"");
     let result = resolve_query_with(None, &mut stdin, true);
     let err = result.unwrap_err();
-    assert!(matches!(err, QueryError::NoQuery(_)));
+    assert_matches!(err, QueryError::NoQuery(_));
     assert!(err.to_string().contains("query required"));
 }
 
@@ -49,7 +50,7 @@ fn resolve_query_with_empty_stdin_returns_no_query() {
     let mut stdin = Cursor::new(b"   ");
     let result = resolve_query_with(None, &mut stdin, false);
     let err = result.unwrap_err();
-    assert!(matches!(err, QueryError::NoQuery(_)));
+    assert_matches!(err, QueryError::NoQuery(_));
     assert!(err.to_string().contains("empty query"));
 }
 
@@ -59,7 +60,7 @@ fn resolve_query_with_empty_stdin_returns_no_query() {
 fn resolve_query_with_io_error_returns_io_variant() {
     let result = resolve_query_with(None, &mut FailingReader, false);
     let err = result.unwrap_err();
-    assert!(matches!(err, QueryError::Io(_)));
+    assert_matches!(err, QueryError::Io(_));
     assert!(err.to_string().contains("failed to read from stdin"));
 }
 
@@ -100,17 +101,17 @@ fn resolve_search_query_with_no_from_present_returns_some() {
 fn resolve_search_query_with_no_from_missing_is_error() {
     let mut stdin = Cursor::new(b"");
     let result = resolve_search_query_with(None, false, &mut stdin, true);
-    assert!(matches!(
+    assert_matches!(
         result.unwrap_err(),
         QueryError::NoQuery(NoQueryReason::Terminal)
-    ));
+    );
 }
 
 // T-717: resolve_search_query_with — a stdin I/O failure propagates as Io
 #[test]
 fn resolve_search_query_with_io_error_propagates() {
     let result = resolve_search_query_with(None, false, &mut FailingReader, false);
-    assert!(matches!(result.unwrap_err(), QueryError::Io(_)));
+    assert_matches!(result.unwrap_err(), QueryError::Io(_));
 }
 
 // T-718: resolve_search_query_with — no --from + empty piped stdin is EmptyStdin
@@ -118,21 +119,21 @@ fn resolve_search_query_with_io_error_propagates() {
 fn resolve_search_query_with_no_from_empty_stdin_is_empty_stdin() {
     let mut stdin = Cursor::new(b"   ");
     let result = resolve_search_query_with(None, false, &mut stdin, false);
-    assert!(matches!(
+    assert_matches!(
         result.unwrap_err(),
         QueryError::NoQuery(NoQueryReason::EmptyStdin)
-    ));
+    );
 }
 
 // T-719: missing_query_kind maps each NoQueryReason to its input error
 #[test]
 fn missing_query_kind_maps_each_reason() {
-    assert!(matches!(
+    assert_matches!(
         missing_query_kind(&NoQueryReason::Terminal),
         InvalidInputKind::QueryOrFromRequired
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         missing_query_kind(&NoQueryReason::EmptyStdin),
         InvalidInputKind::EmptyQuery
-    ));
+    );
 }
