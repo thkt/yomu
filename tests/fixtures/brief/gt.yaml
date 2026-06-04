@@ -267,3 +267,167 @@ entries:
         weight: 3
       - path: src/model/reranker.rs
         weight: 2
+
+  # --- #250 Phase 1b: semantic-far entries (target-blind sourcing) ---
+  #
+  # Tasks below were drafted from each repo's user-visible behavior BEFORE any
+  # seed/must_include assignment (sourcing order: task -> source -> seed), using
+  # no code identifiers or mechanism names in the task text. Seeds were then
+  # reasoned from source per AS-004, and classify_query (src/recall/arms.rs)
+  # must independently report semantic-far for each (enforced by a corpus test
+  # in tests/brief_recall.rs). A draft that came out identifier-near would be
+  # dropped, never reworded to dodge path tokens.
+
+  - id: rurico-text-to-vectors
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: text-vectorization
+    task: >-
+      How does the tool turn a passage of text into numbers that can be compared
+      for similarity?
+    seed:
+      - src/embed/mlx.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). The transformation the task asks about lives
+      in embed/mlx.rs (tokenization + batched MLX forward). A complete answer
+      spans embed/embedder.rs (the public entry wrapping the backend, reverse
+      dependent), embed/pooling.rs (token states to one normalized vector) and
+      modernbert/model.rs (the transformer), both 2-hop forward — outside the
+      1-hop forward closure (BR-002).
+    must_include:
+      - path: src/embed/mlx.rs
+        weight: 5
+      - path: src/embed/embedder.rs
+        weight: 3
+      - path: src/embed/pooling.rs
+        weight: 3
+      - path: src/modernbert/model.rs
+        weight: 2
+
+  - id: rurico-candidate-reordering
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: relevance-ordering
+    task: >-
+      Given a question and a set of candidate snippets, how are the candidates
+      re-ordered so the most relevant come first?
+    seed:
+      - src/reranker/mlx.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). The re-ordering happens in the cross-encoder
+      scoring path of reranker/mlx.rs. A complete answer spans reranker.rs (the
+      public trait and entry, forward-1), plus modernbert/model.rs (the
+      transformer that scores) and reranker/lazy.rs (the deferred-init wrapper
+      callers go through), both 2-hop forward — outside the 1-hop forward
+      closure (BR-002).
+    must_include:
+      - path: src/reranker/mlx.rs
+        weight: 5
+      - path: src/reranker.rs
+        weight: 3
+      - path: src/modernbert/model.rs
+        weight: 3
+      - path: src/reranker/lazy.rs
+        weight: 2
+
+  - id: rurico-downloaded-weights-integrity
+    repo: rurico
+    rev: 1d6650a86ffd5c377fd4b50e171edfc89e39c3f0
+    domain: weight-integrity
+    task: >-
+      After the pretrained weights are downloaded, how does the CLI make sure
+      they are complete and usable before running anything?
+    seed:
+      - src/artifacts.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). The completeness/usability check is
+      artifacts.rs (kind markers, VerifiedArtifacts: existence, config parse,
+      tokenizer load, weight-kind match). A complete answer spans model_io.rs
+      (the artifact trait it builds on, forward-1), model_lifecycle.rs (wires
+      download to verification, reverse dependent) and modernbert/config.rs (the
+      config.json validation target, 2-hop forward) — the latter two outside the
+      1-hop forward closure (BR-002).
+    must_include:
+      - path: src/artifacts.rs
+        weight: 5
+      - path: src/model_lifecycle.rs
+        weight: 3
+      - path: src/model_io.rs
+        weight: 3
+      - path: src/modernbert/config.rs
+        weight: 2
+
+  - id: amici-quality-regression-detection
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: regression-detection
+    task: >-
+      How do we know whether a code change made retrieval quality worse than it
+      was before?
+    seed:
+      - src/eval/oracle_gap.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). The comparator that answers "worse than
+      before" is oracle_gap.rs (snapshot comparison plus the AC4 regression gate
+      that exits EXIT_REGRESSION). A complete answer spans eval/baseline.rs (the
+      captured snapshots being compared, forward-1), eval/metrics.rs (the
+      MetricResult values compared, forward-1) and bin/eval_harness.rs (runs the
+      comparison in CI, reverse dependent — outside the 1-hop forward closure,
+      BR-002).
+    must_include:
+      - path: src/eval/oracle_gap.rs
+        weight: 5
+      - path: src/eval/baseline.rs
+        weight: 3
+      - path: src/bin/eval_harness.rs
+        weight: 2
+      - path: src/eval/metrics.rs
+        weight: 2
+
+  - id: amici-typo-tolerant-search
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: fuzzy-matching
+    task: >-
+      When a query contains a typo or only part of a word, how can matching
+      entries still be found?
+    seed:
+      - src/storage/fts.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). Partial/typo tolerance comes from the
+      trigram tokenizer adaptation in storage/fts.rs (clean_for_trigram). A
+      complete answer spans storage.rs (re-exports the cleaner, reverse
+      dependent) and eval/pipeline.rs (composes the search that calls it,
+      reverse dependent) — fts.rs is a leaf, so both lie outside the 1-hop
+      forward closure (BR-002).
+    must_include:
+      - path: src/storage/fts.rs
+        weight: 5
+      - path: src/eval/pipeline.rs
+        weight: 3
+      - path: src/storage.rs
+        weight: 2
+
+  - id: amici-scoring-against-known-answers
+    repo: amici
+    rev: ae8c0682c4c5f663644f4cd9f9cbcf6b392904da
+    domain: answer-scoring
+    task: >-
+      How is the quality of retrieved results scored against a set of
+      known-correct answers?
+    seed:
+      - src/eval/metrics.rs
+    rationale: >-
+      Target-blind (#250 Phase 1b). The scoring itself is eval/metrics.rs
+      (Recall@k / MRR@k / nDCG@k over graded relevance). A complete answer spans
+      eval/fixture.rs (loads the known-correct relevance maps the scores are
+      computed against) and bin/eval_harness.rs (runs the scoring, reverse
+      dependent). metrics.rs is a leaf, so both lie outside the 1-hop forward
+      closure (BR-002).
+    must_include:
+      - path: src/eval/metrics.rs
+        weight: 5
+      - path: src/eval/fixture.rs
+        weight: 3
+      - path: src/bin/eval_harness.rs
+        weight: 2

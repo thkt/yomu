@@ -26,7 +26,7 @@ use tempfile::{TempDir, tempdir};
 
 use yomu::brief::{ChunkInclusionReason, Seed, SeedKind, TaskBrief, expand_plan};
 use yomu::recall::corpus::{GtEntry, canary_violations, load_bundled};
-use yomu::recall::{gate_passes, measure};
+use yomu::recall::{QueryClass, classify_query, gate_passes, measure};
 use yomu::storage::open_db;
 
 /// Production `brief` defaults (src/main.rs); recall is measured at these so the
@@ -335,4 +335,27 @@ fn check_rev_rejects_mismatch_and_absence() {
         check_rev("rurico", rurico_rev, Some(rurico_rev)).is_ok(),
         "a HEAD matching the pinned rev must pass"
     );
+}
+
+// T-037: #250 Phase 1b — each repo carries enough genuine semantic-far entries
+// for a per-class arm comparison (n >= 3 directional floor), checked through
+// the same classifier `recall_arms` uses, so the class cannot silently vanish
+// from the corpus as entries are edited. Pure over the bundled corpus (no
+// index needed).
+#[test]
+fn corpus_has_semantic_far_entries_per_repo() {
+    let by_repo = entries_by_repo(load_bundled().expect("bundled corpus").entries);
+    assert!(!by_repo.is_empty(), "bundled corpus has no entries");
+    for (repo, (_rev, entries)) in &by_repo {
+        let far: Vec<&str> = entries
+            .iter()
+            .filter(|e| classify_query(&e.task, &e.seed) == QueryClass::SemanticFar)
+            .map(|e| e.id.as_str())
+            .collect();
+        assert!(
+            far.len() >= 3,
+            "repo {repo} has {} semantic-far entries ({far:?}); the arm comparison needs >= 3",
+            far.len()
+        );
+    }
 }

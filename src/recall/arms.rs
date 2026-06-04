@@ -75,19 +75,31 @@ fn seed_terms(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Strips trailing ASCII digits so a versioned identifier matches its base
+/// (`fts5` task term vs `fts` seed term). A digits-only term stays as-is so it
+/// cannot collapse to the empty string and match everything.
+fn strip_digit_suffix(term: &str) -> &str {
+    let stripped = term.trim_end_matches(|c: char| c.is_ascii_digit());
+    if stripped.is_empty() { term } else { stripped }
+}
+
 /// Classifies `task` by identifier-distance to `seeds` (deterministic, #250).
 ///
 /// Returns [`QueryClass::IdentifierNear`] when the task and a seed path share a
 /// term after both sides pass through [`extract_keywords`] (same split + stem +
-/// stopword filter), else [`QueryClass::SemanticFar`]. Normalizing both sides
-/// fixes single/plural and camel-split mismatches (`artifacts` seed vs
-/// `artifact` task). With no seeds (nothing to match) the query is `SemanticFar`.
+/// stopword filter) and [`strip_digit_suffix`], else [`QueryClass::SemanticFar`].
+/// Normalizing both sides fixes single/plural, camel-split, and version-suffix
+/// mismatches (`artifacts` seed vs `artifact` task, `FTS5` task vs `fts` seed).
+/// With no seeds (nothing to match) the query is `SemanticFar`.
 pub fn classify_query(task: &str, seeds: &[String]) -> QueryClass {
-    let task_terms: HashSet<String> = extract_keywords(task).into_iter().collect();
+    let task_terms: HashSet<String> = extract_keywords(task)
+        .into_iter()
+        .map(|term| strip_digit_suffix(&term).to_owned())
+        .collect();
     if seeds
         .iter()
         .flat_map(|path| seed_terms(path))
-        .any(|term| task_terms.contains(&term))
+        .any(|term| task_terms.contains(strip_digit_suffix(&term)))
     {
         QueryClass::IdentifierNear
     } else {

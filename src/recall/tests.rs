@@ -423,3 +423,34 @@ fn arm_comparison_report_json_and_plain() {
         "plain states the N limitation, got: {plain}"
     );
 }
+
+// T-035: classify_query_matches_versioned_identifier_to_base
+#[test]
+fn classify_query_near_when_task_uses_versioned_identifier() {
+    // The real-corpus false-far case (#250 Phase 1b): the task says FTS5, the
+    // seed path token is fts. Trailing digits are stripped on both sides.
+    let class = classify_query(
+        "Optimize the FTS5 trigram cleaner fallback",
+        &vec_s(&["src/storage/fts.rs"]),
+    );
+    assert_eq!(
+        class,
+        QueryClass::IdentifierNear,
+        "fts5 strips its digit suffix and matches the fts seed token"
+    );
+}
+
+// T-036: classify_query_digits_only_term_does_not_match_everything
+#[test]
+fn classify_query_far_when_only_shared_term_is_digits() {
+    // A digits-only task term must not collapse to "" and spuriously match.
+    let class = classify_query(
+        "Bump the limit to 42 entries",
+        &vec_s(&["src/auth/login.rs"]),
+    );
+    assert_eq!(
+        class,
+        QueryClass::SemanticFar,
+        "a digits-only term must not match a digit-stripped seed token"
+    );
+}
