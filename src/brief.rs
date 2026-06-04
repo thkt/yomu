@@ -72,10 +72,37 @@ pub struct BriefChunk {
     pub injection_flags: Option<Vec<String>>,
 }
 
+/// Why a brief run is degraded. One run can carry several causes in stage
+/// order (seed inference before closure expansion); `render_plain` names each
+/// so an empty closure is no longer misattributed to the FTS fallback (#238).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DegradedCause {
+    /// Seed inference fell back to FTS-only (embedding model unavailable).
+    SeedFtsFallback,
+    /// No file seeds reached expansion (inference resolved none).
+    EmptySeeds,
+    /// Seeds expanded to zero chunks (not in index, or no dependencies).
+    EmptyClosure,
+}
+
+impl DegradedCause {
+    fn describe(self) -> &'static str {
+        match self {
+            Self::SeedFtsFallback => "FTS-only seed selection",
+            Self::EmptySeeds => "no file seeds resolved",
+            Self::EmptyClosure => "seeds expanded to zero chunks (not in index or no dependencies)",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BriefOutput {
     pub chunks: Vec<BriefChunk>,
-    pub degraded: bool,
+    /// Degradation causes in stage order; empty means a healthy run. The
+    /// boolean view ([`BriefOutput::degraded`]) derives from this so flag and
+    /// cause cannot drift apart.
+    pub degraded_causes: Vec<DegradedCause>,
     pub total_chunks: u32,
     pub total_bytes: u32,
     /// Distinct files reachable in the closure after the test filter and before
@@ -83,6 +110,14 @@ pub struct BriefOutput {
     /// is the must-include weight reachable here, isolating the cap's effect
     /// from the closure's coverage. Not serialized in the CLI output.
     pub reachable_files: Vec<String>,
+}
+
+impl BriefOutput {
+    /// Whether any degradation cause was recorded. JSON output and the recall
+    /// aggregate keep consuming this boolean view.
+    pub fn degraded(&self) -> bool {
+        !self.degraded_causes.is_empty()
+    }
 }
 
 fn collect_seed_paths(task: &TaskBrief) -> Vec<String> {
@@ -207,7 +242,7 @@ struct JsonChunk<'a> {
 /// no pretty-printing). See `JsonOutput` / `JsonChunk` for the shape.
 pub fn render_json(output: &BriefOutput) -> String {
     let json = JsonOutput {
-        degraded: output.degraded,
+        degraded: output.degraded(),
         chunks: output
             .chunks
             .iter()
@@ -230,13 +265,21 @@ pub fn render_json(output: &BriefOutput) -> String {
     serde_json::to_string(&json).expect("BriefOutput JSON serialization is infallible")
 }
 
-const DEGRADED_NOTE: &str = "Note: degraded mode — FTS-only seed selection";
+/// Renders the degradation advisory naming every recorded cause in stage
+/// order, or `None` for a healthy run. Cause-specific wording is the #238
+/// fix: a one-size note misattributed empty closures to the FTS fallback.
+fn degraded_note(causes: &[DegradedCause]) -> Option<String> {
+    if causes.is_empty() {
+        return None;
+    }
+    let reasons: Vec<&str> = causes.iter().map(|c| c.describe()).collect();
+    Some(format!("Note: degraded mode — {}", reasons.join("; ")))
+}
 
 /// Plain CLI rendering (FR-011 + FR-014): each chunk becomes
 /// `<file_path>:<start_line>-<end_line>\n<content>`, separated by `\n---\n`.
-/// When `output.degraded` is true, prepends an advisory line so the caller
-/// knows seed selection fell back to FTS-only. Empty + non-degraded renders
-/// to an empty string.
+/// A degraded run prepends an advisory line naming each recorded cause
+/// ([`degraded_note`]). Empty + non-degraded renders to an empty string.
 pub fn render_plain(output: &BriefOutput) -> String {
     let body = output
         .chunks
@@ -249,10 +292,10 @@ pub fn render_plain(output: &BriefOutput) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n---\n");
-    match (output.degraded, body.is_empty()) {
-        (true, true) => DEGRADED_NOTE.to_owned(),
-        (true, false) => format!("{DEGRADED_NOTE}\n{body}"),
-        (false, _) => body,
+    match (degraded_note(&output.degraded_causes), body.is_empty()) {
+        (Some(note), true) => note,
+        (Some(note), false) => format!("{note}\n{body}"),
+        (None, _) => body,
     }
 }
 
@@ -262,7 +305,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
         tracing::warn!("expand_plan called with empty seeds; returning empty");
         return Ok(BriefOutput {
             chunks: Vec::new(),
-            degraded: true,
+            degraded_causes: vec![DegradedCause::EmptySeeds],
             total_chunks: 0,
             total_bytes: 0,
             reachable_files: Vec::new(),
@@ -333,7 +376,7 @@ pub fn expand_plan(conn: &Connection, task: &TaskBrief) -> Result<BriefOutput, S
 
     Ok(BriefOutput {
         chunks: ordered,
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks,
         total_bytes,
         reachable_files,

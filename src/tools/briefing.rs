@@ -84,12 +84,13 @@ impl Yomu {
     }
 
     /// Runs `brief` over `task`, inferring file seeds from `task.task` when none
-    /// are given (seed-less), and returns the closure output with `degraded` set
-    /// when seed inference fell back or the closure was empty. Shared by `brief`
-    /// (renders) and `recall` (measures); callers validate `task` first.
+    /// are given (seed-less), and returns the closure output with a degradation
+    /// cause recorded when seed inference fell back or the closure was empty.
+    /// Shared by `brief` (renders) and `recall` (measures); callers validate
+    /// `task` first.
     fn brief_output(&self, task: &brief::TaskBrief) -> Result<brief::BriefOutput, YomuError> {
         let mut effective = task.clone();
-        let mut degraded = false;
+        let mut seed_fallback = false;
         if effective.seeds.is_empty() {
             let (paths, seed_degraded) =
                 self.infer_seed_paths(&effective.task, BRIEF_MAX_INFERRED_SEEDS);
@@ -100,19 +101,35 @@ impl Yomu {
                     value,
                 })
                 .collect();
-            degraded |= seed_degraded;
+            seed_fallback |= seed_degraded;
         }
 
         let mut output = self.with_db(|conn| brief::expand_plan(conn, &effective))?;
-        output.degraded |= degraded;
+        if seed_fallback {
+            // Front insert, not push: expand_plan may already have recorded
+            // EmptySeeds, but seed inference is the earlier stage, so its
+            // cause must lead the note (DegradedCause stage-order contract).
+            output
+                .degraded_causes
+                .insert(0, brief::DegradedCause::SeedFtsFallback);
+        }
 
         if output.chunks.is_empty() {
             tracing::warn!(
                 seeds = effective.seeds.len(),
-                degraded = output.degraded,
+                degraded = output.degraded(),
                 "brief produced zero chunks"
             );
-            output.degraded = true;
+            // EmptySeeds already explains a zero-chunk closure; recording
+            // EmptyClosure on top would just restate it.
+            if !output
+                .degraded_causes
+                .contains(&brief::DegradedCause::EmptySeeds)
+            {
+                output
+                    .degraded_causes
+                    .push(brief::DegradedCause::EmptyClosure);
+            }
         }
         Ok(output)
     }
@@ -183,7 +200,7 @@ impl Yomu {
                 output.chunks.iter().map(|c| c.file_path.clone()).collect();
             let reachable: HashSet<String> = output.reachable_files.iter().cloned().collect();
             let mut report = recall::measure(&entry.must_include, &out_files, &reachable);
-            report.degraded |= output.degraded;
+            report.degraded |= output.degraded();
             entries.push(recall::EntryReport {
                 id: entry.id.clone(),
                 report,

@@ -20,9 +20,10 @@ fn expand_plan_empty_seeds_returns_empty_degraded() {
     let task = task_with_seeds(vec![], 1);
     let output = expand_plan(&conn, &task).unwrap();
     assert!(output.chunks.is_empty(), "empty seeds yield empty chunks");
-    assert!(
-        output.degraded,
-        "empty seeds must mark degraded as invariant violation"
+    assert_eq!(
+        output.degraded_causes,
+        vec![DegradedCause::EmptySeeds],
+        "empty seeds must record the EmptySeeds cause (#238)"
     );
     assert_eq!(output.total_chunks, 0);
     assert_eq!(output.total_bytes, 0);
@@ -281,7 +282,7 @@ fn render_json_emits_spec_shape() {
             source_kind: None,
             injection_flags: None,
         }],
-        degraded: true,
+        degraded_causes: vec![DegradedCause::SeedFtsFallback],
         total_chunks: 1,
         total_bytes: 11,
         reachable_files: Vec::new(),
@@ -317,7 +318,7 @@ fn render_json_includes_seed_and_modkinds() {
             chunk(ChunkInclusionReason::Sibling),
             chunk(ChunkInclusionReason::ModDecl),
         ],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 3,
         total_bytes: 0,
         reachable_files: Vec::new(),
@@ -326,6 +327,10 @@ fn render_json_includes_seed_and_modkinds() {
     assert_eq!(parsed["chunks"][0]["included_reason"], "seed");
     assert_eq!(parsed["chunks"][1]["included_reason"], "sibling");
     assert_eq!(parsed["chunks"][2]["included_reason"], "mod-decl");
+    assert_eq!(
+        parsed["degraded"], false,
+        "empty degraded_causes must derive to false in JSON"
+    );
 }
 
 // T-604: render_plain_outputs_separator_and_header
@@ -346,7 +351,7 @@ fn render_plain_outputs_separator_and_header() {
             chunk("src/foo.rs", "fn foo() {}", 10, 12),
             chunk("src/bar.rs", "fn bar() {}", 20, 22),
         ],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 2,
         total_bytes: 0,
         reachable_files: Vec::new(),
@@ -364,7 +369,7 @@ fn render_plain_outputs_separator_and_header() {
 fn render_plain_returns_empty_string_for_empty_output() {
     let output = BriefOutput {
         chunks: vec![],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 0,
         total_bytes: 0,
         reachable_files: Vec::new(),
@@ -386,7 +391,7 @@ fn render_plain_prepends_degraded_note() {
             source_kind: None,
             injection_flags: None,
         }],
-        degraded: true,
+        degraded_causes: vec![DegradedCause::SeedFtsFallback],
         total_chunks: 1,
         total_bytes: 11,
         reachable_files: Vec::new(),
@@ -407,7 +412,7 @@ fn render_plain_prepends_degraded_note() {
 fn render_plain_empty_degraded_returns_only_note() {
     let output = BriefOutput {
         chunks: vec![],
-        degraded: true,
+        degraded_causes: vec![DegradedCause::SeedFtsFallback],
         total_chunks: 0,
         total_bytes: 0,
         reachable_files: Vec::new(),
@@ -415,6 +420,66 @@ fn render_plain_empty_degraded_returns_only_note() {
     assert_eq!(
         render_plain(&output),
         "Note: degraded mode — FTS-only seed selection"
+    );
+}
+
+// T-732: render_plain_empty_closure_names_its_own_cause [#238]
+// An empty closure (seed not in index / no dependencies) must not be
+// misattributed to the FTS seed fallback — the pre-fix note always read
+// "FTS-only seed selection" whatever the cause.
+#[test]
+fn render_plain_empty_closure_names_its_own_cause() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded_causes: vec![DegradedCause::EmptyClosure],
+        total_chunks: 0,
+        total_bytes: 0,
+        reachable_files: Vec::new(),
+    };
+    let rendered = render_plain(&output);
+    assert_eq!(
+        rendered,
+        "Note: degraded mode — seeds expanded to zero chunks (not in index or no dependencies)"
+    );
+    assert!(
+        !rendered.contains("FTS-only"),
+        "empty closure must not be attributed to the FTS fallback: {rendered}"
+    );
+}
+
+// T-735: render_plain_empty_seeds_names_its_own_cause [#238]
+// Seed-less run whose inference resolved nothing: the note names the missing
+// seeds, not the FTS fallback.
+#[test]
+fn render_plain_empty_seeds_names_its_own_cause() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded_causes: vec![DegradedCause::EmptySeeds],
+        total_chunks: 0,
+        total_bytes: 0,
+        reachable_files: Vec::new(),
+    };
+    assert_eq!(
+        render_plain(&output),
+        "Note: degraded mode — no file seeds resolved"
+    );
+}
+
+// T-733: render_plain_joins_multiple_causes_in_stage_order [#238]
+// Seed inference fell back to FTS *and* the resulting closure was empty:
+// both causes are real, so the note names both, seed stage first.
+#[test]
+fn render_plain_joins_multiple_causes_in_stage_order() {
+    let output = BriefOutput {
+        chunks: vec![],
+        degraded_causes: vec![DegradedCause::SeedFtsFallback, DegradedCause::EmptyClosure],
+        total_chunks: 0,
+        total_bytes: 0,
+        reachable_files: Vec::new(),
+    };
+    assert_eq!(
+        render_plain(&output),
+        "Note: degraded mode — FTS-only seed selection; seeds expanded to zero chunks (not in index or no dependencies)"
     );
 }
 
@@ -490,7 +555,7 @@ fn expand_plan_returns_seed_and_forward_chunks() {
     let output = expand_plan(&conn, &task).unwrap();
 
     assert_eq!(output.chunks.len(), 2);
-    assert!(!output.degraded);
+    assert!(!output.degraded());
 
     let by_path: HashMap<&str, &BriefChunk> = output
         .chunks
@@ -606,7 +671,7 @@ fn render_json_emits_per_chunk_injection_flags() {
             source_kind: None,
             injection_flags: Some(vec!["y".to_owned()]),
         }],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 1,
         total_bytes: 11,
         reachable_files: Vec::new(),
@@ -643,7 +708,7 @@ fn render_json_emits_per_chunk_source_kind() {
             source_kind: Some(SourceKind::Src),
             injection_flags: None,
         }],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 1,
         total_bytes: 11,
         reachable_files: Vec::new(),
@@ -672,7 +737,7 @@ fn render_json_skips_source_kind_when_none() {
             source_kind: None,
             injection_flags: None,
         }],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 1,
         total_bytes: 11,
         reachable_files: Vec::new(),
@@ -690,7 +755,7 @@ fn render_json_skips_source_kind_when_none() {
 fn render_json_emits_injection_check_even_with_empty_chunks() {
     let output = BriefOutput {
         chunks: vec![],
-        degraded: false,
+        degraded_causes: Vec::new(),
         total_chunks: 0,
         total_bytes: 0,
         reachable_files: Vec::new(),
@@ -759,7 +824,7 @@ fn expand_plan_queries_import_counts_when_over_cap() {
         "BR-001: max_chunks=1 must drop the 3 seed chunks down to a single survivor"
     );
     assert_eq!(output.total_chunks, 1);
-    assert!(!output.degraded, "a satisfiable seed must not degrade");
+    assert!(!output.degraded(), "a satisfiable seed must not degrade");
 }
 
 // T-615: expand_plan_keeps_explicit_test_seed [#236]
@@ -788,7 +853,7 @@ fn expand_plan_keeps_explicit_test_seed() {
     );
     assert_eq!(output.chunks[0].file_path, "src/feature/tests.rs");
     assert!(
-        !output.degraded,
+        !output.degraded(),
         "a satisfiable explicit seed must not degrade"
     );
 }
