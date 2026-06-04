@@ -31,7 +31,9 @@ pub(crate) fn fts_normalization() -> QueryNormalizationConfig {
     QueryNormalizationConfig::default()
 }
 
-pub(crate) use amici::storage::{anon_placeholders, as_sql_params, in_placeholders};
+pub(crate) use amici::storage::{
+    anon_placeholders, as_sql_params, collect_rows, fetch_by_in_clause, in_placeholders,
+};
 
 /// SQL predicate selecting embeddable chunks, parameterized by table alias.
 ///
@@ -99,7 +101,7 @@ pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
 pub fn get_all_file_paths(conn: &Connection) -> Result<HashSet<String>, StorageError> {
     let mut stmt = conn.prepare_cached("SELECT DISTINCT file_path FROM chunks")?;
     let paths = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    paths.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
+    collect_rows(paths)
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use amici::storage::filter::{append_in_filter, append_like_prefix_filter};
 use rusqlite::{Connection, Error as RusqliteError, Row, params, params_from_iter, types::ToSql};
 
 use crate::storage::{
-    Chunk, ChunkType, SourceKind, StorageError, anon_placeholders, in_placeholders,
+    Chunk, ChunkType, SourceKind, StorageError, anon_placeholders, collect_rows, fetch_by_in_clause,
 };
 
 /// Deserializes a [`Chunk`] from a row whose columns at `offset..=offset + 8`
@@ -101,26 +101,21 @@ pub fn get_chunks_by_ids(
     let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
         Ok((row.get::<_, i64>(0)?, chunk_from_row(row, 1)?))
     })?;
-    rows.collect::<Result<HashMap<_, _>, _>>()
-        .map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Bulk-fetch every Chunk (with body content) belonging to the given files.
 /// Output is sorted by `(file_path, start_line)` so brief expansion can apply
 /// topological ordering on top without an extra sort pass.
 pub fn get_chunks_for_files(conn: &Connection, paths: &[&str]) -> Result<Vec<Chunk>, StorageError> {
-    if paths.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = in_placeholders(paths.len());
-    let sql = format!(
+    fetch_by_in_clause(
+        conn,
+        paths,
         "SELECT file_path, chunk_type, name, content, start_line, end_line, parent_chunk_id, source_kind, injection_flags
          FROM chunks WHERE file_path IN ({placeholders})
-         ORDER BY file_path, start_line"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(paths.iter()), |row| chunk_from_row(row, 0))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+         ORDER BY file_path, start_line",
+        |row| chunk_from_row(row, 0),
+    )
 }
 
 pub fn get_chunks_for_from_target(

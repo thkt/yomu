@@ -6,7 +6,8 @@ use rurico::storage::{fts_quote, prepare_match_query};
 use rusqlite::{Connection, params, params_from_iter, types::ToSql};
 
 use super::{
-    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, fts_normalization,
+    Chunk, ChunkType, MatchSource, SearchResult, StorageError, anon_placeholders, collect_rows,
+    fts_normalization,
 };
 
 mod fetch;
@@ -40,7 +41,7 @@ fn knn_only(conn: &Connection, embedding: &[f32], k: u32) -> Result<Vec<(i64, f3
     let rows = stmt.query_map(params![query_bytes, k], |row| {
         Ok((row.get(0)?, row.get(1)?))
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Assemble [`SearchResult`]s from a `chunk_id → min distance` map and a
@@ -183,7 +184,7 @@ pub fn search_by_fts(
         })
     })?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_keyword_doc_frequencies(
