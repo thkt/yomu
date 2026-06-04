@@ -4,27 +4,20 @@ use rurico::embed::ChunkedEmbedding;
 use rusqlite::Connection;
 
 use super::{
-    ChunkType, StorageError, anon_placeholders, as_sql_params, embeddable_predicate,
-    in_placeholders, insert_sub_embeddings,
+    ChunkType, StorageError, anon_placeholders, as_sql_params, collect_rows, embeddable_predicate,
+    fetch_by_in_clause, insert_sub_embeddings,
 };
 
 fn existing_embedded_ids(
     conn: &Connection,
     chunk_ids: &[i64],
 ) -> Result<HashSet<i64>, StorageError> {
-    if chunk_ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let sql = format!(
-        "SELECT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({})",
-        in_placeholders(chunk_ids.len())
-    );
-    let params = as_sql_params(chunk_ids);
-    let mut stmt = conn.prepare(&sql)?;
-    let ids = stmt
-        .query_map(params.as_slice(), |row| row.get::<_, i64>(0))?
-        .collect::<Result<HashSet<_>, _>>()?;
-    Ok(ids)
+    fetch_by_in_clause(
+        conn,
+        chunk_ids,
+        "SELECT chunk_id FROM embedded_chunk_ids WHERE chunk_id IN ({placeholders})",
+        |row| row.get(0),
+    )
 }
 
 pub fn add_chunked_embeddings(
@@ -78,7 +71,7 @@ pub fn get_unembedded_chunks_for_file(
             parent_name: row.get(4)?,
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_imports_for_file(conn: &Connection, file_path: &str) -> Result<String, StorageError> {
@@ -115,7 +108,7 @@ pub fn get_files_with_chunk_types(
     let rows = stmt.query_map(as_sql_params(&params).as_slice(), |row| {
         row.get::<_, String>(0)
     })?;
-    rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Counts chunks on the embed worklist ([`embeddable_predicate`], the same
@@ -190,7 +183,7 @@ pub fn get_unembedded_file_paths(conn: &Connection) -> Result<Vec<(String, u32)>
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 #[cfg(test)]

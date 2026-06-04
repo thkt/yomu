@@ -4,7 +4,10 @@ use rusqlite::{Connection, params_from_iter};
 
 #[cfg(test)]
 use super::Reference;
-use super::{ChunkType, RefKind, StorageError, anon_placeholders, as_sql_params, in_placeholders};
+use super::{
+    ChunkType, RefKind, StorageError, anon_placeholders, as_sql_params, collect_rows,
+    fetch_by_in_clause, in_placeholders,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dependent {
@@ -78,7 +81,7 @@ pub fn get_transitive_dependents(
             depth: row.get(1)?,
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Returns every `(source_file, target_file)` edge where both endpoints are
@@ -102,7 +105,7 @@ pub fn get_edges_among_files(
     let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Forward closure: files that `seed` transitively depends on, ordered by
@@ -166,7 +169,7 @@ pub fn get_transitive_dependencies_multi(
             depth: row.get(1)?,
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 /// Returns every direct (depth=1) reference edge that points at `target_file`.
@@ -198,7 +201,7 @@ pub fn get_direct_references(
             via_symbol,
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_symbol_dependents(
@@ -213,7 +216,7 @@ pub fn get_symbol_dependents(
     let rows = stmt.query_map(rusqlite::params![target_file, symbol_name], |row| {
         row.get::<_, String>(0)
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
@@ -226,7 +229,7 @@ pub fn get_reference_count(conn: &Connection) -> Result<u32, StorageError> {
 pub fn get_files_by_import_count(conn: &Connection) -> Result<Vec<String>, StorageError> {
     let mut stmt = conn.prepare_cached(SQL_FILES_BY_IMPORT_COUNT)?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_import_counts(
@@ -255,46 +258,31 @@ pub fn get_import_counts(
     let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
     })?;
-    rows.collect::<Result<HashMap<_, _>, _>>()
-        .map_err(Into::into)
+    collect_rows(rows)
 }
 
 pub fn get_file_mtimes(
     conn: &Connection,
     file_paths: &[&str],
 ) -> Result<HashMap<String, i64>, StorageError> {
-    if file_paths.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let placeholders = in_placeholders(file_paths.len());
-    let sql = format!(
-        "SELECT file_path, mtime_epoch FROM file_context WHERE file_path IN ({placeholders}) AND mtime_epoch IS NOT NULL"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-    rows.collect::<Result<HashMap<_, _>, _>>()
-        .map_err(Into::into)
+    fetch_by_in_clause(
+        conn,
+        file_paths,
+        "SELECT file_path, mtime_epoch FROM file_context WHERE file_path IN ({placeholders}) AND mtime_epoch IS NOT NULL",
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
 }
 
 pub fn get_file_contexts(
     conn: &Connection,
     file_paths: &[&str],
 ) -> Result<HashMap<String, String>, StorageError> {
-    if file_paths.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let placeholders = in_placeholders(file_paths.len());
-    let sql = format!(
-        "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(as_sql_params(file_paths).as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    rows.collect::<Result<HashMap<_, _>, _>>()
-        .map_err(Into::into)
+    fetch_by_in_clause(
+        conn,
+        file_paths,
+        "SELECT file_path, imports_text FROM file_context WHERE file_path IN ({placeholders})",
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
 }
 
 pub fn get_file_siblings(
@@ -371,5 +359,5 @@ pub fn get_dependents(
             depth: 1,
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    collect_rows(rows)
 }
