@@ -346,6 +346,50 @@ fn parse_inline_type_specifier() {
     assert_eq!(named_spec.kind, ImportKind::Named);
 }
 
+// T-725: parse_mixed_default_and_named_import
+#[test]
+fn parse_mixed_default_and_named_import() {
+    let source = "import D, { N } from './mod';";
+    let result = parse_structured_imports(source, "tsx");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].source, "./mod");
+    assert_eq!(result[0].specifiers.len(), 2);
+    assert_eq!(result[0].specifiers[0].name, "D");
+    assert_eq!(result[0].specifiers[0].kind, ImportKind::Default);
+    assert_eq!(result[0].specifiers[0].alias, None);
+    assert_eq!(result[0].specifiers[1].name, "N");
+    assert_eq!(result[0].specifiers[1].kind, ImportKind::Named);
+    assert_eq!(result[0].specifiers[1].alias, None);
+}
+
+// T-726: parse_inline_type_specifier_with_alias
+#[test]
+fn parse_inline_type_specifier_with_alias() {
+    let source = "import { type T as A } from './types';";
+    let result = parse_structured_imports(source, "tsx");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].specifiers.len(), 1);
+    assert_eq!(result[0].specifiers[0].name, "T");
+    assert_eq!(result[0].specifiers[0].alias, Some("A".to_owned()));
+    assert_eq!(result[0].specifiers[0].kind, ImportKind::TypeOnly);
+}
+
+// T-727: parse_type_namespace_import_keeps_namespace_kind
+#[test]
+fn parse_type_namespace_import_keeps_namespace_kind() {
+    // `import type * as NS` stays Namespace (not TypeOnly): the graph layer
+    // maps Namespace to via_symbol = None ("no specific symbol"), which is
+    // the correct downstream semantics for a star import; flipping the kind
+    // to TypeOnly would leak "*" as a symbol name.
+    let source = "import type * as NS from './types';";
+    let result = parse_structured_imports(source, "tsx");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].specifiers.len(), 1);
+    assert_eq!(result[0].specifiers[0].name, "*");
+    assert_eq!(result[0].specifiers[0].alias, Some("NS".to_owned()));
+    assert_eq!(result[0].specifiers[0].kind, ImportKind::Namespace);
+}
+
 // T-429: parse_reexport_named
 #[test]
 fn parse_reexport_named() {

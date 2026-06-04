@@ -361,6 +361,9 @@ fn classify_function(name: Option<&str>) -> ChunkType {
     }
 }
 
+// Private on purpose: descendant modules (ts, ts/imports) reach this via
+// `super::` paths — Rust private items are visible to descendants, so no
+// visibility widening (`pub(super)` would expose it to the whole indexer).
 fn find_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     node.children(&mut cursor).find(|c| c.kind() == kind)
