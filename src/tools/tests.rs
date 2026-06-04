@@ -135,6 +135,118 @@ fn validate_search_query_accepts_at_limit_and_none() {
     );
 }
 
+fn index_status(total_chunks: u32, embedded_chunks: u32) -> storage::IndexStatus {
+    storage::IndexStatus {
+        total_files: 1,
+        total_chunks,
+        embeddable_chunks: total_chunks,
+        embedded_chunks,
+        last_indexed_at: None,
+    }
+}
+
+// T-728: build_search_notes_appends_reranker_note_after_index_hint
+#[test]
+fn build_search_notes_appends_reranker_note_after_index_hint() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(
+        &index_status(0, 0),
+        Some("reranker note".to_owned()),
+        None,
+        false,
+    );
+    assert_eq!(
+        notes,
+        vec![
+            "index is empty; run `yomu index`".to_owned(),
+            "reranker note".to_owned(),
+        ],
+        "index hint first, then the reranker note"
+    );
+}
+
+// T-729: build_search_notes_prefers_degraded_reason_over_flag
+#[test]
+fn build_search_notes_prefers_degraded_reason_over_flag() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(
+        &index_status(10, 10),
+        None,
+        Some(&DegradedReason::NotInstalled),
+        true,
+    );
+    assert_eq!(
+        notes,
+        vec![
+            "embedding model not installed; run `yomu model download` to enable semantic search"
+                .to_owned(),
+        ],
+        "a known reason replaces the generic degraded-flag note"
+    );
+}
+
+// T-730: build_search_notes_degraded_flag_without_reason
+#[test]
+fn build_search_notes_degraded_flag_without_reason() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(&index_status(10, 10), None, None, true);
+    assert_eq!(
+        notes,
+        vec!["embedding model not loaded; results from text search only".to_owned()],
+        "without a recorded reason the degraded flag emits the generic note"
+    );
+}
+
+// T-731: build_search_notes_disabled_reason_suppresses_note
+#[test]
+fn build_search_notes_disabled_reason_suppresses_note() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(
+        &index_status(10, 10),
+        None,
+        Some(&DegradedReason::Disabled),
+        true,
+    );
+    assert_eq!(
+        notes,
+        Vec::<String>::new(),
+        "Disabled is caller opt-out: no degradation note even with the flag set"
+    );
+}
+
+// T-737: build_search_notes_with_healthy_index_and_no_degradation_is_empty
+#[test]
+fn build_search_notes_with_healthy_index_and_no_degradation_is_empty() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(&index_status(10, 10), None, None, false);
+    assert_eq!(
+        notes,
+        Vec::<String>::new(),
+        "a healthy index with no degradation must not inject phantom notes"
+    );
+}
+
+// T-738: build_search_notes_orders_hint_reranker_degraded
+#[test]
+fn build_search_notes_orders_hint_reranker_degraded() {
+    use super::search::build_search_notes;
+    let notes = build_search_notes(
+        &index_status(0, 0),
+        Some("reranker note".to_owned()),
+        Some(&DegradedReason::BackendUnavailable),
+        false,
+    );
+    assert_eq!(
+        notes,
+        vec![
+            "index is empty; run `yomu index`".to_owned(),
+            "reranker note".to_owned(),
+            "embedding model unavailable; results from text search only".to_owned(),
+        ],
+        "push order is hint, reranker, degraded; BackendUnavailable maps to the unavailable wording"
+    );
+}
+
 // T-177: search_rejects_path_traversal
 #[test]
 fn search_rejects_path_traversal() {

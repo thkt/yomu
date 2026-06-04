@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::{query, storage};
 
-use super::embedder::EmbedderDegraded;
+use super::embedder::{DegradedReason, EmbedderDegraded};
 use super::format::{
     EnrichmentContext, format_no_results_message, format_results_grouped, format_results_json,
 };
@@ -39,7 +39,12 @@ impl Yomu {
 
         let stats = self.with_db(storage::get_stats)?;
         let outcome = self.run_search_query(query, limit, offset, paths)?;
-        let notes = self.build_search_notes(&stats, outcome.degraded);
+        let notes = build_search_notes(
+            &stats,
+            self.reranker_note(),
+            self.degraded_reason(),
+            outcome.degraded,
+        );
 
         self.format_search_results(&outcome.results, &stats, notes, format, outcome.degraded)
     }
@@ -75,26 +80,6 @@ impl Yomu {
         Ok(outcome)
     }
 
-    /// Assembles the user-facing advisory notes (index-coverage hint, reranker
-    /// status, degraded-embedding warning) appended to search output.
-    fn build_search_notes(&self, stats: &storage::IndexStatus, degraded: bool) -> Vec<String> {
-        let mut notes: Vec<String> = Vec::new();
-        if let Some(msg) = index_hint(stats) {
-            notes.push(msg);
-        }
-        if let Some(note) = self.reranker_note() {
-            notes.push(note);
-        }
-        if let Some(reason) = self.degraded_reason() {
-            if let Some(note) = EmbedderDegraded(*reason).user_note("yomu model download") {
-                notes.push(note);
-            }
-        } else if degraded {
-            notes.push("embedding model not loaded; results from text search only".into());
-        }
-        notes
-    }
-
     fn search_from(
         &self,
         from: &str,
@@ -115,6 +100,11 @@ impl Yomu {
             Ok((chunk_ids, embedding_bytes))
         })?;
 
+        // Intentional note asymmetry vs the main search path (#273): `--from`
+        // replays stored embeddings through `query::search_from_file`, which
+        // uses neither the query-time embedder nor the reranker — emitting
+        // their degradation notes here would claim a degradation in features
+        // this path does not exercise. Only the index-coverage hint applies.
         let mut notes: Vec<String> = Vec::new();
         if let Some(msg) = index_hint(&stats) {
             notes.push(msg);
@@ -196,6 +186,33 @@ impl Yomu {
         }
         self.with_db(move |conn| storage::get_chunks_by_ids(conn, &parent_ids, None, &[]))
     }
+}
+
+/// Assembles the user-facing advisory notes (index-coverage hint, reranker
+/// status, degraded-embedding warning) appended to search output. Pure free
+/// fn (depends only on its arguments) so the note-assembly branches are
+/// directly unit-testable without constructing a `Yomu` (#273).
+pub(super) fn build_search_notes(
+    stats: &storage::IndexStatus,
+    reranker_note: Option<String>,
+    degraded_reason: Option<&DegradedReason>,
+    degraded: bool,
+) -> Vec<String> {
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(msg) = index_hint(stats) {
+        notes.push(msg);
+    }
+    if let Some(note) = reranker_note {
+        notes.push(note);
+    }
+    if let Some(reason) = degraded_reason {
+        if let Some(note) = EmbedderDegraded(*reason).user_note("yomu model download") {
+            notes.push(note);
+        }
+    } else if degraded {
+        notes.push("embedding model not loaded; results from text search only".into());
+    }
+    notes
 }
 
 /// Rejects an empty or over-length query before any DB work. Returns `Ok(())`
