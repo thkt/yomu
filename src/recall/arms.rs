@@ -215,11 +215,19 @@ pub struct ArmComparisonReport {
     pub summaries: Vec<ArmClassSummary>,
     pub entries: Vec<ArmEntryReport>,
     pub degraded: bool,
+    /// Embeddable chunks with no embedding at measurement time (#288). Non-zero
+    /// means indexing died mid-embed: FTS rows are complete (written at chunk
+    /// time) but the embedding arm ran against a partial vec candidate space,
+    /// so the arm comparison is invalid until `yomu index` is re-run. Set by
+    /// the measuring caller; carried in the report because recall-bench has no
+    /// tracing subscriber.
+    pub embed_gap: u32,
 }
 
 impl ArmComparisonReport {
     /// Builds a report from per-entry rows, computing the `(arm, class)`
-    /// summaries via [`summarize_arms`].
+    /// summaries via [`summarize_arms`]. `embed_gap` starts at 0; the measuring
+    /// caller overwrites it (#288).
     pub fn new(
         repo: String,
         entries: Vec<ArmEntryReport>,
@@ -233,6 +241,7 @@ impl ArmComparisonReport {
             summaries,
             entries,
             degraded,
+            embed_gap: 0,
         }
     }
 }
@@ -254,6 +263,13 @@ pub fn render_arm_plain(report: &ArmComparisonReport) -> String {
         "arm comparison: {} (degraded: {})",
         report.repo, report.degraded
     );
+    if report.embed_gap > 0 {
+        let _ = writeln!(
+            out,
+            "  warning: {} embeddable chunks lack embeddings (indexing died mid-embed?) — numbers are invalid; re-run `yomu index` (#288)",
+            report.embed_gap
+        );
+    }
     let _ = writeln!(
         out,
         "  N={} per-entry rows; per-class read is directional, not statistically powered",

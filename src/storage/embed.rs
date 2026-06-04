@@ -120,6 +120,24 @@ pub fn get_files_with_chunk_types(
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
+/// Counts chunks on the embed worklist (same predicate as
+/// [`get_unembedded_chunks_for_file`]: non-test `source_kind`, non-`inner_fn`)
+/// that have no embedding. A non-zero gap means indexing died mid-embed (#288):
+/// FTS rows are written synchronously at chunk time, so the index looks
+/// complete while vector search runs against a partial candidate space.
+/// `yomu index` re-runs fill the gap incrementally.
+pub fn embed_gap_count(conn: &Connection) -> Result<u32, StorageError> {
+    conn.query_row(
+        "SELECT COUNT(*)
+         FROM chunks c
+         LEFT JOIN embedded_chunk_ids e ON c.id = e.chunk_id
+         WHERE e.chunk_id IS NULL AND c.chunk_type != 'inner_fn' AND c.source_kind IS NOT 'test'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
 pub fn has_embeddings(conn: &Connection) -> bool {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM embedded_chunk_ids)",

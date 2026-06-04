@@ -139,16 +139,28 @@ impl Yomu {
         })
     }
 
+    /// Unembedded embeddable-chunk count for the embed-completeness check
+    /// (#288). 0 on a query failure: a DB that cannot answer this also fails
+    /// the measurement queries themselves, so the error surfaces there.
+    #[cfg(not(feature = "test-support"))]
+    fn embed_gap(&self) -> u32 {
+        let conn = self.conn.lock().expect("DB lock poisoned (embed_gap)");
+        storage::embed_gap_count(&conn).unwrap_or(0)
+    }
+
     /// Measures seed-less recall and weighted cap-fit for every bundled GT entry
     /// whose repo matches `repo`, against the current index, and renders a
     /// per-entry plus aggregate report (FR-011). Returns the rendered text and the
     /// aggregate degraded flag. The caller exits non-zero when degraded (FR-012):
     /// an unavailable embedding model makes seed inference fall back and flag
-    /// degraded, so a model-less run never reports a silent pass.
+    /// degraded, so a model-less run never reports a silent pass. An incomplete
+    /// embed (index died mid-embed, #288) likewise degrades, with the gap count
+    /// carried in the report.
     #[cfg(not(feature = "test-support"))]
     pub fn recall(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
         let gt = corpus::load_bundled()
             .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
+        let embed_gap = self.embed_gap();
         let mut entries = Vec::new();
         for entry in gt.entries.iter().filter(|e| e.repo == repo) {
             let task = brief::TaskBrief {
@@ -170,7 +182,9 @@ impl Yomu {
                 report,
             });
         }
-        let report = recall::CorpusReport::new(repo.to_owned(), entries);
+        let mut report = recall::CorpusReport::new(repo.to_owned(), entries);
+        report.embed_gap = embed_gap;
+        report.aggregate.degraded |= embed_gap > 0;
         let text = if json {
             recall::render_recall_json(&report)
         } else {
@@ -247,8 +261,12 @@ impl Yomu {
             .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
         let depth = ARM_CANDIDATE_DEPTH;
         let k = depth as usize;
+        let embed_gap = self.embed_gap();
         let mut entries = Vec::new();
-        let mut degraded = false;
+        // An incomplete embed (#288) invalidates the embedding arm: FTS rows
+        // are complete, so only one arm degrades — exactly the asymmetry the
+        // arm comparison must not silently absorb.
+        let mut degraded = embed_gap > 0;
         for entry in gt.entries.iter().filter(|e| e.repo == repo) {
             let class = recall::classify_query(&entry.task, &entry.seed);
             let seed_set: HashSet<String> = entry.seed.iter().cloned().collect();
@@ -280,12 +298,13 @@ impl Yomu {
                 must_recall: recall::recall_at_k(&fts_ranked, &must_set, k),
             });
         }
-        let report = recall::ArmComparisonReport::new(
+        let mut report = recall::ArmComparisonReport::new(
             repo.to_owned(),
             entries,
             recall::ARM_K_VALUES,
             degraded,
         );
+        report.embed_gap = embed_gap;
         let text = if json {
             recall::render_arm_json(&report)
         } else {

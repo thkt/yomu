@@ -454,3 +454,57 @@ fn classify_query_far_when_only_shared_term_is_digits() {
         "a digits-only term must not match a digit-stripped seed token"
     );
 }
+
+// T-038: corpus_report_renders_embed_gap_warning (#288)
+#[test]
+fn corpus_report_renders_embed_gap_warning() {
+    let mut report = CorpusReport::new("rurico".to_owned(), Vec::new());
+    assert_eq!(report.embed_gap, 0, "new() starts with no gap");
+    assert!(
+        !render_recall_plain(&report).contains("warning:"),
+        "a complete embed renders no warning"
+    );
+
+    report.embed_gap = 7;
+    let plain = render_recall_plain(&report);
+    assert!(
+        plain.contains("warning: 7 embeddable chunks lack embeddings"),
+        "plain carries the gap count, got: {plain}"
+    );
+    assert!(
+        plain.contains("re-run `yomu index`"),
+        "plain names the fix, got: {plain}"
+    );
+    let json = render_recall_json(&report);
+    assert!(
+        json.contains("\"embed_gap\":7"),
+        "json carries the gap field, got: {json}"
+    );
+}
+
+// T-039: arm_comparison_report_renders_embed_gap_warning (#288)
+#[test]
+fn arm_comparison_report_renders_embed_gap_warning() {
+    let mut report = ArmComparisonReport::new("amici".to_owned(), Vec::new(), ARM_K_VALUES, false);
+    assert_eq!(report.embed_gap, 0, "new() starts with no gap");
+    assert!(
+        !render_arm_plain(&report).contains("warning:"),
+        "a complete embed renders no warning"
+    );
+
+    report.embed_gap = 3;
+    let plain = render_arm_plain(&report);
+    assert!(
+        plain.contains("warning: 3 embeddable chunks lack embeddings"),
+        "plain carries the gap count, got: {plain}"
+    );
+    assert!(
+        plain.contains("re-run `yomu index`"),
+        "plain names the fix, got: {plain}"
+    );
+    let json = render_arm_json(&report);
+    assert!(
+        json.contains("\"embed_gap\":3"),
+        "json carries the gap field, got: {json}"
+    );
+}
