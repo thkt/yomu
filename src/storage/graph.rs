@@ -15,6 +15,13 @@ pub struct Dependent {
     pub depth: u32,
 }
 
+/// One dependency edge between two files: `source` imports/references `target`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileEdge {
+    pub source: String,
+    pub target: String,
+}
+
 /// One reference edge from `source_file` to a target file, retaining the
 /// `ref_kind` (named/default/...) and the symbol that triggered it.
 ///
@@ -84,13 +91,13 @@ pub fn get_transitive_dependents(
     collect_rows(rows)
 }
 
-/// Returns every `(source_file, target_file)` edge where both endpoints are
-/// in `paths`. Used by brief topo sort to build a dependency graph
-/// restricted to the in-scope chunk set.
+/// Returns every [`FileEdge`] where both endpoints are in `paths`. Used by
+/// brief topo sort to build a dependency graph restricted to the in-scope
+/// chunk set.
 pub fn get_edges_among_files(
     conn: &Connection,
     paths: &[&str],
-) -> Result<Vec<(String, String)>, StorageError> {
+) -> Result<Vec<FileEdge>, StorageError> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
@@ -103,7 +110,10 @@ pub fn get_edges_among_files(
     let mut params: Vec<&str> = paths.to_vec();
     params.extend_from_slice(paths);
     let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        Ok(FileEdge {
+            source: row.get(0)?,
+            target: row.get(1)?,
+        })
     })?;
     collect_rows(rows)
 }

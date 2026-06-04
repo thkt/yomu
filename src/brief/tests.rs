@@ -8,7 +8,7 @@ use super::cap::apply_cap;
 use super::topo::topo_sort;
 use super::*;
 use crate::storage::{
-    EMBEDDING_DIMS, NewChunk, RefKind, Reference, SourceKind, ce, insert_chunk, open_db,
+    EMBEDDING_DIMS, FileEdge, NewChunk, RefKind, Reference, SourceKind, ce, insert_chunk, open_db,
     replace_file_references,
 };
 
@@ -36,6 +36,13 @@ fn test_db() -> (Connection, TempDir) {
     let dir = tempdir().unwrap();
     let conn = open_db(&dir.path().join("test.db")).unwrap();
     (conn, dir)
+}
+
+fn file_edge(source: &str, target: &str) -> FileEdge {
+    FileEdge {
+        source: source.to_owned(),
+        target: target.to_owned(),
+    }
 }
 
 fn seed_file(value: &str) -> Seed {
@@ -427,8 +434,8 @@ fn topo_sort_orders_dependencies_first() {
         make_brief_chunk("src/c.rs", "c"),
     ];
     let edges = vec![
-        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
-        ("src/b.rs".to_owned(), "src/c.rs".to_owned()),
+        file_edge("src/a.rs", "src/b.rs"),
+        file_edge("src/b.rs", "src/c.rs"),
     ];
 
     let sorted = topo_sort(chunks, &edges);
@@ -454,8 +461,8 @@ fn topo_sort_orders_fan_in_after_all_dependencies() {
         make_brief_chunk("src/c.rs", "c"),
     ];
     let edges = vec![
-        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
-        ("src/a.rs".to_owned(), "src/c.rs".to_owned()),
+        file_edge("src/a.rs", "src/b.rs"),
+        file_edge("src/a.rs", "src/c.rs"),
     ];
 
     let sorted = topo_sort(chunks, &edges);
@@ -716,8 +723,8 @@ fn topo_sort_places_cycle_members_at_tail() {
         make_brief_chunk("src/a.rs", "a"),
     ];
     let edges = vec![
-        ("src/a.rs".to_owned(), "src/b.rs".to_owned()),
-        ("src/b.rs".to_owned(), "src/a.rs".to_owned()),
+        file_edge("src/a.rs", "src/b.rs"),
+        file_edge("src/b.rs", "src/a.rs"),
     ];
 
     let sorted = topo_sort(chunks, &edges);
