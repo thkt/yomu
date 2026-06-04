@@ -15,7 +15,7 @@ use rurico::handle_probe_if_needed;
 use yomu::brief;
 use yomu::error::{self, ErrorCode};
 use yomu::io::write_output;
-use yomu::tools::{IndexRunOptions, InvalidInputKind, Yomu, YomuError, YomuOptions};
+use yomu::tools::{IndexRunOptions, InvalidInputKind, OutputFormat, Yomu, YomuError, YomuOptions};
 
 #[derive(Debug)]
 enum NoQueryReason {
@@ -116,7 +116,7 @@ fn run_command(yomu: &Yomu, command: Command, json: bool) -> ExitCode {
                     limit,
                     offset,
                     &path,
-                    json,
+                    OutputFormat::from_json_flag(json),
                     from.as_deref(),
                 ),
                 json,
@@ -136,7 +136,13 @@ fn run_command(yomu: &Yomu, command: Command, json: bool) -> ExitCode {
             depth,
             semantic,
         } => finish(
-            yomu.impact(&target, symbol.as_deref(), depth, json, semantic),
+            yomu.impact(
+                &target,
+                symbol.as_deref(),
+                depth,
+                OutputFormat::from_json_flag(json),
+                semantic,
+            ),
             json,
         ),
         Command::Status => finish(yomu.status(json), json),

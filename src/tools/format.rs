@@ -18,6 +18,27 @@ pub(super) use render::{
     EnrichmentContext, format_impact_all, format_impact_results, format_results_grouped,
 };
 
+/// Presentation format for user-facing tool output (the CLI `--json` flag).
+///
+/// A dedicated enum (vs adjacent `json: bool` parameters) so format and
+/// behavior flags cannot be transposed at call sites (RC-012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Plain,
+    Json,
+}
+
+impl OutputFormat {
+    /// Maps the CLI `--json` flag onto the enum at the dispatch boundary.
+    pub fn from_json_flag(json: bool) -> Self {
+        if json { Self::Json } else { Self::Plain }
+    }
+
+    pub(super) fn is_json(self) -> bool {
+        matches!(self, Self::Json)
+    }
+}
+
 pub(super) fn format_coverage(stats: &storage::IndexStatus) -> String {
     format!(
         "{}/{} chunks ({}%)",

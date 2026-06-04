@@ -93,7 +93,9 @@ fn seed_index(conn: &storage::Db) {
 #[test]
 fn search_rejects_empty_query() {
     let (y, _dir) = test_yomu();
-    let err = y.search(Some(""), 10, 0, &[], false, None).unwrap_err();
+    let err = y
+        .search(Some(""), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {}",
@@ -107,7 +109,7 @@ fn search_rejects_long_query() {
     let (y, _dir) = test_yomu();
     let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
     let err = y
-        .search(Some(&long_query), 10, 0, &[], false, None)
+        .search(Some(&long_query), 10, 0, &[], OutputFormat::Plain, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("max length"),
@@ -138,7 +140,14 @@ fn validate_search_query_accepts_at_limit_and_none() {
 fn search_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search(Some("query"), 10, 0, &["../etc".to_owned()], false, None)
+        .search(
+            Some("query"),
+            10,
+            0,
+            &["../etc".to_owned()],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -151,7 +160,14 @@ fn search_rejects_path_traversal() {
 fn search_rejects_absolute_path() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search(Some("query"), 10, 0, &["/etc".to_owned()], false, None)
+        .search(
+            Some("query"),
+            10,
+            0,
+            &["/etc".to_owned()],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -176,7 +192,7 @@ fn search_path_filter_excludes_other_dirs() {
             10,
             0,
             &["src/storage/".to_owned()],
-            false,
+            OutputFormat::Plain,
             None,
         )
         .unwrap();
@@ -195,7 +211,7 @@ fn search_path_filter_excludes_other_dirs() {
 fn search_without_embedder_degrades_gracefully() {
     let (y, _dir) = test_yomu();
     let text = y
-        .search(Some("test query"), 10, 0, &[], false, None)
+        .search(Some("test query"), 10, 0, &[], OutputFormat::Plain, None)
         .unwrap();
     assert!(
         text.contains("No results found"),
@@ -212,7 +228,14 @@ fn search_does_not_auto_index_empty_db() {
     );
 
     let text = y
-        .search(Some("button component"), 10, 0, &[], false, None)
+        .search(
+            Some("button component"),
+            10,
+            0,
+            &[],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap();
 
     // Search must not mutate the index: an empty DB stays empty.
@@ -241,7 +264,14 @@ fn search_does_not_auto_embed_chunked_only() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let text = y
-        .search(Some("form component"), 10, 0, &[], false, None)
+        .search(
+            Some("form component"),
+            10,
+            0,
+            &[],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap();
 
     // Search must not embed: a chunk-only index stays at zero embeddings.
@@ -289,7 +319,7 @@ fn search_hints_incomplete_embeddings_when_partially_embedded() {
     );
 
     let text = y
-        .search(Some("component"), 10, 0, &[], false, None)
+        .search(Some("component"), 10, 0, &[], OutputFormat::Plain, None)
         .unwrap();
     assert!(
         text.contains("embeddings incomplete"),
@@ -367,7 +397,14 @@ fn search_degraded_empty_results_shows_note() {
     );
 
     let text = y
-        .search(Some("zzzznonexistent"), 10, 0, &[], false, None)
+        .search(
+            Some("zzzznonexistent"),
+            10,
+            0,
+            &[],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap();
     assert!(
         text.contains("No results found"),
@@ -402,7 +439,7 @@ fn search_degraded_with_results_shows_note() {
     );
 
     let result = y_failing
-        .search(Some("Button"), 10, 0, &[], false, None)
+        .search(Some("Button"), 10, 0, &[], OutputFormat::Plain, None)
         .unwrap();
     assert!(result.contains("Button"), "should have search results");
     assert!(
@@ -896,7 +933,7 @@ fn impact_lists_dependents() {
     }
 
     let text = y
-        .impact("src/hooks/useAuth.ts", None, 3, false, false)
+        .impact("src/hooks/useAuth.ts", None, 3, OutputFormat::Plain, false)
         .unwrap();
     assert!(text.contains("src/A.tsx"), "expected A.tsx: {text}");
     assert!(text.contains("src/C.tsx"), "expected C.tsx: {text}");
@@ -942,7 +979,13 @@ fn impact_filters_by_symbol() {
     }
 
     let text = y
-        .impact("src/hooks/useAuth.ts:useAuth", None, 3, false, false)
+        .impact(
+            "src/hooks/useAuth.ts:useAuth",
+            None,
+            3,
+            OutputFormat::Plain,
+            false,
+        )
         .unwrap();
     assert!(
         text.contains("Direct symbol references"),
@@ -958,7 +1001,9 @@ fn impact_filters_by_symbol() {
 #[test]
 fn impact_rejects_empty_target() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("", None, 3, false, false).unwrap_err();
+    let err = y
+        .impact("", None, 3, OutputFormat::Plain, false)
+        .unwrap_err();
     assert!(
         err.to_string().contains("empty"),
         "expected empty error, got: {err}"
@@ -969,7 +1014,9 @@ fn impact_rejects_empty_target() {
 #[test]
 fn impact_errors_on_empty_index() {
     let (y, _dir) = test_yomu();
-    let err = y.impact("src/A.tsx", None, 3, false, false).unwrap_err();
+    let err = y
+        .impact("src/A.tsx", None, 3, OutputFormat::Plain, false)
+        .unwrap_err();
     assert!(
         err.to_string().contains("index is empty"),
         "expected empty index error, got: {err}"
@@ -985,7 +1032,7 @@ fn impact_distinguishes_missing_file() {
         seed_index(&conn);
     }
     let text = y
-        .impact("src/nonexistent.tsx", None, 3, false, false)
+        .impact("src/nonexistent.tsx", None, 3, OutputFormat::Plain, false)
         .unwrap();
     assert!(
         text.contains("not found in index"),
@@ -1002,7 +1049,7 @@ fn impact_rejects_path_traversal() {
         seed_index(&conn);
     }
     let err = y
-        .impact("../etc/passwd", None, 3, false, false)
+        .impact("../etc/passwd", None, 3, OutputFormat::Plain, false)
         .unwrap_err();
     assert!(
         err.to_string().contains(".."),
@@ -1018,7 +1065,9 @@ fn impact_rejects_absolute_path() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let err = y.impact("/etc/passwd", None, 3, false, false).unwrap_err();
+    let err = y
+        .impact("/etc/passwd", None, 3, OutputFormat::Plain, false)
+        .unwrap_err();
     assert!(
         err.to_string().contains("relative"),
         "expected rejection of absolute path, got: {err}"
@@ -1061,7 +1110,7 @@ fn impact_symbol_flag_overrides_colon_syntax() {
             "src/hooks/useAuth.ts:useAuth",
             Some("AuthProvider"),
             3,
-            false,
+            OutputFormat::Plain,
             false,
         )
         .unwrap();
@@ -1089,7 +1138,9 @@ fn integration_index_then_impact() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 6, None).unwrap();
 
-    let text = y.impact("src/C.tsx", None, 3, false, false).unwrap();
+    let text = y
+        .impact("src/C.tsx", None, 3, OutputFormat::Plain, false)
+        .unwrap();
     assert!(
         text.contains("src/B.tsx"),
         "expected B.tsx as direct dependent: {text}"
@@ -1182,7 +1233,9 @@ fn search_without_embedder_skips_embed_attempt() {
         assert_eq!(stats.embedded_chunks, 0, "should have no embeddings");
     }
 
-    let text = y.search(Some("card"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("card"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         !text.contains("embedding failed"),
         "should not attempt embed when embedder unavailable: {text}"
@@ -1198,7 +1251,9 @@ fn search_json_format_returns_valid_json() {
     )]);
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed["results"].is_array(),
@@ -1227,7 +1282,14 @@ fn search_json_format_empty_results() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
     let json = y
-        .search(Some("zzzznonexistent"), 10, 0, &[], true, None)
+        .search(
+            Some("zzzznonexistent"),
+            10,
+            0,
+            &[],
+            OutputFormat::Json,
+            None,
+        )
         .unwrap();
     let parsed = parse_json(&json);
     assert!(
@@ -1298,7 +1360,9 @@ fn search_json_format_degraded_includes_flag() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("card"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(
         parsed["degraded"], true,
@@ -1485,7 +1549,7 @@ fn subchunk_innerfn_is_hit_at_1_for_inner_function_query() {
     y.index(IndexRunOptions::default(), false).unwrap();
 
     let result = y
-        .search(Some("handleSubmit"), 10, 0, &[], false, None)
+        .search(Some("handleSubmit"), 10, 0, &[], OutputFormat::Plain, None)
         .unwrap();
     assert!(
         result.contains("handleSubmit"),
@@ -1644,7 +1708,9 @@ fn search_with_not_installed_shows_note() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         text.contains("not installed"),
         "expected NotInstalled note in results: {text}"
@@ -1665,7 +1731,14 @@ fn search_with_ok_embedder_no_degraded_note() {
     );
 
     let text = y
-        .search(Some("button component"), 10, 0, &[], false, None)
+        .search(
+            Some("button component"),
+            10,
+            0,
+            &[],
+            OutputFormat::Plain,
+            None,
+        )
         .unwrap();
     assert!(
         !text.contains("not installed"),
@@ -1691,7 +1764,9 @@ fn search_with_backend_unavailable_shows_note() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         text.contains("unavailable"),
         "expected BackendUnavailable note in results: {text}"
@@ -1712,7 +1787,9 @@ fn search_with_probe_failed_shows_note() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         text.contains("unavailable"),
         "expected ProbeFailed note in results: {text}"
@@ -1746,7 +1823,9 @@ fn disabled_no_user_note_in_search() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let text = y.search(Some("button"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         !text.contains("not installed"),
         "should not show 'not installed' when disabled: {text}"
@@ -1777,7 +1856,9 @@ fn json_notes_present_when_degraded() {
     let y = Yomu::for_test(conn, dir.path().to_path_buf(), None);
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("card"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1868,7 +1949,9 @@ fn json_notes_empty_via_search_with_ok_embedder() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 100, None).unwrap();
 
-    let json = y.search(Some("nav"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("nav"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], false, "should not be degraded: {json}");
     let notes = parsed["notes"]
@@ -1889,7 +1972,9 @@ fn json_notes_outcome_degraded_fallback() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.search(Some("card"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("card"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -1921,7 +2006,9 @@ fn json_notes_backend_unavailable() {
     );
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
 
-    let json = y.search(Some("button"), 10, 0, &[], true, None).unwrap();
+    let json = y
+        .search(Some("button"), 10, 0, &[], OutputFormat::Json, None)
+        .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["degraded"], true);
     let notes = parsed["notes"]
@@ -2072,7 +2159,7 @@ fn impact_json_with_dependents() {
     }
 
     let json = y
-        .impact("src/hooks/useAuth.ts", None, 3, true, false)
+        .impact("src/hooks/useAuth.ts", None, 3, OutputFormat::Json, false)
         .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["target"], "src/hooks/useAuth.ts");
@@ -2098,7 +2185,7 @@ fn impact_json_not_in_index() {
     }
 
     let json = y
-        .impact("src/nonexistent.tsx", None, 3, true, false)
+        .impact("src/nonexistent.tsx", None, 3, OutputFormat::Json, false)
         .unwrap();
     let parsed = parse_json(&json);
     assert_eq!(parsed["in_index"], false);
@@ -2141,7 +2228,13 @@ fn impact_json_with_symbol_refs() {
     }
 
     let json = y
-        .impact("src/hooks/useAuth.ts:useAuth", None, 3, true, false)
+        .impact(
+            "src/hooks/useAuth.ts:useAuth",
+            None,
+            3,
+            OutputFormat::Json,
+            false,
+        )
         .unwrap();
     let parsed = parse_json(&json);
     let refs = parsed["symbol_refs"]
@@ -2175,7 +2268,7 @@ fn impact_semantic_no_embeddings_returns_empty() {
 
     // no stored embeddings for the target → semantic_related is empty, structural still works
     let text = y
-        .impact("src/hooks/useAuth.ts", None, 3, false, true)
+        .impact("src/hooks/useAuth.ts", None, 3, OutputFormat::Plain, true)
         .unwrap();
     assert!(
         text.contains("src/A.tsx"),
@@ -2197,7 +2290,7 @@ fn impact_semantic_json_field_absent_when_empty() {
     }
 
     let json = y
-        .impact("src/hooks/useAuth.ts", None, 3, true, true)
+        .impact("src/hooks/useAuth.ts", None, 3, OutputFormat::Json, true)
         .unwrap();
     let parsed = parse_json(&json);
     assert!(
@@ -2217,7 +2310,7 @@ fn impact_no_semantic_json_field_absent() {
     }
 
     let json = y
-        .impact("src/hooks/useAuth.ts", None, 3, true, false)
+        .impact("src/hooks/useAuth.ts", None, 3, OutputFormat::Json, false)
         .unwrap();
     let parsed = parse_json(&json);
     assert!(
@@ -2252,7 +2345,7 @@ fn search_from_no_embeddings_returns_ok() {
         )
         .unwrap();
     }
-    let result = y.search(None, 10, 0, &[], false, Some("src/foo.rs"));
+    let result = y.search(None, 10, 0, &[], OutputFormat::Plain, Some("src/foo.rs"));
     assert!(
         result.is_ok(),
         "expected Ok for no-embeddings case, got: {:?}",
@@ -2270,7 +2363,9 @@ fn search_from_no_embeddings_returns_ok() {
 #[test]
 fn search_requires_query_or_from() {
     let (y, _dir) = test_yomu();
-    let err = y.search(None, 10, 0, &[], false, None).unwrap_err();
+    let err = y
+        .search(None, 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap_err();
     assert!(
         err.to_string().contains("query or --from"),
         "expected invalid input, got: {err}"
@@ -2283,7 +2378,14 @@ fn search_requires_query_or_from() {
 fn search_from_rejects_path_traversal() {
     let (y, _dir) = test_yomu();
     let err = y
-        .search(None, 10, 0, &[], false, Some("../../../etc/passwd"))
+        .search(
+            None,
+            10,
+            0,
+            &[],
+            OutputFormat::Plain,
+            Some("../../../etc/passwd"),
+        )
         .unwrap_err();
     assert!(
         err.to_string().contains("must be a relative path"),
@@ -2305,7 +2407,9 @@ fn search_from_file_integration() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     indexer::run_incremental_embed(&y.conn, &MockEmbedder::default(), 100, None).unwrap();
 
-    let text = y.search(None, 5, 0, &[], false, Some("src/a.rs")).unwrap();
+    let text = y
+        .search(None, 5, 0, &[], OutputFormat::Plain, Some("src/a.rs"))
+        .unwrap();
     // Source file should not appear in results
     assert!(
         !text.contains("No results found"),
@@ -2330,7 +2434,14 @@ fn search_from_with_path_filter_excludes_other_dirs() {
         Arc::new(MockEmbedder::default()),
     );
     let text = y
-        .search(None, 10, 0, &["src/".to_owned()], false, Some("src/a.rs"))
+        .search(
+            None,
+            10,
+            0,
+            &["src/".to_owned()],
+            OutputFormat::Plain,
+            Some("src/a.rs"),
+        )
         .unwrap();
     assert!(
         !text.contains("lib/c.rs") && !text.contains("gamma"),
@@ -2349,7 +2460,9 @@ fn search_from_json_output_has_results_key() {
         ],
         Arc::new(MockEmbedder::default()),
     );
-    let json = y.search(None, 10, 0, &[], true, Some("src/a.rs")).unwrap();
+    let json = y
+        .search(None, 10, 0, &[], OutputFormat::Json, Some("src/a.rs"))
+        .unwrap();
     let parsed = parse_json(&json);
     assert!(
         parsed.get("results").is_some(),
@@ -3282,8 +3395,10 @@ fn impact_empty_target_returns_candidates_with_indexed_paths() {
         let conn = y.conn.lock().unwrap();
         seed_chunks_at_paths(&conn, &["a.rs", "b.rs", "c.rs"]);
     }
-    let candidates =
-        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    let candidates = unwrap_empty_target_candidates(
+        y.impact("", None, 0, OutputFormat::Plain, false)
+            .unwrap_err(),
+    );
     assert_eq!(
         candidates,
         vec!["a.rs".to_owned(), "b.rs".to_owned(), "c.rs".to_owned()],
@@ -3303,8 +3418,10 @@ fn impact_empty_target_sorts_candidates_alphabetically() {
         let conn = y.conn.lock().unwrap();
         seed_chunks_at_paths(&conn, &["c.rs", "a.rs", "b.rs"]);
     }
-    let candidates =
-        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    let candidates = unwrap_empty_target_candidates(
+        y.impact("", None, 0, OutputFormat::Plain, false)
+            .unwrap_err(),
+    );
     assert_eq!(
         candidates,
         vec!["a.rs".to_owned(), "b.rs".to_owned(), "c.rs".to_owned()],
@@ -3324,8 +3441,10 @@ fn impact_empty_target_caps_candidates_at_ten() {
         let conn = y.conn.lock().unwrap();
         seed_chunks_at_paths(&conn, &path_refs);
     }
-    let candidates =
-        unwrap_empty_target_candidates(y.impact("", None, 0, false, false).unwrap_err());
+    let candidates = unwrap_empty_target_candidates(
+        y.impact("", None, 0, OutputFormat::Plain, false)
+            .unwrap_err(),
+    );
     let expected: Vec<String> = (0..super::MAX_EMPTY_TARGET_CANDIDATES)
         .map(|i| format!("file{i:02}.rs"))
         .collect();
@@ -3381,7 +3500,9 @@ fn impact_indexed_file_without_dependents_reports_none() {
         let conn = y.conn.lock().unwrap();
         seed_index(&conn);
     }
-    let text = y.impact("src/dummy.tsx", None, 3, false, false).unwrap();
+    let text = y
+        .impact("src/dummy.tsx", None, 3, OutputFormat::Plain, false)
+        .unwrap();
     assert!(
         text.contains("No dependents found"),
         "indexed file without dependents should report none: {text}"
@@ -3400,7 +3521,9 @@ fn impact_semantic_with_embeddings_searches_related() {
         Arc::new(MockEmbedder::default()),
     );
     y.index(IndexRunOptions::default(), false).unwrap();
-    let json = y.impact("src/auth.tsx", None, 3, true, true).unwrap();
+    let json = y
+        .impact("src/auth.tsx", None, 3, OutputFormat::Json, true)
+        .unwrap();
     let parsed = parse_json(&json);
     // Stored embeddings drive semantic_search down the bytes-non-empty branch
     // (search_from_file); the mock embedder makes every chunk similar, so the
@@ -3514,7 +3637,9 @@ fn search_notes_reranker_model_absent_when_enabled() {
     indexer::run_chunk_only_index(&y.conn, y.root.as_path(), false).unwrap();
     y.rerank_enabled = true;
     let _ = y.reranker.set(ModelLoad::Absent);
-    let text = y.search(Some("function"), 10, 0, &[], false, None).unwrap();
+    let text = y
+        .search(Some("function"), 10, 0, &[], OutputFormat::Plain, None)
+        .unwrap();
     assert!(
         text.contains("reranking requested"),
         "rerank-enabled with an absent model should surface a note: {text}"
