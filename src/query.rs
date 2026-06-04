@@ -10,6 +10,7 @@ mod keywords;
 mod rank;
 
 pub use keywords::{extract_keywords, extract_type_hints};
+pub(crate) use rank::cross_encoder_rrf_rerank;
 pub use rank::{RerankContext, rerank};
 
 #[derive(Debug, thiserror::Error)]

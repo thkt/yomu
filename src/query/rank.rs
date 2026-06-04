@@ -75,6 +75,49 @@ pub(super) fn cross_encoder_rerank(
     }
 }
 
+/// RRF blend of the incoming (vec) order and the cross-encoder order, for
+/// brief seed inference (#290). Unlike [`cross_encoder_rerank`] (search path,
+/// cross score replaces the order outright), the vec rank stays in the sum as
+/// a prior: one low cross score cannot demote a high-confidence vec hit to
+/// the tail — the failure mode measured on the amici semantic-far arm.
+/// Mirror-symmetric ties and scoring failure keep the incoming order (warn,
+/// not degraded).
+pub(crate) fn cross_encoder_rrf_rerank(
+    results: &mut [SearchResult],
+    query: &str,
+    reranker: &dyn Rerank,
+) {
+    /// Standard RRF damping constant (Cormack et al.): rank differences
+    /// contribute smoothly without letting either list dominate.
+    const RRF_K: f32 = 60.0;
+    if results.is_empty() {
+        return;
+    }
+    let pairs: Vec<(&str, &str)> = results
+        .iter()
+        .map(|r| (query, r.chunk.content.as_str()))
+        .collect();
+    match reranker.score_batch(&pairs) {
+        Ok(scores) => {
+            let mut by_cross: Vec<usize> = (0..results.len()).collect();
+            by_cross.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));
+            let mut cross_rank = vec![0_usize; results.len()];
+            for (rank, &i) in by_cross.iter().enumerate() {
+                cross_rank[i] = rank;
+            }
+            #[allow(clippy::cast_precision_loss)]
+            for (vec_rank, result) in results.iter_mut().enumerate() {
+                result.score = (RRF_K + vec_rank as f32).recip()
+                    + (RRF_K + cross_rank[vec_rank] as f32).recip();
+            }
+            results.sort_by(|a, b| b.score.total_cmp(&a.score));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "cross-encoder reranking failed, keeping vec order");
+        }
+    }
+}
+
 pub(super) fn cap_per_file(results: &mut Vec<storage::SearchResult>, max: usize) {
     let mut counts: HashMap<String, usize> = HashMap::new();
     results.retain(|r| {
