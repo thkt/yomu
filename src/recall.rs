@@ -133,9 +133,8 @@ pub struct CorpusReport {
     /// Embeddable chunks with no embedding at measurement time (#288). Non-zero
     /// means indexing died mid-embed, so seed inference ran against a partial
     /// vec candidate space and the numbers are invalid until `yomu index` is
-    /// re-run. The measuring caller sets this from
-    /// `storage::embed_gap_count` and flags `degraded`; the report itself must
-    /// carry the reason because recall-bench has no tracing subscriber.
+    /// re-run. The report itself carries the reason because recall-bench has
+    /// no tracing subscriber.
     pub embed_gap: u32,
 }
 
@@ -144,8 +143,9 @@ impl CorpusReport {
     /// unweighted mean. An empty entry set (no GT entry matched `repo`) is
     /// degraded with a vacuous 1.0 mean, mirroring [`measure`]'s degraded-on-
     /// vacuous contract so a `--repo` typo never reads as a silent pass.
-    /// `embed_gap` starts at 0; the measuring caller overwrites it (#288).
-    pub fn new(repo: String, entries: Vec<EntryReport>) -> Self {
+    /// A non-zero `embed_gap` (#288) degrades the aggregate here, so the
+    /// invariant `embed_gap > 0 → degraded` is established at construction.
+    pub fn new(repo: String, entries: Vec<EntryReport>, embed_gap: u32) -> Self {
         let aggregate = if entries.is_empty() {
             RecallReport {
                 recall: 1.0,
@@ -157,14 +157,14 @@ impl CorpusReport {
             RecallReport {
                 recall: entries.iter().map(|e| e.report.recall).sum::<f64>() / n,
                 cap_fit: entries.iter().map(|e| e.report.cap_fit).sum::<f64>() / n,
-                degraded: entries.iter().any(|e| e.report.degraded),
+                degraded: entries.iter().any(|e| e.report.degraded) || embed_gap > 0,
             }
         };
         Self {
             repo,
             aggregate,
             entries,
-            embed_gap: 0,
+            embed_gap,
         }
     }
 }

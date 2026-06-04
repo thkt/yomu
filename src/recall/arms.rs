@@ -218,21 +218,22 @@ pub struct ArmComparisonReport {
     /// Embeddable chunks with no embedding at measurement time (#288). Non-zero
     /// means indexing died mid-embed: FTS rows are complete (written at chunk
     /// time) but the embedding arm ran against a partial vec candidate space,
-    /// so the arm comparison is invalid until `yomu index` is re-run. Set by
-    /// the measuring caller; carried in the report because recall-bench has no
-    /// tracing subscriber.
+    /// so the arm comparison is invalid until `yomu index` is re-run. Carried
+    /// in the report because recall-bench has no tracing subscriber.
     pub embed_gap: u32,
 }
 
 impl ArmComparisonReport {
     /// Builds a report from per-entry rows, computing the `(arm, class)`
-    /// summaries via [`summarize_arms`]. `embed_gap` starts at 0; the measuring
-    /// caller overwrites it (#288).
+    /// summaries via [`summarize_arms`]. A non-zero `embed_gap` (#288) forces
+    /// `degraded`, so the invariant `embed_gap > 0 → degraded` is established
+    /// at construction.
     pub fn new(
         repo: String,
         entries: Vec<ArmEntryReport>,
         k_values: &[usize],
         degraded: bool,
+        embed_gap: u32,
     ) -> Self {
         let summaries = summarize_arms(&entries, k_values);
         Self {
@@ -240,8 +241,8 @@ impl ArmComparisonReport {
             k_values: k_values.to_vec(),
             summaries,
             entries,
-            degraded,
-            embed_gap: 0,
+            degraded: degraded || embed_gap > 0,
+            embed_gap,
         }
     }
 }

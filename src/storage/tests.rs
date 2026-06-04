@@ -1618,6 +1618,11 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
 #[test]
 fn embed_gap_count_counts_only_embeddable_unembedded_chunks() {
     let (conn, _dir) = test_db();
+    assert_eq!(
+        embed_gap_count(&conn).unwrap(),
+        0,
+        "an empty index (no chunks) has no gap"
+    );
 
     // Embedded src chunk: not a gap.
     insert_chunk(
@@ -5212,5 +5217,17 @@ fn search_by_fts_projects_source_kind_and_injection_flags() {
         hit.score > 0.0,
         "bm25 score must remain readable at the shifted offset (offset 9), got {}",
         hit.score
+    );
+}
+
+// T-712: embed_gap_count_propagates_query_failure (#288 audit RC-1)
+#[test]
+fn embed_gap_count_propagates_query_failure() {
+    let (conn, _dir) = test_db();
+    conn.execute("DROP TABLE embedded_chunk_ids", [])
+        .expect("drop table to simulate a broken schema");
+    assert!(
+        embed_gap_count(&conn).is_err(),
+        "a gap that cannot be measured must surface as Err, never as 0"
     );
 }

@@ -121,7 +121,7 @@ fn corpus_report_aggregates_mean_and_renders_keys() {
             },
         },
     ];
-    let report = CorpusReport::new("rurico".to_owned(), entries);
+    let report = CorpusReport::new("rurico".to_owned(), entries, 0);
     assert!(
         (report.aggregate.recall - 0.75).abs() < f64::EPSILON,
         "aggregate recall is the mean (0.75), got {}",
@@ -162,7 +162,7 @@ fn corpus_report_aggregates_mean_and_renders_keys() {
 // T-022: corpus_report_with_no_entries_is_degraded
 #[test]
 fn corpus_report_with_no_entries_is_degraded() {
-    let report = CorpusReport::new("ghost".to_owned(), Vec::new());
+    let report = CorpusReport::new("ghost".to_owned(), Vec::new(), 0);
     assert!(
         report.aggregate.degraded,
         "no entries (e.g. --repo mismatch) → degraded, never a silent pass"
@@ -391,7 +391,7 @@ fn arm_comparison_report_json_and_plain() {
             must_recall: 0.25,
         },
     ];
-    let report = ArmComparisonReport::new("rurico".to_owned(), entries, &[1, 5], false);
+    let report = ArmComparisonReport::new("rurico".to_owned(), entries, &[1, 5], false, 0);
 
     let json = render_arm_json(&report);
     assert!(
@@ -455,18 +455,38 @@ fn classify_query_far_when_only_shared_term_is_digits() {
     );
 }
 
-// T-038: corpus_report_renders_embed_gap_warning (#288)
+/// One non-degraded entry, so degraded-flag asserts are not masked by the
+/// vacuous empty-corpus path.
+fn clean_entry() -> EntryReport {
+    EntryReport {
+        id: "e1".to_owned(),
+        report: RecallReport {
+            recall: 1.0,
+            cap_fit: 1.0,
+            degraded: false,
+        },
+    }
+}
+
+// T-038: corpus_report_embed_gap_degrades_and_renders_warning (#288)
 #[test]
-fn corpus_report_renders_embed_gap_warning() {
-    let mut report = CorpusReport::new("rurico".to_owned(), Vec::new());
-    assert_eq!(report.embed_gap, 0, "new() starts with no gap");
+fn corpus_report_embed_gap_degrades_and_renders_warning() {
+    let clean = CorpusReport::new("rurico".to_owned(), vec![clean_entry()], 0);
     assert!(
-        !render_recall_plain(&report).contains("warning:"),
+        !clean.aggregate.degraded,
+        "no gap and no degraded entry → not degraded"
+    );
+    assert!(
+        !render_recall_plain(&clean).contains("warning:"),
         "a complete embed renders no warning"
     );
 
-    report.embed_gap = 7;
-    let plain = render_recall_plain(&report);
+    let gapped = CorpusReport::new("rurico".to_owned(), vec![clean_entry()], 7);
+    assert!(
+        gapped.aggregate.degraded,
+        "embed_gap > 0 must degrade at construction (invariant)"
+    );
+    let plain = render_recall_plain(&gapped);
     assert!(
         plain.contains("warning: 7 embeddable chunks lack embeddings"),
         "plain carries the gap count, got: {plain}"
@@ -475,25 +495,33 @@ fn corpus_report_renders_embed_gap_warning() {
         plain.contains("re-run `yomu index`"),
         "plain names the fix, got: {plain}"
     );
-    let json = render_recall_json(&report);
+    let json = render_recall_json(&gapped);
     assert!(
         json.contains("\"embed_gap\":7"),
         "json carries the gap field, got: {json}"
     );
 }
 
-// T-039: arm_comparison_report_renders_embed_gap_warning (#288)
+// T-039: arm_comparison_report_embed_gap_degrades_and_renders_warning (#288)
 #[test]
-fn arm_comparison_report_renders_embed_gap_warning() {
-    let mut report = ArmComparisonReport::new("amici".to_owned(), Vec::new(), ARM_K_VALUES, false);
-    assert_eq!(report.embed_gap, 0, "new() starts with no gap");
+fn arm_comparison_report_embed_gap_degrades_and_renders_warning() {
+    let clean = ArmComparisonReport::new("amici".to_owned(), Vec::new(), ARM_K_VALUES, false, 0);
+    assert!(!clean.degraded, "no gap and degraded=false stays false");
     assert!(
-        !render_arm_plain(&report).contains("warning:"),
+        !render_arm_plain(&clean).contains("warning:"),
         "a complete embed renders no warning"
     );
 
-    report.embed_gap = 3;
-    let plain = render_arm_plain(&report);
+    let gapped = ArmComparisonReport::new("amici".to_owned(), Vec::new(), ARM_K_VALUES, false, 3);
+    assert!(
+        gapped.degraded,
+        "embed_gap > 0 must degrade at construction (invariant)"
+    );
+    let plain = render_arm_plain(&gapped);
+    assert!(
+        plain.contains("(degraded: true)"),
+        "plain header reflects the gap-forced degraded flag, got: {plain}"
+    );
     assert!(
         plain.contains("warning: 3 embeddable chunks lack embeddings"),
         "plain carries the gap count, got: {plain}"
@@ -502,7 +530,7 @@ fn arm_comparison_report_renders_embed_gap_warning() {
         plain.contains("re-run `yomu index`"),
         "plain names the fix, got: {plain}"
     );
-    let json = render_arm_json(&report);
+    let json = render_arm_json(&gapped);
     assert!(
         json.contains("\"embed_gap\":3"),
         "json carries the gap field, got: {json}"
