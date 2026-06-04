@@ -4,7 +4,7 @@ use crate::{query, storage};
 
 use super::format::{format_impact_all, format_impact_json, format_impact_results};
 use super::{
-    InvalidInputKind, MAX_EMPTY_TARGET_CANDIDATES, MAX_IMPACT_DEPTH, Yomu, YomuError,
+    InvalidInputKind, MAX_EMPTY_TARGET_CANDIDATES, MAX_IMPACT_DEPTH, OutputFormat, Yomu, YomuError,
     never_degraded, parse_impact_target, validate_path,
 };
 
@@ -45,7 +45,7 @@ impl Yomu {
         target: &str,
         symbol: Option<&str>,
         depth: u32,
-        json: bool,
+        format: OutputFormat,
         semantic: bool,
     ) -> Result<String, YomuError> {
         self.require_nonempty_target(target)?;
@@ -66,7 +66,7 @@ impl Yomu {
             file_path,
             &report,
             symbol_filter,
-            json,
+            format,
         ))
     }
 
@@ -161,9 +161,9 @@ fn render_impact_output(
     file_path: &str,
     report: &ImpactReport,
     symbol_filter: Option<&str>,
-    json: bool,
+    format: OutputFormat,
 ) -> String {
-    if json {
+    if format.is_json() {
         let (degraded, notes) = never_degraded();
         return format_impact_json(
             target,

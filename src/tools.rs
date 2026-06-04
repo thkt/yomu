@@ -28,6 +28,7 @@ use crate::query::QueryError;
 use crate::storage;
 
 use embedder::DegradedReason;
+pub use format::OutputFormat;
 
 const MAX_QUERY_LENGTH: usize = 2000;
 

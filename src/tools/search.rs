@@ -8,8 +8,8 @@ use super::format::{
     EnrichmentContext, format_no_results_message, format_results_grouped, format_results_json,
 };
 use super::{
-    InvalidInputKind, MAX_QUERY_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, Yomu, YomuError,
-    index_hint, parse_impact_target, validate_path,
+    InvalidInputKind, MAX_QUERY_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_OFFSET, OutputFormat, Yomu,
+    YomuError, index_hint, parse_impact_target, validate_path,
 };
 
 impl Yomu {
@@ -19,7 +19,7 @@ impl Yomu {
         limit: u32,
         offset: u32,
         paths: &[String],
-        json: bool,
+        format: OutputFormat,
         from_target: Option<&str>,
     ) -> Result<String, YomuError> {
         validate_search_query(query)?;
@@ -30,7 +30,7 @@ impl Yomu {
 
         if let Some(from) = from_target {
             // FR-006: --offset is intentionally ignored in from-file mode.
-            return self.search_from(from, query, limit, paths, json);
+            return self.search_from(from, query, limit, paths, format);
         }
 
         let query =
@@ -41,7 +41,7 @@ impl Yomu {
         let outcome = self.run_search_query(query, limit, offset, paths)?;
         let notes = self.build_search_notes(&stats, outcome.degraded);
 
-        self.format_search_results(&outcome.results, &stats, notes, json, outcome.degraded)
+        self.format_search_results(&outcome.results, &stats, notes, format, outcome.degraded)
     }
 
     /// Runs the embedding-backed query and emits the query log when enabled,
@@ -101,7 +101,7 @@ impl Yomu {
         query: Option<&str>,
         limit: u32,
         paths: &[String],
-        json: bool,
+        format: OutputFormat,
     ) -> Result<String, YomuError> {
         let (file, symbol) = parse_impact_target(from);
         validate_path(file)?;
@@ -133,7 +133,7 @@ impl Yomu {
             })?
         };
 
-        self.format_search_results(&results, &stats, notes, json, false)
+        self.format_search_results(&results, &stats, notes, format, false)
     }
 
     fn format_search_results(
@@ -141,10 +141,10 @@ impl Yomu {
         results: &[storage::SearchResult],
         stats: &storage::IndexStatus,
         notes: Vec<String>,
-        json: bool,
+        format: OutputFormat,
         degraded: bool,
     ) -> Result<String, YomuError> {
-        if json {
+        if format.is_json() {
             return Ok(format_results_json(results, degraded, notes));
         }
         if results.is_empty() {
