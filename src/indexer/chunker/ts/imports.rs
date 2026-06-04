@@ -32,6 +32,8 @@ fn parse_import_specifier(
         }
     }
     let (name, alias) = match identifiers.len() {
+        // Defensive: unreachable for well-formed input — the grammar gives an
+        // import_specifier at least one identifier.
         0 => return None,
         1 => (identifiers.remove(0), None),
         _ => {

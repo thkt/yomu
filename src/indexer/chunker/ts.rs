@@ -10,6 +10,10 @@ use super::{
 
 mod imports;
 
+// cfg(test)-gated: production code only passes `ParsedImport` values through
+// type inference (`parse_single_import(..)` pushed straight into
+// `FileChunks.parsed_imports`); the named import is needed solely by the
+// test-only `parse_imports_from_ast` / `parse_structured_imports` signatures.
 #[cfg(test)]
 use super::ParsedImport;
 
