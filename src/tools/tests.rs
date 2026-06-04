@@ -2643,6 +2643,54 @@ fn brief_task(seed_file: &str) -> brief::TaskBrief {
     }
 }
 
+// T-734: brief_out_of_index_seed_reports_empty_closure_not_fts [#238]
+// Reproduces the issue: an explicit seed that is not in the index yields an
+// empty closure. The note must name the empty closure, not the FTS seed
+// fallback — no seed inference ran because seeds were given explicitly.
+#[test]
+fn brief_out_of_index_seed_reports_empty_closure_not_fts() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let output = yomu
+        .brief(&brief_task("src/nonexistent.rs"), false)
+        .unwrap();
+
+    assert_eq!(
+        output,
+        "Note: degraded mode — seeds expanded to zero chunks (not in index or no dependencies)",
+        "empty closure must be the sole named cause — naming the FTS fallback was the #238 misattribution"
+    );
+}
+
+// T-739: brief_seedless_fts_zero_hit_names_fallback_before_empty_seeds [#238]
+// Same scenario as T-014c rendered plain: no embedder forces the FTS fallback
+// AND the fallback finds nothing, so both causes co-occur. The note must lead
+// with the seed-inference stage (FTS-only) before its outcome (no seeds), and
+// EmptySeeds suppresses the EmptyClosure restatement.
+#[test]
+fn brief_seedless_fts_zero_hit_names_fallback_before_empty_seeds() {
+    let (conn, dir) = test_db();
+    seed_brief_chunks(&conn);
+    let yomu = Yomu::for_test(conn, dir.path().to_path_buf(), None);
+
+    let task = brief::TaskBrief {
+        task: "infer something".to_owned(),
+        seeds: vec![],
+        depth: 1,
+        max_chunks: 80,
+        max_bytes: 80_000,
+        include_tests: false,
+    };
+
+    let output = yomu.brief(&task, false).unwrap();
+    assert_eq!(
+        output, "Note: degraded mode — FTS-only seed selection; no file seeds resolved",
+        "stage order pins inference mechanism before its outcome, with no EmptyClosure restatement"
+    );
+}
+
 // T-568: yomu_brief_returns_plain_format
 #[test]
 fn yomu_brief_returns_plain_format() {
