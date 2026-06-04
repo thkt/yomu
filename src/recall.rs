@@ -130,6 +130,12 @@ pub struct CorpusReport {
     pub repo: String,
     pub aggregate: RecallReport,
     pub entries: Vec<EntryReport>,
+    /// Embeddable chunks with no embedding at measurement time (#288). Non-zero
+    /// means indexing died mid-embed, so seed inference ran against a partial
+    /// vec candidate space and the numbers are invalid until `yomu index` is
+    /// re-run. The report itself carries the reason because recall-bench has
+    /// no tracing subscriber.
+    pub embed_gap: u32,
 }
 
 impl CorpusReport {
@@ -137,7 +143,9 @@ impl CorpusReport {
     /// unweighted mean. An empty entry set (no GT entry matched `repo`) is
     /// degraded with a vacuous 1.0 mean, mirroring [`measure`]'s degraded-on-
     /// vacuous contract so a `--repo` typo never reads as a silent pass.
-    pub fn new(repo: String, entries: Vec<EntryReport>) -> Self {
+    /// A non-zero `embed_gap` (#288) degrades the aggregate here, so the
+    /// invariant `embed_gap > 0 → degraded` is established at construction.
+    pub fn new(repo: String, entries: Vec<EntryReport>, embed_gap: u32) -> Self {
         let aggregate = if entries.is_empty() {
             RecallReport {
                 recall: 1.0,
@@ -149,13 +157,14 @@ impl CorpusReport {
             RecallReport {
                 recall: entries.iter().map(|e| e.report.recall).sum::<f64>() / n,
                 cap_fit: entries.iter().map(|e| e.report.cap_fit).sum::<f64>() / n,
-                degraded: entries.iter().any(|e| e.report.degraded),
+                degraded: entries.iter().any(|e| e.report.degraded) || embed_gap > 0,
             }
         };
         Self {
             repo,
             aggregate,
             entries,
+            embed_gap,
         }
     }
 }
@@ -174,6 +183,13 @@ pub fn render_recall_plain(report: &CorpusReport) -> String {
         "recall report: {} (degraded: {})",
         report.repo, report.aggregate.degraded
     );
+    if report.embed_gap > 0 {
+        let _ = writeln!(
+            out,
+            "  warning: {} embeddable chunks lack embeddings (indexing died mid-embed?) — numbers are invalid; re-run `yomu index` (#288)",
+            report.embed_gap
+        );
+    }
     let _ = writeln!(
         out,
         "  aggregate: recall={:.3} cap_fit={:.3} over {} entries",

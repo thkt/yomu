@@ -1614,6 +1614,98 @@ fn get_unembedded_file_paths_returns_only_unembedded() {
     assert_eq!(c_count, 1);
 }
 
+// T-711: embed_gap_count_counts_only_embeddable_unembedded_chunks
+#[test]
+fn embed_gap_count_counts_only_embeddable_unembedded_chunks() {
+    let (conn, _dir) = test_db();
+    assert_eq!(
+        embed_gap_count(&conn).unwrap(),
+        0,
+        "an empty index (no chunks) has no gap"
+    );
+
+    // Embedded src chunk: not a gap.
+    insert_chunk(
+        &conn,
+        "src/done.rs",
+        &NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("done"),
+            content: "fn done() {}",
+            start_line: 1,
+            end_line: 2,
+            parent_index: None,
+            source_kind: Some(SourceKind::Src),
+            injection_flags: None,
+        },
+        "h1",
+        &ce(vec![0.0_f32; EMBEDDING_DIMS]),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        embed_gap_count(&conn).unwrap(),
+        0,
+        "a fully embedded index has no gap"
+    );
+
+    // Unembedded src + NULL-kind chunks: both count (NULL stays embeddable,
+    // mirroring the embed worklist's NULL-safe `IS NOT 'test'`).
+    let pending = vec![
+        NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("a"),
+            content: "fn a() {}",
+            start_line: 1,
+            end_line: 2,
+            parent_index: None,
+            source_kind: Some(SourceKind::Src),
+            injection_flags: None,
+        },
+        NewChunk {
+            chunk_type: &ChunkType::RustFn,
+            name: Some("b"),
+            content: "fn b() {}",
+            start_line: 4,
+            end_line: 5,
+            parent_index: None,
+            source_kind: None,
+            injection_flags: None,
+        },
+    ];
+    replace_file_chunks_only(&conn, "src/pending.rs", &pending, "h2", "", &[], None).unwrap();
+
+    // Unembedded test-kind and inner_fn chunks: design-excluded, not gaps.
+    let test_kind = vec![NewChunk {
+        chunk_type: &ChunkType::RustFn,
+        name: Some("t"),
+        content: "fn t() {}",
+        start_line: 1,
+        end_line: 2,
+        parent_index: None,
+        source_kind: Some(SourceKind::Test),
+        injection_flags: None,
+    }];
+    replace_file_chunks_only(&conn, "src/t_tests.rs", &test_kind, "h3", "", &[], None).unwrap();
+    let inner = vec![NewChunk {
+        chunk_type: &ChunkType::InnerFn,
+        name: Some("inner"),
+        content: "fn inner() {}",
+        start_line: 1,
+        end_line: 2,
+        parent_index: None,
+        source_kind: Some(SourceKind::Src),
+        injection_flags: None,
+    }];
+    replace_file_chunks_only(&conn, "src/outer.rs", &inner, "h4", "", &[], None).unwrap();
+
+    assert_eq!(
+        embed_gap_count(&conn).unwrap(),
+        2,
+        "gap counts unembedded src + NULL-kind chunks only; test/inner_fn are design-excluded"
+    );
+}
+
 // T-149: needs_embedding_returns_true_for_chunk_only_file
 #[test]
 fn needs_embedding_returns_true_for_chunk_only_file() {
@@ -5125,5 +5217,17 @@ fn search_by_fts_projects_source_kind_and_injection_flags() {
         hit.score > 0.0,
         "bm25 score must remain readable at the shifted offset (offset 9), got {}",
         hit.score
+    );
+}
+
+// T-712: embed_gap_count_propagates_query_failure (#288 audit RC-1)
+#[test]
+fn embed_gap_count_propagates_query_failure() {
+    let (conn, _dir) = test_db();
+    conn.execute("DROP TABLE embedded_chunk_ids", [])
+        .expect("drop table to simulate a broken schema");
+    assert!(
+        embed_gap_count(&conn).is_err(),
+        "a gap that cannot be measured must surface as Err, never as 0"
     );
 }

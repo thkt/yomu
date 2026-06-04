@@ -33,6 +33,18 @@ pub(crate) fn fts_normalization() -> QueryNormalizationConfig {
 
 pub(crate) use amici::storage::{anon_placeholders, as_sql_params, in_placeholders};
 
+/// SQL predicate selecting embeddable chunks, parameterized by table alias.
+///
+/// Single source of truth for what the embed worklist covers (#288 audit RC-3):
+/// test chunks are chunked and FTS-indexed but never embedded, `IS NOT` keeps
+/// NULL `source_kind` (legacy rows) embeddable, and `inner_fn` chunks are
+/// skipped. Shared by [`get_stats`], `get_unembedded_chunks_for_file`, and
+/// `embed_gap_count` — a drift between those would silently false-clean the
+/// embed-completeness check.
+pub(crate) fn embeddable_predicate(alias: &str) -> String {
+    format!("{alias}.chunk_type != 'inner_fn' AND {alias}.source_kind IS NOT 'test'")
+}
+
 pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, StorageError> {
     let count: u32 = conn.query_row(
         "SELECT COUNT(*) FROM chunks WHERE file_path = ?1",
@@ -45,10 +57,11 @@ pub fn file_exists_in_index(conn: &Connection, file_path: &str) -> Result<bool, 
 pub fn get_stats(conn: &Connection) -> Result<IndexStatus, StorageError> {
     let total_chunks: u32 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
 
-    // Test chunks are chunked and FTS-indexed but not embedded, so they are not
-    // embeddable. `IS NOT` keeps NULL source_kind (legacy rows) embeddable.
     let embeddable_chunks: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM chunks WHERE chunk_type != 'inner_fn' AND source_kind IS NOT 'test'",
+        &format!(
+            "SELECT COUNT(*) FROM chunks WHERE {}",
+            embeddable_predicate("chunks")
+        ),
         [],
         |row| row.get(0),
     )?;

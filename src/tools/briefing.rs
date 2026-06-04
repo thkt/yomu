@@ -139,16 +139,35 @@ impl Yomu {
         })
     }
 
+    /// Unembedded embeddable-chunk count for the embed-completeness check
+    /// (#288). A query failure propagates instead of folding to 0: a gap that
+    /// cannot be measured must not read as "no gap" (audit RC-1 — the gap
+    /// query touches `embedded_chunk_ids`, which the FTS/vec measurement
+    /// queries do not, so they can succeed while this fails).
+    #[cfg(not(feature = "test-support"))]
+    fn embed_gap(&self) -> Result<u32, YomuError> {
+        let conn = self.conn.lock().expect("DB lock poisoned (embed_gap)");
+        Ok(storage::embed_gap_count(&conn)?)
+    }
+
     /// Measures seed-less recall and weighted cap-fit for every bundled GT entry
     /// whose repo matches `repo`, against the current index, and renders a
     /// per-entry plus aggregate report (FR-011). Returns the rendered text and the
     /// aggregate degraded flag. The caller exits non-zero when degraded (FR-012):
     /// an unavailable embedding model makes seed inference fall back and flag
-    /// degraded, so a model-less run never reports a silent pass.
+    /// degraded, so a model-less run never reports a silent pass. An incomplete
+    /// embed (index died mid-embed, #288) likewise degrades, with the gap count
+    /// carried in the report.
+    ///
+    /// Not concurrent-safe: the gap is sampled once before the measurement
+    /// loop, so running `yomu index` against the same DB during a bench run
+    /// can desynchronize the two (audit RC-4). recall-bench is a one-shot
+    /// maintainer diagnostic; do not run it while indexing.
     #[cfg(not(feature = "test-support"))]
     pub fn recall(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
         let gt = corpus::load_bundled()
             .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
+        let embed_gap = self.embed_gap()?;
         let mut entries = Vec::new();
         for entry in gt.entries.iter().filter(|e| e.repo == repo) {
             let task = brief::TaskBrief {
@@ -170,7 +189,7 @@ impl Yomu {
                 report,
             });
         }
-        let report = recall::CorpusReport::new(repo.to_owned(), entries);
+        let report = recall::CorpusReport::new(repo.to_owned(), entries, embed_gap);
         let text = if json {
             recall::render_recall_json(&report)
         } else {
@@ -241,12 +260,20 @@ impl Yomu {
     /// diagnostic (ADR-0005 / OUTCOME.md:39), never a product CLI flag. A
     /// degraded embedding arm records an empty candidate list rather than
     /// falling back to FTS, so the two arms stay isolated.
+    ///
+    /// Not concurrent-safe, same contract as [`Yomu::recall`] (audit RC-4):
+    /// do not run while `yomu index` writes the same DB.
     #[cfg(not(feature = "test-support"))]
     pub fn recall_arms(&self, repo: &str, json: bool) -> Result<(String, bool), YomuError> {
         let gt = corpus::load_bundled()
             .map_err(|e| YomuError::Internal(format!("bundled GT corpus: {e}")))?;
         let depth = ARM_CANDIDATE_DEPTH;
         let k = depth as usize;
+        // An incomplete embed (#288) invalidates the embedding arm: FTS rows
+        // are complete, so only one arm degrades — exactly the asymmetry the
+        // arm comparison must not silently absorb. The constructor folds the
+        // gap into `degraded`.
+        let embed_gap = self.embed_gap()?;
         let mut entries = Vec::new();
         let mut degraded = false;
         for entry in gt.entries.iter().filter(|e| e.repo == repo) {
@@ -285,13 +312,14 @@ impl Yomu {
             entries,
             recall::ARM_K_VALUES,
             degraded,
+            embed_gap,
         );
         let text = if json {
             recall::render_arm_json(&report)
         } else {
             recall::render_arm_plain(&report)
         };
-        Ok((text, degraded))
+        Ok((text, report.degraded))
     }
 }
 
