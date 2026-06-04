@@ -731,6 +731,30 @@ fn replace_file_references_replaces_existing() {
     assert_eq!(dependents[0].file_path, "src/A.tsx");
 }
 
+// T-736: get_edges_among_files_maps_source_and_target_columns
+#[test]
+fn get_edges_among_files_maps_source_and_target_columns() {
+    let (conn, _dir) = test_db();
+    let refs = vec![Reference {
+        source_file: "src/A.tsx".into(),
+        target_file: "src/B.tsx".into(),
+        symbol_name: Some("B".into()),
+        ref_kind: RefKind::Named,
+    }];
+    replace_file_references(&conn, "src/A.tsx", &refs).unwrap();
+
+    // Pins the row-mapper direction: a swap of source/target would invert
+    // every dependency edge fed into brief topo sort.
+    let edges = get_edges_among_files(&conn, &["src/A.tsx", "src/B.tsx"]).unwrap();
+    assert_eq!(
+        edges,
+        vec![FileEdge {
+            source: "src/A.tsx".to_owned(),
+            target: "src/B.tsx".to_owned(),
+        }]
+    );
+}
+
 // T-571: get_direct_references_returns_kind_and_symbol_per_edge
 #[test]
 fn get_direct_references_returns_kind_and_symbol_per_edge() {

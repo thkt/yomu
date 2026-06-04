@@ -3,19 +3,27 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::storage::FileEdge;
+
 use super::BriefChunk;
 
 type DepGraph = (HashMap<String, u32>, HashMap<String, Vec<String>>);
 
-fn build_dep_graph(chunks: &[BriefChunk], edges: &[(String, String)]) -> DepGraph {
+fn build_dep_graph(chunks: &[BriefChunk], edges: &[FileEdge]) -> DepGraph {
     let in_scope: HashSet<&str> = chunks.iter().map(|c| c.file_path.as_str()).collect();
     let mut out_degree: HashMap<String, u32> =
         in_scope.iter().map(|p| ((*p).to_owned(), 0)).collect();
     let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
-    for (src, tgt) in edges {
-        if src != tgt && in_scope.contains(src.as_str()) && in_scope.contains(tgt.as_str()) {
-            *out_degree.entry(src.clone()).or_insert(0) += 1;
-            dependents.entry(tgt.clone()).or_default().push(src.clone());
+    for FileEdge { source, target } in edges {
+        if source != target
+            && in_scope.contains(source.as_str())
+            && in_scope.contains(target.as_str())
+        {
+            *out_degree.entry(source.clone()).or_insert(0) += 1;
+            dependents
+                .entry(target.clone())
+                .or_default()
+                .push(source.clone());
         }
     }
     (out_degree, dependents)
@@ -69,7 +77,7 @@ fn kahn_positions(graph: DepGraph) -> HashMap<String, usize> {
 /// come before their dependents), tie-breaking by file_path lex order.
 /// Within the same file, chunks keep their `start_line` ordering. Cycles
 /// degrade to lex order at the tail of the result.
-pub(super) fn topo_sort(chunks: Vec<BriefChunk>, edges: &[(String, String)]) -> Vec<BriefChunk> {
+pub(super) fn topo_sort(chunks: Vec<BriefChunk>, edges: &[FileEdge]) -> Vec<BriefChunk> {
     let positions = kahn_positions(build_dep_graph(&chunks, edges));
     let mut sorted = chunks;
     sorted.sort_by_key(|c| {
