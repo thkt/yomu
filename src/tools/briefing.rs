@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use amici::model::{degrade_with_warn, record_degraded};
+use rurico::reranker::Rerank;
 
 use crate::{brief, query, storage};
 
@@ -19,7 +20,7 @@ use crate::recall::{self, corpus};
 
 impl Yomu {
     fn infer_seed_paths(&self, task: &str, max_seeds: u32) -> (Vec<String>, bool) {
-        match self.embedder_seed_paths(task, max_seeds) {
+        match self.embedder_seed_paths(task, max_seeds, self.get_reranker()) {
             Ok(paths) => (paths, false),
             Err(reason) => {
                 record_degraded(reason, "brief: seed inference");
@@ -28,27 +29,39 @@ impl Yomu {
         }
     }
 
-    fn embedder_seed_paths(
+    pub(super) fn embedder_seed_paths(
         &self,
         task: &str,
         max_seeds: u32,
+        reranker: Option<&dyn Rerank>,
     ) -> Result<Vec<String>, DegradedReason> {
         let embedder = self.try_embedder_arc()?;
         let task_emb = embedder.embed_query(task).map_err(degrade_with_warn(
             "brief seed inference: embed_query",
             DegradedReason::ProbeFailed,
         ))?;
+        // Oversample when a cross-encoder is available so it can promote
+        // candidates the vec top-N would cut off; the RRF blend keeps the vec
+        // rank as a prior and rerank failure keeps the vec order outright
+        // (warn, not degraded) (#290).
+        let fetch = if reranker.is_some() {
+            max_seeds.saturating_mul(3)
+        } else {
+            max_seeds
+        };
         let conn = self
             .conn
             .lock()
             .expect("DB lock poisoned (embedder_seed_paths)");
-        let results = storage::vec_search(&conn, &task_emb, max_seeds, None, &[]).map_err(
-            degrade_with_warn(
+        let mut results =
+            storage::vec_search(&conn, &task_emb, fetch, None, &[]).map_err(degrade_with_warn(
                 "brief seed inference: vec_search",
                 DegradedReason::ProbeFailed,
-            ),
-        )?;
+            ))?;
         drop(conn);
+        if let Some(ranker) = reranker {
+            query::cross_encoder_rrf_rerank(&mut results, task, ranker);
+        }
 
         Ok(dedupe_seed_paths(results, max_seeds as usize))
     }
@@ -299,7 +312,11 @@ impl Yomu {
             let must_set: HashSet<String> =
                 entry.must_include.iter().map(|f| f.path.clone()).collect();
 
-            let emb_ranked = match self.embedder_seed_paths(&entry.task, depth) {
+            // Direct call (not infer_seed_paths) because this arm controls
+            // `depth` and isolates the embedding stage; it still passes the
+            // reranker so the bench measures the production inference path (#290).
+            let emb_ranked = match self.embedder_seed_paths(&entry.task, depth, self.get_reranker())
+            {
                 Ok(paths) => paths,
                 Err(reason) => {
                     record_degraded(reason, "recall arms: embedding");

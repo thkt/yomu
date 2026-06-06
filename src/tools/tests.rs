@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use rurico::embed::{Embed, FailingEmbedder, MockEmbedder};
+use rurico::reranker::{RankedResult, Rerank, RerankerError};
 use tempfile::{TempDir, tempdir};
 use tracing_test::traced_test;
 
@@ -2905,6 +2906,344 @@ fn yomu_brief_rejects_symbol_seed() {
             YomuError::InvalidInput(InvalidInputKind::SeedSymbolUnimplemented)
         ),
         "Symbol seed must be rejected with SeedSymbolUnimplemented, got: {err:?}"
+    );
+}
+
+// --- Seed-inference reranker wiring: oversample lets the cross-encoder surface vec-invisible candidates (#290) ---
+
+/// Reranker that scores a document by substring match on its content.
+///
+/// First matching `(substr, score)` entry wins; non-matching documents
+/// score 0.0. `rerank` sorts by score descending (ties broken by ascending
+/// input index, matching the production `Rerank` contract). All three trait
+/// methods derive from the same `score_doc`, so the produced order is
+/// identical whether production calls `rerank` or `score_batch` + sort.
+struct ScriptedReranker {
+    scores: Vec<(&'static str, f32)>,
+}
+
+impl ScriptedReranker {
+    fn new(scores: Vec<(&'static str, f32)>) -> Self {
+        Self { scores }
+    }
+
+    fn score_doc(&self, doc: &str) -> f32 {
+        self.scores
+            .iter()
+            .find(|(substr, _)| doc.contains(substr))
+            .map(|(_, s)| *s)
+            .unwrap_or(0.0)
+    }
+}
+
+impl Rerank for ScriptedReranker {
+    fn score(&self, _query: &str, document: &str) -> Result<f32, RerankerError> {
+        Ok(self.score_doc(document))
+    }
+
+    fn score_batch(&self, pairs: &[(&str, &str)]) -> Result<Vec<f32>, RerankerError> {
+        Ok(pairs.iter().map(|(_, doc)| self.score_doc(doc)).collect())
+    }
+
+    fn rerank(&self, _query: &str, documents: &[&str]) -> Result<Vec<RankedResult>, RerankerError> {
+        let mut results: Vec<RankedResult> = documents
+            .iter()
+            .enumerate()
+            .map(|(index, doc)| RankedResult {
+                index,
+                score: self.score_doc(doc),
+            })
+            .collect();
+        results.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.index.cmp(&b.index)));
+        Ok(results)
+    }
+}
+
+/// Reranker whose every method returns an inference error, exercising the
+/// rerank-failure fallback path.
+struct FailingReranker;
+
+impl Rerank for FailingReranker {
+    fn score(&self, _query: &str, _document: &str) -> Result<f32, RerankerError> {
+        Err(RerankerError::Inference("scripted failure".into()))
+    }
+
+    fn score_batch(&self, _pairs: &[(&str, &str)]) -> Result<Vec<f32>, RerankerError> {
+        Err(RerankerError::Inference("scripted failure".into()))
+    }
+
+    fn rerank(
+        &self,
+        _query: &str,
+        _documents: &[&str],
+    ) -> Result<Vec<RankedResult>, RerankerError> {
+        Err(RerankerError::Inference("scripted failure".into()))
+    }
+}
+
+/// Inserts four embedded chunks with strictly increasing L2 distance to the
+/// MockEmbedder query vector (unit vectors; dist² = 2 - 2·e[0]): `src/a.rs`
+/// (dist 0, vec-nearest), `src/b.rs` (≈0.894), `src/c.rs` (≈1.183),
+/// `src/d.rs` (≈1.414). Contents carry distinct substrings the
+/// `ScriptedReranker` keys on.
+fn seed_rerank_chunks(conn: &storage::Db) {
+    let chunk = |name: &'static str, content: &'static str| storage::NewChunk {
+        chunk_type: &storage::ChunkType::RustFn,
+        name: Some(name),
+        content,
+        start_line: 1,
+        end_line: 3,
+        parent_index: None,
+        source_kind: None,
+        injection_flags: None,
+    };
+    let unit_emb = |e0: f32, e1: f32| {
+        let mut emb = vec![0.0_f32; storage::EMBEDDING_DIMS];
+        emb[0] = e0;
+        emb[1] = e1;
+        emb
+    };
+    let fixtures = [
+        (
+            "src/a.rs",
+            "alpha_handler",
+            "fn alpha_handler() {}",
+            1.0,
+            0.0,
+        ),
+        ("src/b.rs", "beta_handler", "fn beta_handler() {}", 0.6, 0.8),
+        (
+            "src/c.rs",
+            "gamma_handler",
+            "fn gamma_handler() {}",
+            0.3,
+            0.9539,
+        ),
+        (
+            "src/d.rs",
+            "delta_handler",
+            "fn delta_handler() {}",
+            0.0,
+            1.0,
+        ),
+    ];
+    for (path, name, content, e0, e1) in fixtures {
+        storage::insert_chunk(
+            conn,
+            path,
+            &chunk(name, content),
+            name,
+            &storage::ce(unit_emb(e0, e1)),
+            None,
+        )
+        .unwrap();
+    }
+}
+
+// T-740: embedder_seed_paths_reranker_promotes_oversampled_candidate [#290]
+// max_seeds=1: fetch=1 alone would return only A (vec-nearest). With
+// Some(reranker), oversample fetches max_seeds*3=3 candidates (A, B, C) and
+// RRF blends vec rank with cross rank (B: vec1+cross0 = 0.03306 beats
+// A: vec0+cross2 = 0.03280 and C: vec2+cross1 = 0.03252), promoting B to
+// rank 1. This pins BOTH oversample (B must be fetched) and the RRF blend
+// (B's cross win must outweigh A's vec win, asymmetrically).
+#[test]
+fn embedder_seed_paths_reranker_promotes_oversampled_candidate() {
+    let (conn, dir) = test_db();
+    seed_rerank_chunks(&conn);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
+    );
+    let scripted = ScriptedReranker::new(vec![
+        ("fn beta_handler", 0.9),
+        ("fn gamma_handler", 0.5),
+        ("fn alpha_handler", 0.1),
+    ]);
+
+    let paths = y
+        .embedder_seed_paths("task text", 1, Some(&scripted))
+        .unwrap();
+
+    assert_eq!(
+        paths,
+        vec!["src/b.rs".to_owned()],
+        "RRF must promote the oversampled candidate B over the vec-nearest A"
+    );
+}
+
+// T-745: embedder_seed_paths_rrf_keeps_vec_top_despite_low_cross_score [#290]
+// The discriminator between RRF blending and cross-score-only sorting: A is
+// vec rank 0 but cross rank 3 (last), B..D fill cross ranks 0..2. RRF keeps
+// A second (1/60 + 1/63 = 0.03254 beats C's 1/62 + 1/61 = 0.03253), while
+// cross-only sorting would bury A at the tail ([b, c] for max_seeds=2). This
+// is the amici semantic-far failure mode measured on the cross-only wiring:
+// one low cross score must not demote a high-confidence vec hit.
+#[test]
+fn embedder_seed_paths_rrf_keeps_vec_top_despite_low_cross_score() {
+    let (conn, dir) = test_db();
+    seed_rerank_chunks(&conn);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
+    );
+    let scripted = ScriptedReranker::new(vec![
+        ("fn beta_handler", 0.9),
+        ("fn gamma_handler", 0.7),
+        ("fn delta_handler", 0.5),
+        ("fn alpha_handler", 0.1),
+    ]);
+
+    let paths = y
+        .embedder_seed_paths("task text", 2, Some(&scripted))
+        .unwrap();
+
+    assert_eq!(
+        paths,
+        vec!["src/b.rs".to_owned(), "src/a.rs".to_owned()],
+        "RRF must keep the vec-nearest A in the top results even when the cross-encoder scores it last"
+    );
+}
+
+// T-741: embedder_seed_paths_without_reranker_keeps_vec_order [#290]
+// Same fixture, reranker=None, max_seeds=2: legacy behavior returns files in
+// ascending-distance (vec) order, A then B, unaffected by any cross-encoder.
+#[test]
+fn embedder_seed_paths_without_reranker_keeps_vec_order() {
+    let (conn, dir) = test_db();
+    seed_rerank_chunks(&conn);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
+    );
+
+    let paths = y.embedder_seed_paths("task text", 2, None).unwrap();
+
+    assert_eq!(
+        paths,
+        vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()],
+        "without a reranker the result must keep vec (ascending-distance) order"
+    );
+}
+
+// T-742: embedder_seed_paths_reranker_failure_falls_back_to_vec_order [#290]
+// A reranker whose every method errors must not surface as a DegradedReason:
+// production falls back to vec order and still returns Ok. max_seeds=2 →
+// the full Ok vec is exactly the vec-order pair A, B.
+#[test]
+fn embedder_seed_paths_reranker_failure_falls_back_to_vec_order() {
+    let (conn, dir) = test_db();
+    seed_rerank_chunks(&conn);
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
+    );
+    let failing = FailingReranker;
+
+    let result = y.embedder_seed_paths("task text", 2, Some(&failing));
+
+    assert_eq!(
+        result,
+        Ok(vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()]),
+        "a reranker error must fall back to vec order and stay Ok, not become a DegradedReason"
+    );
+}
+
+// T-743: embedder_seed_paths_dedupes_files_after_rerank [#290]
+// Two chunks live in the SAME file src/a.rs (both high rerank score) plus one
+// chunk in src/b.rs (low score); max_seeds=2 with Some(reranker). After rerank
+// the order is [a-chunk, a-chunk, b-chunk]; file dedupe applies AFTER rerank,
+// so a.rs appears once and the result is [a, b] — not [a, a].
+#[test]
+fn embedder_seed_paths_dedupes_files_after_rerank() {
+    let (conn, dir) = test_db();
+    let mut emb_a = vec![0.0_f32; storage::EMBEDDING_DIMS];
+    emb_a[0] = 1.0;
+    let new_a = |name: &'static str, content: &'static str, start: u32| storage::NewChunk {
+        chunk_type: &storage::ChunkType::RustFn,
+        name: Some(name),
+        content,
+        start_line: start,
+        end_line: start + 2,
+        parent_index: None,
+        source_kind: None,
+        injection_flags: None,
+    };
+    storage::insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_a("alpha_one", "fn alpha_one() {}", 1),
+        "ha1",
+        &storage::ce(emb_a.clone()),
+        None,
+    )
+    .unwrap();
+    storage::insert_chunk(
+        &conn,
+        "src/a.rs",
+        &new_a("alpha_two", "fn alpha_two() {}", 10),
+        "ha2",
+        &storage::ce(emb_a),
+        None,
+    )
+    .unwrap();
+    let mut emb_b = vec![0.0_f32; storage::EMBEDDING_DIMS];
+    emb_b[0] = 0.6;
+    emb_b[1] = 0.8;
+    storage::insert_chunk(
+        &conn,
+        "src/b.rs",
+        &new_a("beta_low", "fn beta_low() {}", 1),
+        "hb",
+        &storage::ce(emb_b),
+        None,
+    )
+    .unwrap();
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::default()) as Arc<dyn Embed>),
+    );
+    let scripted = ScriptedReranker::new(vec![
+        ("fn alpha_one", 0.9),
+        ("fn alpha_two", 0.8),
+        ("fn beta_low", 0.1),
+    ]);
+
+    let paths = y
+        .embedder_seed_paths("task text", 2, Some(&scripted))
+        .unwrap();
+
+    assert_eq!(
+        paths,
+        vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()],
+        "file dedupe must apply after rerank — a.rs collapses to one entry, not [a, a]"
+    );
+}
+
+// T-744: embedder_seed_paths_vec_search_failure_degrades [#290]
+#[test]
+fn embedder_seed_paths_vec_search_failure_degrades() {
+    let (conn, dir) = test_db();
+    seed_rerank_chunks(&conn);
+    // 8-dim query embedding against the 768-dim vec0 table: vec_search errors,
+    // which must surface as ProbeFailed (the seed-inference degrade contract).
+    let y = Yomu::for_test(
+        conn,
+        dir.path().to_path_buf(),
+        Some(Arc::new(MockEmbedder::with_dims(8)) as Arc<dyn Embed>),
+    );
+
+    let err = y.embedder_seed_paths("task text", 2, None).unwrap_err();
+
+    assert_eq!(
+        err,
+        DegradedReason::ProbeFailed,
+        "a vec_search failure must degrade as ProbeFailed, not panic or pass through"
     );
 }
 
