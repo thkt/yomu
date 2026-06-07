@@ -14,20 +14,35 @@ pub struct PathAlias {
     pub target: String,
 }
 
+/// tsconfig path-resolution inputs: `paths` aliases plus the explicit
+/// `baseUrl` (None when tsconfig omits it — bare specifiers then stay npm
+/// packages; `paths` target composition separately defaults to ".").
+#[derive(Debug, Default, PartialEq)]
+pub struct TsPathConfig {
+    pub aliases: Vec<PathAlias>,
+    pub base_url: Option<String>,
+}
+
 pub struct Resolver {
     root: PathBuf,
     canonical_root: Option<PathBuf>,
     aliases: Vec<PathAlias>,
+    base_url: Option<String>,
 }
 
 impl Resolver {
-    fn apply_alias(&self, source: &str) -> Option<String> {
-        for alias in &self.aliases {
-            if let Some(rest) = source.strip_prefix(&alias.prefix) {
-                return Some(format!("./{}{}", alias.target, rest));
-            }
-        }
-        None
+    /// All alias rewrites whose prefix matches `source`, in declaration order.
+    /// Multiple candidates arise from multi-target `paths` values (#233) and
+    /// from distinct alias keys sharing a matching prefix.
+    fn alias_candidates(&self, source: &str) -> Vec<String> {
+        self.aliases
+            .iter()
+            .filter_map(|alias| {
+                source
+                    .strip_prefix(&alias.prefix)
+                    .map(|rest| format!("./{}{}", alias.target, rest))
+            })
+            .collect()
     }
 
     fn to_relative(&self, abs: &Path) -> Option<String> {
@@ -63,31 +78,39 @@ impl Resolver {
 
     pub fn new(root: &Path) -> Self {
         let canonical_root = fs_optional::canonicalize_optional(root);
+        let config = load_path_config(root);
         Self {
             root: root.to_path_buf(),
             canonical_root,
-            aliases: load_aliases(root),
+            aliases: config.aliases,
+            base_url: config.base_url,
         }
     }
 
     /// Returns None for bare specifiers (npm packages) or unresolvable paths.
     pub fn resolve(&self, source: &str, from_file: &str) -> Option<String> {
-        let resolved_source = self.apply_alias(source);
-        let source = resolved_source.as_deref().unwrap_or(source);
-
-        if !source.starts_with('.') && !source.starts_with('/') && resolved_source.is_none() {
-            return None;
+        // tsconfig `paths` first: probe each matching alias target in
+        // declaration order, first existing file wins (TypeScript tries the
+        // substitutions in order). A matched prefix whose targets all miss
+        // resolves to None without falling through to baseUrl below.
+        let alias_candidates = self.alias_candidates(source);
+        if !alias_candidates.is_empty() {
+            return alias_candidates
+                .iter()
+                .find_map(|candidate| self.probe_path(&self.root.join(candidate)));
         }
 
-        let base_dir = if resolved_source.is_some() {
-            self.root.clone()
-        } else {
+        if source.starts_with('.') || source.starts_with('/') {
             let from_abs = self.root.join(from_file);
-            from_abs.parent()?.to_path_buf()
-        };
+            let base_dir = from_abs.parent()?;
+            return self.probe_path(&base_dir.join(source));
+        }
 
-        let candidate = base_dir.join(source);
-        self.probe_path(&candidate)
+        // Bare specifier: with an explicit `baseUrl`, TypeScript resolves
+        // non-relative imports against it before node_modules (#233). No
+        // explicit baseUrl (or no file there) → npm package, not ours.
+        let base_url = self.base_url.as_deref()?;
+        self.probe_path(&self.root.join(base_url).join(source))
     }
 }
 
@@ -127,14 +150,14 @@ pub fn to_relative_path(abs: &Path, root: &Path, canonical_root: Option<&Path>) 
     })
 }
 
-pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
+pub fn load_path_config(root: &Path) -> TsPathConfig {
     let tsconfig_path = root.join("tsconfig.json");
     let content = match fs::read_to_string(&tsconfig_path) {
         Ok(c) => c,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return vec![],
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return TsPathConfig::default(),
         Err(e) => {
             tracing::warn!(path = %tsconfig_path.display(), error = %e, "Failed to read tsconfig.json");
-            return vec![];
+            return TsPathConfig::default();
         }
     };
 
@@ -142,43 +165,65 @@ pub fn load_aliases(root: &Path) -> Vec<PathAlias> {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(path = %tsconfig_path.display(), error = %e, "Failed to parse tsconfig.json");
-            return vec![];
+            return TsPathConfig::default();
         }
     };
 
     let compiler_options = match json.get("compilerOptions") {
         Some(co) => co,
-        None => return vec![],
+        None => return TsPathConfig::default(),
+    };
+
+    let explicit_base_url = compiler_options.get("baseUrl").and_then(|b| b.as_str());
+
+    // An absolute baseUrl either escapes the project root (never indexed) or
+    // would fold into a bogus root-relative path via compose_alias_target
+    // (`/abs` → `.//abs`). Disable tsconfig path resolution entirely (#233).
+    if let Some(base) = explicit_base_url
+        && base.starts_with('/')
+    {
+        tracing::warn!(base_url = base, path = %tsconfig_path.display(), "absolute baseUrl is unsupported; ignoring tsconfig paths/baseUrl");
+        return TsPathConfig::default();
+    }
+
+    let base_url_owned = explicit_base_url.map(str::to_owned);
+
+    let Some(paths) = compiler_options.get("paths").and_then(|p| p.as_object()) else {
+        return TsPathConfig {
+            aliases: Vec::new(),
+            base_url: base_url_owned,
+        };
     };
 
     // TypeScript resolves `paths` targets relative to `baseUrl` (which defaults
     // to "." when omitted). Without folding `baseUrl` in, an alias like
     // `{ "baseUrl": "src", "paths": { "@/*": ["*"] } }` resolves to the repo root
     // instead of `src/`, dropping the target from the forward closure.
-    let base_url = compiler_options
-        .get("baseUrl")
-        .and_then(|b| b.as_str())
-        .unwrap_or(".");
+    let base_url = explicit_base_url.unwrap_or(".");
 
-    let paths = match compiler_options.get("paths").and_then(|p| p.as_object()) {
-        Some(p) => p,
-        None => return vec![],
-    };
-
-    paths
+    let aliases = paths
         .iter()
         .filter_map(|(key, value)| {
-            // key: "@/*", value: ["*"] (relative to baseUrl) or ["src/*"]
-            let prefix = key.strip_suffix('*')?;
-            let target_arr = value.as_array()?;
-            let target_str = target_arr.first()?.as_str()?;
-            let raw_target = target_str.strip_suffix('*')?;
-            Some(PathAlias {
-                prefix: prefix.to_owned(),
-                target: compose_alias_target(base_url, raw_target),
+            // key: "@/*", value: ["*"] (relative to baseUrl) or ["src/*", "lib/*"]
+            Some((key.strip_suffix('*')?, value.as_array()?))
+        })
+        .flat_map(|(prefix, targets)| {
+            // Keep every wildcard target: TypeScript probes the substitutions
+            // in order until one exists (#233).
+            targets.iter().filter_map(move |target| {
+                let raw_target = target.as_str()?.strip_suffix('*')?;
+                Some(PathAlias {
+                    prefix: prefix.to_owned(),
+                    target: compose_alias_target(base_url, raw_target),
+                })
             })
         })
-        .collect()
+        .collect();
+
+    TsPathConfig {
+        aliases,
+        base_url: base_url_owned,
+    }
 }
 
 /// Prefix a tsconfig `paths` target with `base_url` (TypeScript resolves `paths`
