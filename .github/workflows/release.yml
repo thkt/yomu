@@ -112,11 +112,6 @@ jobs:
           repository: thkt/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-      - name: Download artifacts for checksums
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          path: artifacts
-
       - name: Update Formula
         env:
           VERSION: ${{ needs.release.outputs.version }}
@@ -127,7 +122,19 @@ jobs:
             exit 1
           fi
 
-          SHA_AARCH64_DARWIN=$(sha256sum artifacts/yomu-aarch64-apple-darwin/yomu-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          # Compute the checksum from the released asset itself — the same URL
+          # the formula points at. Computing from CI artifacts broke silently
+          # when upload/download-artifact major bumps changed their on-disk
+          # layout: sha256sum failed on a missing path, the trailing `cut`
+          # masked the failure under `bash -e`, and an empty sha256 shipped
+          # for six releases (#307).
+          curl -fsSL --retry 3 -o /tmp/yomu-aarch64-apple-darwin.tar.gz \
+            "https://github.com/thkt/yomu/releases/download/${TAG}/yomu-aarch64-apple-darwin.tar.gz"
+          SHA_AARCH64_DARWIN=$(sha256sum /tmp/yomu-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          if [[ ! "$SHA_AARCH64_DARWIN" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "::error::sha256 computation failed for ${TAG}: '${SHA_AARCH64_DARWIN}'"
+            exit 1
+          fi
 
           mkdir -p Formula
           cat > Formula/yomu.rb << FORMULA
