@@ -114,7 +114,7 @@ fn load_aliases_from_tsconfig() {
         }"#;
     fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
 
-    let aliases = load_aliases(tmp.path());
+    let aliases = load_path_config(tmp.path()).aliases;
     assert_eq!(
         aliases,
         vec![PathAlias {
@@ -141,7 +141,7 @@ fn load_aliases_with_baseurl() {
         }"#;
     fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
 
-    let aliases = load_aliases(tmp.path());
+    let aliases = load_path_config(tmp.path()).aliases;
     assert_eq!(
         aliases,
         vec![PathAlias {
@@ -180,7 +180,7 @@ fn compose_alias_target_variants() {
 fn load_aliases_no_compiler_options() {
     let tmp = tempdir().unwrap();
     fs::write(tmp.path().join("tsconfig.json"), "{}").unwrap();
-    assert!(load_aliases(tmp.path()).is_empty());
+    assert!(load_path_config(tmp.path()).aliases.is_empty());
 }
 
 // T-332: load_aliases_no_tsconfig
@@ -188,7 +188,7 @@ fn load_aliases_no_compiler_options() {
 fn load_aliases_no_tsconfig() {
     let tmp = tempdir().unwrap();
 
-    let aliases = load_aliases(tmp.path());
+    let aliases = load_path_config(tmp.path()).aliases;
     assert!(aliases.is_empty());
 }
 
@@ -296,7 +296,7 @@ fn load_aliases_multiple() {
         }"#;
     fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
 
-    let aliases = load_aliases(tmp.path());
+    let aliases = load_path_config(tmp.path()).aliases;
     assert_eq!(aliases.len(), 2);
     assert!(aliases.contains(&PathAlias {
         prefix: "@/".to_owned(),
@@ -407,4 +407,233 @@ fn resolve_html_file() {
     let resolver = Resolver::new(tmp.path());
     let result = resolver.resolve("./template.html", "src/App.tsx");
     assert_eq!(result, Some("src/template.html".to_owned()));
+}
+
+// T-755: load_path_config_multi_target_paths
+// A multi-target `paths` value (`["src/*", "lib/*"]`) yields one PathAlias per
+// target in declaration order (#233: previously only `first()` was kept).
+#[test]
+fn load_path_config_multi_target_paths() {
+    let tmp = tempdir().unwrap();
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "paths": {
+                    "@/*": ["src/*", "lib/*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let config = load_path_config(tmp.path());
+    assert_eq!(
+        config.aliases,
+        vec![
+            PathAlias {
+                prefix: "@/".to_owned(),
+                target: "src/".to_owned(),
+            },
+            PathAlias {
+                prefix: "@/".to_owned(),
+                target: "lib/".to_owned(),
+            },
+        ]
+    );
+}
+
+// T-756: resolve_alias_second_target_wins_when_first_missing
+// TypeScript probes `paths` substitutions in order: a file absent under the
+// first target but present under the second resolves via the second.
+#[test]
+fn resolve_alias_second_target_wins_when_first_missing() {
+    let tmp = tempdir().unwrap();
+    let lib = tmp.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    fs::write(lib.join("auth.ts"), "").unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "paths": {
+                    "@/*": ["src/*", "lib/*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("@/auth", "src/App.tsx");
+    assert_eq!(result, Some("lib/auth.ts".to_owned()));
+}
+
+// T-757: resolve_alias_first_target_wins_when_both_exist
+// When a file exists under both targets, declaration order decides.
+#[test]
+fn resolve_alias_first_target_wins_when_both_exist() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    let lib = tmp.path().join("lib");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&lib).unwrap();
+    fs::write(src.join("auth.ts"), "").unwrap();
+    fs::write(lib.join("auth.ts"), "").unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "paths": {
+                    "@/*": ["src/*", "lib/*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("@/auth", "src/App.tsx");
+    assert_eq!(result, Some("src/auth.ts".to_owned()));
+}
+
+// T-758: resolve_bare_specifier_with_baseurl
+// `{ "baseUrl": "src" }` without `paths`: a bare specifier resolves relative
+// to baseUrl (#233: previously dropped as an npm package).
+#[test]
+fn resolve_bare_specifier_with_baseurl() {
+    let tmp = tempdir().unwrap();
+    let util = tmp.path().join("src").join("util");
+    fs::create_dir_all(&util).unwrap();
+    fs::write(util.join("format.ts"), "").unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "src"
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("util/format", "src/App.tsx");
+    assert_eq!(result, Some("src/util/format.ts".to_owned()));
+}
+
+// T-759: resolve_bare_specifier_with_dot_baseurl
+// An explicit `"baseUrl": "."` (the CRA / Next.js absolute-import form)
+// resolves bare specifiers from the project root.
+#[test]
+fn resolve_bare_specifier_with_dot_baseurl() {
+    let tmp = tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("util.ts"), "").unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "."
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("src/util", "src/App.tsx");
+    assert_eq!(result, Some("src/util.ts".to_owned()));
+}
+
+// T-760: resolve_bare_specifier_missing_with_baseurl_returns_none
+// With baseUrl set, a bare specifier with no file underneath stays an npm
+// package (None) instead of misresolving.
+#[test]
+fn resolve_bare_specifier_missing_with_baseurl_returns_none() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "src"
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("react", "src/App.tsx");
+    assert_eq!(result, None);
+}
+
+// T-761: load_path_config_absolute_baseurl_disabled
+// An absolute baseUrl disables tsconfig path resolution entirely: targets
+// outside the root are never indexed, and folding `/abs` into a root-relative
+// path would misresolve (#233).
+#[test]
+fn load_path_config_absolute_baseurl_disabled() {
+    let tmp = tempdir().unwrap();
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "/abs",
+                "paths": {
+                    "@/*": ["*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    assert_eq!(load_path_config(tmp.path()), TsPathConfig::default());
+}
+
+// T-762: resolve_absolute_baseurl_does_not_misresolve_to_root_subdir
+// Guards the #233 misresolution: with `"baseUrl": "/abs"`, an alias must not
+// fold into the root-relative `abs/` directory even when a matching file
+// exists there.
+#[test]
+fn resolve_absolute_baseurl_does_not_misresolve_to_root_subdir() {
+    let tmp = tempdir().unwrap();
+    let abs_dir = tmp.path().join("abs").join("lib");
+    fs::create_dir_all(&abs_dir).unwrap();
+    fs::write(abs_dir.join("auth.ts"), "").unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": "/abs",
+                "paths": {
+                    "@/*": ["*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("@/lib/auth", "src/App.tsx");
+    assert_eq!(result, None);
+}
+
+// T-763: resolve_alias_all_targets_missing_returns_none
+// A matched alias prefix whose targets all miss resolves to None without
+// falling through to the baseUrl bare-specifier route.
+#[test]
+fn resolve_alias_all_targets_missing_returns_none() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+
+    let tsconfig = r#"{
+            "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                    "@/*": ["src/*", "lib/*"]
+                }
+            }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    let resolver = Resolver::new(tmp.path());
+    let result = resolver.resolve("@/missing", "src/App.tsx");
+    assert_eq!(result, None);
+}
+
+// T-764: load_path_config_malformed_json_returns_default
+// A tsconfig that serde_json cannot parse (e.g. the common JSONC comment
+// form) disables path resolution without panicking.
+#[test]
+fn load_path_config_malformed_json_returns_default() {
+    let tmp = tempdir().unwrap();
+    let tsconfig = r#"{
+            // JSONC comment: serde_json rejects this
+            "compilerOptions": { "baseUrl": "src" }
+        }"#;
+    fs::write(tmp.path().join("tsconfig.json"), tsconfig).unwrap();
+
+    assert_eq!(load_path_config(tmp.path()), TsPathConfig::default());
 }
