@@ -44,6 +44,23 @@ pub(super) fn get_recorded_warnings() -> Vec<(DegradedReason, String)> {
     RECORDED_WARNINGS.with(|w| w.borrow().clone())
 }
 
+/// Identifier of the embedding model this binary embeds with, recorded in
+/// `index_meta` to detect same-dimension model swaps (#230). Keyed on the
+/// `ModelId` variant name (rurico keeps the HF repo id behind a private
+/// trait), so it tracks any `DEFAULT` change automatically; a variant rename
+/// only causes one spurious full re-embed (safe direction). In-place weight
+/// updates under the same variant are not detected.
+#[cfg(not(feature = "test-support"))]
+pub(super) fn current_model_id() -> String {
+    format!("{:?}", ModelId::DEFAULT)
+}
+
+/// Test-support build: a fixed id matching the deterministic stub embedder.
+#[cfg(feature = "test-support")]
+pub(super) fn current_model_id() -> String {
+    "test-support/mock-embedder".to_owned()
+}
+
 #[cfg(not(feature = "test-support"))]
 fn try_load_embedder() -> Result<Arc<dyn Embed>, DegradedReason> {
     let result = try_load_embedder_with(

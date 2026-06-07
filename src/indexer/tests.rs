@@ -1373,3 +1373,171 @@ fn prepare_chunks_source_kind_classification_per_rel_path() {
         );
     }
 }
+
+// --- #230: sync_embeddings_with_model ---
+
+/// One embeddable chunk per file, embedded via MockEmbedder. Returns the conn.
+fn db_with_embedded_chunks(dir: &TempDir, files: u32) -> Arc<Mutex<storage::Db>> {
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+    for i in 0..files {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/M{i}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&format!("M{i}")),
+                content: &format!("function M{i}() {{}}"),
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+                source_kind: None,
+                injection_flags: None,
+            }],
+            &format!("m{i}"),
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+    let conn = Arc::new(Mutex::new(conn));
+    run_incremental_embed(&conn, &MockEmbedder::default(), u32::MAX, None).unwrap();
+    conn
+}
+
+fn embedded_rows(conn: &Arc<Mutex<storage::Db>>) -> i64 {
+    conn.lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+        .unwrap()
+}
+
+// T-749: sync_embeddings_with_model_records_id_on_first_run
+#[test]
+fn sync_embeddings_with_model_records_id_on_first_run() {
+    let dir = tempdir().unwrap();
+    let conn = db_with_embedded_chunks(&dir, 2);
+
+    let outcome = {
+        let guard = conn.lock().unwrap();
+        sync_embeddings_with_model::<IndexError>(&guard, "model-a", || {
+            panic!("ensure_loadable must not run when nothing is stored")
+        })
+        .unwrap()
+    };
+
+    assert!(matches!(outcome, ModelSync::Aligned));
+    let guard = conn.lock().unwrap();
+    assert_eq!(
+        storage::get_index_meta(&guard, EMBED_MODEL_META_KEY)
+            .unwrap()
+            .as_deref(),
+        Some("model-a"),
+        "first run records the current model id"
+    );
+    drop(guard);
+    assert_eq!(embedded_rows(&conn), 2, "existing embeddings survive");
+}
+
+// T-750: sync_embeddings_with_model_noop_on_match
+#[test]
+fn sync_embeddings_with_model_noop_on_match() {
+    let dir = tempdir().unwrap();
+    let conn = db_with_embedded_chunks(&dir, 2);
+    {
+        let guard = conn.lock().unwrap();
+        storage::set_index_meta(&guard, EMBED_MODEL_META_KEY, "model-a").unwrap();
+    }
+
+    let outcome = {
+        let guard = conn.lock().unwrap();
+        sync_embeddings_with_model::<IndexError>(&guard, "model-a", || {
+            panic!("ensure_loadable must not run on a match")
+        })
+        .unwrap()
+    };
+
+    assert!(matches!(outcome, ModelSync::Aligned));
+    assert_eq!(embedded_rows(&conn), 2, "embeddings untouched on match");
+}
+
+// T-751: sync_embeddings_with_model_keeps_embeddings_when_model_unavailable
+// #230 safety property: a mismatch must never wipe embeddings unless the
+// replacement embedder is confirmed loadable.
+#[test]
+fn sync_embeddings_with_model_keeps_embeddings_when_model_unavailable() {
+    let dir = tempdir().unwrap();
+    let conn = db_with_embedded_chunks(&dir, 2);
+    {
+        let guard = conn.lock().unwrap();
+        storage::set_index_meta(&guard, EMBED_MODEL_META_KEY, "model-a").unwrap();
+    }
+
+    let result = {
+        let guard = conn.lock().unwrap();
+        sync_embeddings_with_model::<IndexError>(&guard, "model-b", || {
+            Err(IndexError::Internal("model unavailable".into()))
+        })
+    };
+
+    assert!(result.is_err(), "loader failure must propagate");
+    assert_eq!(
+        embedded_rows(&conn),
+        2,
+        "embeddings must be untouched when the new model cannot load"
+    );
+    let guard = conn.lock().unwrap();
+    assert_eq!(
+        storage::get_index_meta(&guard, EMBED_MODEL_META_KEY)
+            .unwrap()
+            .as_deref(),
+        Some("model-a"),
+        "stored id must stay on the old model so the next run re-detects the swap"
+    );
+}
+
+// T-752: sync_embeddings_with_model_clears_stale_and_reembeds_on_swap
+#[test]
+fn sync_embeddings_with_model_clears_stale_and_reembeds_on_swap() {
+    let dir = tempdir().unwrap();
+    let conn = db_with_embedded_chunks(&dir, 3);
+    {
+        let guard = conn.lock().unwrap();
+        storage::set_index_meta(&guard, EMBED_MODEL_META_KEY, "model-a").unwrap();
+    }
+
+    let outcome = {
+        let guard = conn.lock().unwrap();
+        sync_embeddings_with_model::<IndexError>(&guard, "model-b", || Ok(())).unwrap()
+    };
+
+    match outcome {
+        ModelSync::Reembedding { previous } => assert_eq!(previous, "model-a"),
+        ModelSync::Aligned => panic!("swap must report Reembedding"),
+    }
+    assert_eq!(embedded_rows(&conn), 0, "stale embeddings cleared");
+    {
+        let guard = conn.lock().unwrap();
+        assert_eq!(
+            storage::get_index_meta(&guard, EMBED_MODEL_META_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("model-b"),
+            "stored id moves to the new model"
+        );
+        assert_eq!(
+            storage::embed_gap_count(&guard).unwrap(),
+            3,
+            "every chunk is pending again"
+        );
+    }
+
+    // The normal incremental embed then refills everything without re-chunking.
+    let result = run_incremental_embed(&conn, &MockEmbedder::default(), u32::MAX, None).unwrap();
+    assert_eq!(
+        result.chunks_embedded, 3,
+        "all chunks re-embed after the swap"
+    );
+    assert_eq!(embedded_rows(&conn), 3);
+}

@@ -5,11 +5,24 @@ use rurico::embed::Embed;
 
 use crate::{indexer, storage};
 
-use super::embedder::DegradedReason;
+use super::embedder::{DegradedReason, current_model_id};
 use super::format::{
     format_coverage_note, format_dry_run_json, format_index_json, format_rebuild_json,
 };
 use super::{IndexRunOptions, Yomu, YomuError, degraded_for_dry_run_errors, degraded_for_index};
+
+/// Maps an embedder load failure to the user-facing error. `Disabled` can no
+/// longer occur (yomu never disables embedding); it folds into the generic arm
+/// rather than an unreachable! that diff-coverage would flag as untested.
+fn embedder_unavailable(reason: DegradedReason) -> YomuError {
+    let msg = match reason {
+        DegradedReason::NotInstalled => {
+            "embedding model not installed; run `yomu model download` to enable semantic search"
+        }
+        _ => "embedding model unavailable",
+    };
+    YomuError::EmbedderUnavailable(msg.to_owned())
+}
 
 impl Yomu {
     pub fn index(&self, opts: IndexRunOptions, json: bool) -> Result<String, YomuError> {
@@ -85,6 +98,26 @@ impl Yomu {
     /// Embeds all pending chunks with progress spinners. Errors out when the
     /// model is unavailable so callers never silently leave a chunk-only index.
     fn embed_pending(&self) -> Result<(), YomuError> {
+        // #230: a same-dimension model swap leaves embedded_chunk_ids fully
+        // populated, so `pending` below would count 0 and the embed phase
+        // would silently keep every stale embedding. Align with the current
+        // model first; a confirmed swap clears all embeddings (only after the
+        // new model proved loadable) so `pending` counts every chunk again.
+        let model_id = current_model_id();
+        let sync = {
+            let conn = self.conn.lock().expect("DB lock poisoned (embed_pending)");
+            indexer::sync_embeddings_with_model(&conn, &model_id, || {
+                self.try_embedder_arc()
+                    .map(|_| ())
+                    .map_err(embedder_unavailable)
+            })?
+        };
+        if let indexer::ModelSync::Reembedding { previous } = sync {
+            eprintln!(
+                "Embedding model changed ({previous} -> {model_id}); re-embedding all chunks"
+            );
+        }
+
         let pending = self.with_db(|conn| {
             let stats = storage::get_stats(conn)?;
             Ok(stats
@@ -94,20 +127,7 @@ impl Yomu {
 
         embed_with_spinners(
             pending,
-            |_| {
-                self.try_embedder_arc().map_err(|reason| {
-                    // `Disabled` can no longer occur (yomu never disables
-                    // embedding); it folds into the generic arm rather than an
-                    // unreachable! that diff-coverage would flag as untested.
-                    let msg = match reason {
-                        DegradedReason::NotInstalled => {
-                            "embedding model not installed; run `yomu model download` to enable semantic search"
-                        }
-                        _ => "embedding model unavailable",
-                    };
-                    YomuError::EmbedderUnavailable(msg.to_owned())
-                })
-            },
+            |_| self.try_embedder_arc().map_err(embedder_unavailable),
             |r: &indexer::EmbedResult| format!("Embedded {} chunks", r.chunks_embedded),
             |model: Arc<dyn Embed>, update| {
                 indexer::run_incremental_embed_with_progress(

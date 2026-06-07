@@ -14,7 +14,10 @@ use rurico::embed::EmbedError;
 use crate::storage::StorageError;
 
 pub use chunk_only::{dry_run_index, run_chunk_only_index, run_chunk_only_index_force};
-pub use embed::{EmbedResult, run_incremental_embed, run_incremental_embed_with_progress};
+pub use embed::{
+    EMBED_MODEL_META_KEY, EmbedResult, ModelSync, run_incremental_embed,
+    run_incremental_embed_with_progress, sync_embeddings_with_model,
+};
 #[cfg(test)]
 use embed::{MAX_CONSECUTIVE_EMBED_ERRORS, enrich_for_embedding, order_files_for_embedding};
 

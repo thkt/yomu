@@ -5255,3 +5255,72 @@ fn embed_gap_count_propagates_query_failure() {
         "a gap that cannot be measured must surface as Err, never as 0"
     );
 }
+
+// T-747: index_meta_get_set_roundtrip
+#[test]
+fn index_meta_get_set_roundtrip() {
+    let (conn, _dir) = test_db();
+
+    assert_eq!(get_index_meta(&conn, "embed_model_id").unwrap(), None);
+
+    set_index_meta(&conn, "embed_model_id", "cl-nagoya/ruri-v3-310m").unwrap();
+    assert_eq!(
+        get_index_meta(&conn, "embed_model_id").unwrap().as_deref(),
+        Some("cl-nagoya/ruri-v3-310m")
+    );
+
+    set_index_meta(&conn, "embed_model_id", "other/model").unwrap();
+    assert_eq!(
+        get_index_meta(&conn, "embed_model_id").unwrap().as_deref(),
+        Some("other/model"),
+        "set must overwrite the existing value"
+    );
+}
+
+// T-748: clear_all_embeddings_empties_vec_and_tracking_tables
+// #230: also proves DELETE works on the vec0 virtual table (prior schema
+// migrations only ever dropped and recreated it).
+#[test]
+fn clear_all_embeddings_empties_vec_and_tracking_tables() {
+    let (conn, _dir) = test_db();
+    let embedding = vec![0.0_f32; EMBEDDING_DIMS];
+
+    insert_chunk(
+        &conn,
+        "src/Nav.tsx",
+        &NewChunk {
+            chunk_type: &ChunkType::Component,
+            name: Some("Nav"),
+            content: "function Nav() {}",
+            start_line: 1,
+            end_line: 3,
+            parent_index: None,
+            source_kind: None,
+            injection_flags: None,
+        },
+        "h1",
+        &ce(embedding),
+        None,
+    )
+    .unwrap();
+
+    let vec_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vec_chunks", [], |r| r.get(0))
+        .unwrap();
+    assert!(vec_rows > 0, "precondition: vec_chunks populated");
+
+    clear_all_embeddings(&conn).unwrap();
+
+    let emb: i64 = conn
+        .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+        .unwrap();
+    let vec: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vec_chunks", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!((emb, vec), (0, 0), "both tables must be empty after clear");
+
+    let chunks: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(chunks, 1, "chunk rows must survive the clear");
+}
