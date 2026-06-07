@@ -676,6 +676,82 @@ fn run_incremental_embed_aborts_after_consecutive_failures() {
     assert!(err_msg.contains("mock failure"), "got: {err_msg}");
 }
 
+// T-746: run_incremental_embed_resumes_after_abort
+// #280: files committed before an abort stay committed (partial state), the
+// gap is detectable via embed_gap_count, and a re-run fills exactly the gap
+// without re-embedding completed files.
+#[test]
+fn run_incremental_embed_resumes_after_abort() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let conn = storage::open_db(&db_path).unwrap();
+
+    // 7 files, 1 chunk each: 2 commit in stage 1, leaving 5 pending so stage 2
+    // reaches MAX_CONSECUTIVE_EMBED_ERRORS (5) and aborts.
+    for i in 0..7 {
+        storage::replace_file_chunks_only(
+            &conn,
+            &format!("src/P{i}.tsx"),
+            &[storage::NewChunk {
+                chunk_type: &storage::ChunkType::Component,
+                name: Some(&format!("P{i}")),
+                content: &format!("function P{i}() {{}}"),
+                start_line: 1,
+                end_line: 1,
+                parent_index: None,
+                source_kind: None,
+                injection_flags: None,
+            }],
+            &format!("p{i}"),
+            "",
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+
+    let conn = Arc::new(Mutex::new(conn));
+
+    // Stage 1: healthy embedder commits 2 files (max_chunks cap), then stops.
+    let first = run_incremental_embed(&conn, &MockEmbedder::default(), 2, None).unwrap();
+    assert_eq!(first.files_completed, 2, "precondition: 2 files committed");
+
+    // Stage 2: all failures -> abort. The 2 committed files stay committed.
+    let aborted =
+        run_incremental_embed(&conn, &FailingEmbedder::all_fail("mock failure"), 50, None);
+    assert!(aborted.is_err(), "stage 2 should abort");
+    {
+        let guard = conn.lock().unwrap();
+        assert_eq!(
+            storage::embed_gap_count(&guard).unwrap(),
+            5,
+            "abort leaves a detectable gap of unembedded chunks"
+        );
+    }
+
+    // Stage 3: re-run resumes from the gap and embeds only the remainder.
+    let resumed = run_incremental_embed(&conn, &MockEmbedder::default(), 50, None).unwrap();
+    assert_eq!(
+        resumed.files_completed, 5,
+        "re-run embeds exactly the files the abort left behind"
+    );
+    let guard = conn.lock().unwrap();
+    assert_eq!(
+        storage::embed_gap_count(&guard).unwrap(),
+        0,
+        "gap closes after re-run"
+    );
+    let embedded_rows: i64 = guard
+        .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        embedded_rows, 7,
+        "no duplicate embeddings for already-committed files"
+    );
+}
+
 // T-391: order_files_for_embedding_most_imported_first
 #[test]
 fn order_files_for_embedding_most_imported_first() {
