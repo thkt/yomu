@@ -1,8 +1,8 @@
 //! Precision/recall measurement for the injection matcher.
 //!
-//! Pure (no I/O). The caller (`tools::Yomu::verify_standalone` for CLI,
-//! `tests/verification.rs` for the gate) is responsible for loading the
-//! bundled corpora and assembling `PositiveCase` / `NegativeCase` lists.
+//! Pure (no I/O). The caller (`tests/verification.rs`, the gate) is
+//! responsible for loading the bundled corpora and assembling
+//! `PositiveCase` / `NegativeCase` lists.
 //!
 //! ADR-0069 contract: `precision >= 0.90 && recall >= 0.95 && !degraded`.
 //! Both denominators are kept structurally non-zero (BR-401):
@@ -15,9 +15,9 @@ use serde::Serialize;
 use crate::indexer::injection::{Corpus, CorpusEntry, NegativeEntry};
 use crate::injection_check::InjectionCheck;
 
-/// Single source for the corpus fixture path. Imported by `Yomu::verify_standalone`,
-/// `tests/verification.rs`, and `src/indexer/injection/tests.rs` so a future
-/// fixture move requires a single edit.
+/// Single source for the corpus fixture path. Imported by `tests/verification.rs`
+/// and `src/indexer/injection/tests.rs` so a future fixture move requires a
+/// single edit.
 pub const BUNDLED_CORPUS_YAML: &str = include_str!("../tests/fixtures/injection/corpus.yaml");
 pub const BUNDLED_NEGATIVE_YAML: &str =
     include_str!("../tests/fixtures/injection/corpus.negative.yaml");
