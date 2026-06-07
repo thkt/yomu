@@ -214,7 +214,7 @@ fn embed_file_chunks(
 /// Embedding commits per file: a file's embeddings are written in a single
 /// transaction only after its whole batch embedded successfully, so no file is
 /// ever half-embedded. When consecutive failures abort the run
-/// ([`MAX_CONSECUTIVE_EMBED_ERRORS`]), files committed before the abort stay
+/// (`MAX_CONSECUTIVE_EMBED_ERRORS`), files committed before the abort stay
 /// committed by design: the next run resumes from the gap (the
 /// `embedded_chunk_ids` LEFT JOIN skips completed chunks) and
 /// [`storage::embed_gap_count`] exposes the remainder. Rolling back completed

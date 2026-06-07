@@ -741,13 +741,13 @@ fn run_incremental_embed_resumes_after_abort() {
         0,
         "gap closes after re-run"
     );
-    let vec_rows: i64 = guard
+    let embedded_rows: i64 = guard
         .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |row| {
             row.get(0)
         })
         .unwrap();
     assert_eq!(
-        vec_rows, 7,
+        embedded_rows, 7,
         "no duplicate embeddings for already-committed files"
     );
 }
