@@ -275,3 +275,25 @@ pub fn delete_file_chunks(conn: &Connection, file_path: &str) -> Result<(), Stor
     tx.commit()?;
     Ok(())
 }
+
+/// Reads one `index_meta` value by key. Returns `None` when the key is absent.
+pub fn get_index_meta(conn: &Connection, key: &str) -> Result<Option<String>, StorageError> {
+    match conn.query_row(
+        "SELECT value FROM index_meta WHERE key = ?1",
+        [key],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Writes one `index_meta` value, overwriting any existing entry for `key`.
+pub fn set_index_meta(conn: &Connection, key: &str, value: &str) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?1, ?2)",
+        [key, value],
+    )?;
+    Ok(())
+}

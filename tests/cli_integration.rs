@@ -2057,3 +2057,141 @@ fn brief_json_emits_per_chunk_source_kind() {
         "FR-009a: at least one brief chunk must carry source_kind='src'",
     );
 }
+
+// T-753: index_reembeds_all_when_embed_model_changes
+// #230: a same-dimension model swap is invisible to embedded_chunk_ids, so
+// `yomu index` must detect the recorded model id mismatch, clear stale
+// embeddings, and re-embed every chunk.
+#[cfg(feature = "test-support")]
+#[test]
+fn index_reembeds_all_when_embed_model_changes() {
+    let dir = setup_project();
+
+    let output = yomu_cmd()
+        .args(["index"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "initial index failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let before: i64 = {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+            .unwrap();
+        assert!(count > 0, "precondition: embeddings exist");
+        let recorded: String = conn
+            .query_row(
+                "SELECT value FROM index_meta WHERE key = 'embed_model_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            recorded, "test-support/mock-embedder",
+            "first index records the model id"
+        );
+        // Simulate a model swap: pretend stored embeddings came from another model.
+        conn.execute(
+            "UPDATE index_meta SET value = 'older-model' WHERE key = 'embed_model_id'",
+            [],
+        )
+        .unwrap();
+        count
+    };
+
+    let output = yomu_cmd()
+        .args(["index"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "re-index failed: {stderr}");
+    assert!(
+        stderr.contains("Embedding model changed"),
+        "swap must be announced on stderr: {stderr}"
+    );
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before, "every chunk re-embeds after the swap");
+    let recorded: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'embed_model_id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        recorded, "test-support/mock-embedder",
+        "stored id moves to the current model"
+    );
+}
+
+// T-754: index_keeps_embeddings_when_swapped_model_unavailable
+// #230 safety property at the process boundary: when a swap is detected but
+// the replacement model cannot load, `yomu index` must fail WITHOUT wiping
+// the existing embeddings (an unavailable model must never destroy data).
+#[cfg(feature = "test-support")]
+#[test]
+fn index_keeps_embeddings_when_swapped_model_unavailable() {
+    let dir = setup_project();
+
+    let output = yomu_cmd()
+        .args(["index"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let db_path = dir.path().join(".yomu").join("index.db");
+    let before: i64 = {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+            .unwrap();
+        assert!(count > 0, "precondition: embeddings exist");
+        conn.execute(
+            "UPDATE index_meta SET value = 'older-model' WHERE key = 'embed_model_id'",
+            [],
+        )
+        .unwrap();
+        count
+    };
+
+    let output = yomu_cmd()
+        .args(["index"])
+        .current_dir(dir.path())
+        .env("YOMU_TEST_EMBEDDER", "unavailable")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "index must fail when the swapped-in model cannot load: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM embedded_chunk_ids", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before, "embeddings must survive the failed swap");
+    let recorded: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'embed_model_id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        recorded, "older-model",
+        "stored id stays on the old model so the next run re-detects the swap"
+    );
+}

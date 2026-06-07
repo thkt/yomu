@@ -320,6 +320,63 @@ pub fn run_incremental_embed_with_progress(
     })
 }
 
+/// `index_meta` key recording which embedding model produced the stored vectors.
+pub const EMBED_MODEL_META_KEY: &str = "embed_model_id";
+
+/// Outcome of [`sync_embeddings_with_model`].
+pub enum ModelSync {
+    /// Stored model id matches (or was just recorded for the first time).
+    Aligned,
+    /// Stored id differed; all embeddings were cleared for re-embedding.
+    Reembedding { previous: String },
+}
+
+/// Aligns stored embeddings with the current embedding model (#230).
+///
+/// `embedded_chunk_ids` tracks chunk ids only, so a same-dimension model swap
+/// leaves every stale embedding looking fresh and incremental embed would do
+/// nothing. This records the model id in `index_meta` and, when the stored id
+/// differs from `current_model_id`, clears all embeddings so the next
+/// incremental embed re-embeds every chunk (no re-chunking).
+///
+/// `ensure_loadable` runs before any destructive step: when the replacement
+/// embedder cannot load, the mismatch is left in place (an unavailable model
+/// must never wipe valid embeddings) and the error propagates. The clear and
+/// the id update are separate statements; a crash between them leaves an
+/// empty-but-mismatched state that the next run re-detects and re-clears
+/// (idempotent), never a falsely-fresh one.
+pub fn sync_embeddings_with_model<E>(
+    conn: &Db,
+    current_model_id: &str,
+    ensure_loadable: impl FnOnce() -> Result<(), E>,
+) -> Result<ModelSync, E>
+where
+    E: From<IndexError>,
+{
+    let index_err = |e: StorageError| E::from(IndexError::from(e));
+    let stored = storage::get_index_meta(conn, EMBED_MODEL_META_KEY).map_err(index_err)?;
+    match stored {
+        Some(ref id) if id == current_model_id => Ok(ModelSync::Aligned),
+        Some(previous) => {
+            ensure_loadable()?;
+            tracing::warn!(
+                previous = %previous,
+                current = %current_model_id,
+                "Embedding model changed; clearing all embeddings for re-embed"
+            );
+            storage::clear_all_embeddings(conn).map_err(index_err)?;
+            storage::set_index_meta(conn, EMBED_MODEL_META_KEY, current_model_id)
+                .map_err(index_err)?;
+            Ok(ModelSync::Reembedding { previous })
+        }
+        None => {
+            storage::set_index_meta(conn, EMBED_MODEL_META_KEY, current_model_id)
+                .map_err(index_err)?;
+            Ok(ModelSync::Aligned)
+        }
+    }
+}
+
 /// `chunks_embedded / elapsed_seconds`, truncated to an integer.
 /// Returns `0` when `elapsed_ms == 0` (sub-millisecond runs from empty / mock paths).
 fn chunks_per_sec(chunks_embedded: u32, elapsed_ms: u128) -> u128 {

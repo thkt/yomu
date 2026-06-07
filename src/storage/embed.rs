@@ -209,3 +209,15 @@ pub fn needs_embedding(
         }
     }
 }
+
+/// Deletes every embedding row (`embedded_chunk_ids` + `vec_chunks`) in one
+/// transaction while leaving chunks and FTS intact. Used when a model swap
+/// makes all stored embeddings stale (#230): the next incremental embed then
+/// treats every chunk as unembedded and re-embeds without re-chunking.
+pub fn clear_all_embeddings(conn: &Connection) -> Result<(), StorageError> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM embedded_chunk_ids", [])?;
+    tx.execute("DELETE FROM vec_chunks", [])?;
+    tx.commit()?;
+    Ok(())
+}
