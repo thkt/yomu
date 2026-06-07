@@ -207,6 +207,18 @@ fn embed_file_chunks(
     Ok(Some((n, embed_dur, store_dur)))
 }
 
+/// Embeds pending chunks file-by-file until `max_chunks` is reached.
+///
+/// # Abort and resumability (#280)
+///
+/// Embedding commits per file: a file's embeddings are written in a single
+/// transaction only after its whole batch embedded successfully, so no file is
+/// ever half-embedded. When consecutive failures abort the run
+/// ([`MAX_CONSECUTIVE_EMBED_ERRORS`]), files committed before the abort stay
+/// committed by design: the next run resumes from the gap (the
+/// `embedded_chunk_ids` LEFT JOIN skips completed chunks) and
+/// [`storage::embed_gap_count`] exposes the remainder. Rolling back completed
+/// files on abort would discard finished work without improving correctness.
 #[allow(clippy::cast_possible_truncation)]
 pub fn run_incremental_embed(
     conn: &Arc<Mutex<Db>>,
