@@ -5,7 +5,7 @@ resolver = "3"
 
 [package]
 name = "yomu"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Frontend code search for AI agents"
