@@ -16,10 +16,14 @@ repository = "https://github.com/thkt/yomu"
 test-support = ["rurico/test-support"]
 
 [dependencies]
+# amici pins its own rurico rev; a git source resolves to one rev across the
+# dependency graph, so the rurico rev below must match the one amici pins or
+# the build breaks on the rev conflict. When bumping amici, align rurico to it.
 amici = { git = "https://github.com/thkt/amici", rev = "5f4ee12" }
 bytemuck = "1"
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
+# Keep in lockstep with the rurico rev amici pins (see the amici note above).
 rurico = { git = "https://github.com/thkt/rurico", rev = "adbe3a8" }
 regex = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
