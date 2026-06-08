@@ -2,6 +2,8 @@
 
 # yomu
 
+> **⚠️ Archived (2026-06-08)** — yomu's advantage over a grep+LLM agent could not be demonstrated within the testable range (well-structured repos): precision/recall/necessity all came out at parity or directional-only. Development is retired. See the validation history (#250 → #291 → #321 → necessity) and conclusion in [#291](https://github.com/thkt/yomu/issues/291).
+
 Frontend code search for AI agents. Find code by concept when you don't know the name.
 
 ## The problem
