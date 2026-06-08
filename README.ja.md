@@ -2,6 +2,8 @@
 
 # yomu
 
+> **⚠️ アーカイブ済み (2026-06-08)** — yomu の grep+LLM エージェントに対する優位性は、検証可能な範囲 (整理された repo) で実証できませんでした (precision/recall/necessity いずれも同点または directional 止まり)。開発は撤退します。検証史 (#250 → #291 → #321 → necessity) と結論は [#291](https://github.com/thkt/yomu/issues/291) を参照。
+
 AIエージェント向けフロントエンドコード検索。名前がわからなくても、概念でコードを見つけられます。
 
 ## 課題
